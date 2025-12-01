@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from .metrics import variance_of_laplacian
-from .preview import open_preview_gray, open_preview_rgb
+from .preview import open_preview_rgb
 
 try:
     from insightface.app import FaceAnalysis
@@ -59,7 +59,17 @@ def _get_mp_face():
         return None
 
 
-def detect_faces(preview_path: pathlib.Path, gray_arr: np.ndarray, face_cfg: Dict) -> Optional[Dict]:
+def _rotate(arr: np.ndarray, orientation: int) -> np.ndarray:
+    if orientation == 3:
+        return np.rot90(arr, 2)
+    if orientation == 6:
+        return np.rot90(arr, -1)
+    if orientation == 8:
+        return np.rot90(arr, 1)
+    return arr
+
+
+def detect_faces(preview_path: pathlib.Path, gray_arr: np.ndarray, face_cfg: Dict, orientation: int = 1) -> Optional[Dict]:
     detector = _get_face_detector(face_cfg)
     if detector is None:
         return None
@@ -68,6 +78,8 @@ def detect_faces(preview_path: pathlib.Path, gray_arr: np.ndarray, face_cfg: Dic
     rgb_full = open_preview_rgb(preview_path, size=None)
     if rgb_full is None:
         return None
+    rgb_full = _rotate(rgb_full, orientation)
+    gray_arr = _rotate(gray_arr, orientation)
 
     if mp and isinstance(detector, mp.solutions.face_detection.FaceDetection):
         results_mp = detector.process(rgb_full.astype(np.uint8))

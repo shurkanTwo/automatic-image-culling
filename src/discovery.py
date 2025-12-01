@@ -68,3 +68,16 @@ def plan_destination(path: pathlib.Path, exif: Dict, cfg: Dict, output_dir: path
     pattern = cfg.get("pattern", "{capture_date}/{basename}")
     subpath = pattern.format(capture_date=date_str, basename=path.name, stem=path.stem)
     return output_dir / subpath
+
+
+def exif_orientation(exif: Dict) -> int:
+    """
+    Return EXIF orientation (1 is normal, 3 upside-down, 6 rotate 90 CW, 8 rotate 270).
+    """
+    val = exif.get("Image Orientation") or exif.get("EXIF Orientation")
+    if not val:
+        return 1
+    try:
+        return int(str(val).split()[0])
+    except Exception:
+        return 1

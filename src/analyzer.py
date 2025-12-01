@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import numpy as np
 from PIL import Image
 
-from .discovery import capture_date, find_arw_files, read_exif
+from .discovery import capture_date, exif_orientation, find_arw_files, read_exif
 from .faces import detect_faces
 from .metrics import (
     brightness_stats,
@@ -94,7 +94,7 @@ def analyze_files(
         face_info = None
         face_cfg = analysis_cfg.get("face", {})
         if face_cfg.get("enabled", False):
-            face_info = detect_faces(preview_path, arr, face_cfg)
+            face_info = detect_faces(preview_path, arr, face_cfg, orientation=exif_orientation(exif))
         ph = phash(preview_path, Image=Image)
 
         return {
