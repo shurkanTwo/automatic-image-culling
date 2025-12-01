@@ -42,7 +42,7 @@ def read_exif(path: pathlib.Path) -> Dict:
     if not exifread:
         return {}
     with path.open("rb") as fh:
-        tags = exifread.process_file(fh, details=False, stop_tag="DateTimeOriginal")
+        tags = exifread.process_file(fh, details=False)
     return {str(k): str(v) for k, v in tags.items()}
 
 
@@ -77,7 +77,18 @@ def exif_orientation(exif: Dict) -> int:
     val = exif.get("Image Orientation") or exif.get("EXIF Orientation")
     if not val:
         return 1
+    s = str(val)
+    # Try numeric first
     try:
-        return int(str(val).split()[0])
+        return int(s.split()[0])
     except Exception:
-        return 1
+        pass
+    s_lower = s.lower()
+    if "90" in s_lower and ("cw" in s_lower or "clockwise" in s_lower):
+        return 6
+    if "90" in s_lower or "270" in s_lower or "ccw" in s_lower:
+        # assume 270/CCW
+        return 8
+    if "180" in s_lower:
+        return 3
+    return 1

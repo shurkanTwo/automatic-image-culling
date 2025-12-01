@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover
     Image = None
 
 import numpy as np
+from .discovery import exif_orientation, read_exif
 
 
 def resize_image(img: Image.Image, long_edge: int) -> Image.Image:
@@ -28,6 +29,16 @@ def resize_image(img: Image.Image, long_edge: int) -> Image.Image:
     return img.resize((new_w, new_h), Image.LANCZOS)
 
 
+def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
+    if orientation == 3:
+        return img.rotate(180, expand=True)
+    if orientation == 6:
+        return img.rotate(-90, expand=True)
+    if orientation == 8:
+        return img.rotate(90, expand=True)
+    return img
+
+
 def generate_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -> Optional[pathlib.Path]:
     if not rawpy or not Image:
         return None
@@ -35,6 +46,7 @@ def generate_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -
     target = preview_dir / f"{path.stem}.{cfg['format']}"
     if target.exists():
         return target
+    orientation = exif_orientation(read_exif(path))
     with rawpy.imread(str(path)) as raw:
         try:
             thumb = raw.extract_thumb()
@@ -45,6 +57,7 @@ def generate_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -
         except Exception:
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
             img = Image.fromarray(rgb)
+    img = _apply_orientation(img, orientation)
     img = resize_image(img, cfg["long_edge"])
     img.save(target, cfg["format"].upper(), quality=cfg["quality"])
     return target
