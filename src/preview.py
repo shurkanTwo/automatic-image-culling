@@ -2,6 +2,7 @@ import io
 import pathlib
 from typing import Dict, Optional
 
+
 try:
     import rawpy
 except ImportError:  # pragma: no cover
@@ -39,7 +40,9 @@ def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
     return img
 
 
-def generate_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -> Optional[pathlib.Path]:
+def generate_preview(
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+) -> Optional[pathlib.Path]:
     if not rawpy or not Image:
         return None
     preview_dir.mkdir(parents=True, exist_ok=True)
@@ -63,7 +66,9 @@ def generate_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -
     return target
 
 
-def ensure_preview(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -> Optional[pathlib.Path]:
+def ensure_preview(
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+) -> Optional[pathlib.Path]:
     preview = preview_dir / f"{path.stem}.{cfg['format']}"
     if preview.exists():
         return preview
@@ -77,7 +82,9 @@ def open_preview_gray(preview_path: pathlib.Path) -> Optional[np.ndarray]:
     return np.array(img, dtype=np.float32)
 
 
-def open_preview_rgb(preview_path: pathlib.Path, size: Optional[int] = 256) -> Optional[np.ndarray]:
+def open_preview_rgb(
+    preview_path: pathlib.Path, size: Optional[int] = 256
+) -> Optional[np.ndarray]:
     if not Image:
         return None
     img = Image.open(preview_path).convert("RGB")
@@ -89,5 +96,7 @@ def open_preview_rgb(preview_path: pathlib.Path, size: Optional[int] = 256) -> O
     return np.array(img, dtype=np.float32)
 
 
-def preview_path_for(path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict) -> pathlib.Path:
+def preview_path_for(
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+) -> pathlib.Path:
     return preview_dir / f"{path.stem}.{cfg['format']}"

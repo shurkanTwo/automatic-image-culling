@@ -3,6 +3,7 @@ import pathlib
 import datetime as _dt
 from typing import Dict, List, Optional
 
+
 try:
     import exifread
 except ImportError:  # pragma: no cover
@@ -17,7 +18,9 @@ def _is_under(child: pathlib.Path, parent: pathlib.Path) -> bool:
         return False
 
 
-def find_arw_files(directory: str, exclude_dirs: Optional[List[str]] = None) -> List[pathlib.Path]:
+def find_arw_files(
+    directory: str, exclude_dirs: Optional[List[str]] = None
+) -> List[pathlib.Path]:
     root = pathlib.Path(directory)
     if not root.exists():
         return []
@@ -31,7 +34,11 @@ def find_arw_files(directory: str, exclude_dirs: Optional[List[str]] = None) -> 
     results: List[pathlib.Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         current = pathlib.Path(dirpath)
-        dirnames[:] = [d for d in dirnames if not any(_is_under(current / d, ex) for ex in exclude_paths)]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if not any(_is_under(current / d, ex) for ex in exclude_paths)
+        ]
         for fname in filenames:
             if fname.lower().endswith(".arw"):
                 results.append(current / fname)
@@ -60,7 +67,9 @@ def _safe_mtime(exif: Dict) -> float:
     return exif.get("_stat_mtime", _dt.datetime.now().timestamp())
 
 
-def plan_destination(path: pathlib.Path, exif: Dict, cfg: Dict, output_dir: pathlib.Path) -> pathlib.Path:
+def plan_destination(
+    path: pathlib.Path, exif: Dict, cfg: Dict, output_dir: pathlib.Path
+) -> pathlib.Path:
     mtime = path.stat().st_mtime
     exif["_stat_mtime"] = mtime
     dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(mtime))

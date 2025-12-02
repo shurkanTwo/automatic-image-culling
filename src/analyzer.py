@@ -4,6 +4,7 @@ import json
 import pathlib
 from typing import Dict, Iterable, List, Optional, Tuple
 
+
 import numpy as np
 from PIL import Image
 
@@ -81,7 +82,9 @@ def analyze_files(
         if not preview_path.exists():
             return None
         exif = read_exif(path)
-        dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(path.stat().st_mtime))
+        dt = capture_date(
+            exif, fallback=_dt.datetime.fromtimestamp(path.stat().st_mtime)
+        )
         arr = open_preview_gray(preview_path)
         if arr is None:
             return None
@@ -94,7 +97,9 @@ def analyze_files(
         face_info = None
         face_cfg = analysis_cfg.get("face", {})
         if face_cfg.get("enabled", False):
-            face_info = detect_faces(preview_path, arr, face_cfg, orientation=exif_orientation(exif))
+            face_info = detect_faces(
+                preview_path, arr, face_cfg, orientation=exif_orientation(exif)
+            )
         ph = phash(preview_path, Image=Image)
 
         return {
@@ -113,7 +118,9 @@ def analyze_files(
             "faces": face_info,
         }
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.get("concurrency", 4)) as pool:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=cfg.get("concurrency", 4)
+    ) as pool:
         futures = {pool.submit(worker, p): p for p in files}
         for fut in concurrent.futures.as_completed(futures):
             res = fut.result()
@@ -167,7 +174,9 @@ def analyze_files(
     for members in groups.values():
         if len(members) < 2:
             continue
-        members_sorted = sorted(members, key=lambda i: results[i]["sharpness"], reverse=True)
+        members_sorted = sorted(
+            members, key=lambda i: results[i]["sharpness"], reverse=True
+        )
         keeper = members_sorted[0]
         for m in members:
             results[m]["duplicate_group"] = int(keeper)
@@ -178,16 +187,30 @@ def analyze_files(
                 candidate = results[m]
                 reason_parts: List[str] = []
                 if candidate["sharpness"] < k["sharpness"]:
-                    reason_parts.append(f"sharpness {candidate['sharpness']:.1f} < {k['sharpness']:.1f}")
-                if candidate.get("tenengrad") is not None and k.get("tenengrad") is not None:
+                    reason_parts.append(
+                        f"sharpness {candidate['sharpness']:.1f} < {k['sharpness']:.1f}"
+                    )
+                if (
+                    candidate.get("tenengrad") is not None
+                    and k.get("tenengrad") is not None
+                ):
                     if candidate["tenengrad"] < k["tenengrad"]:
-                        reason_parts.append(f"contrast {candidate['tenengrad']:.0f} < {k['tenengrad']:.0f}")
-                if candidate.get("motion_ratio") is not None and k.get("motion_ratio") is not None:
+                        reason_parts.append(
+                            f"contrast {candidate['tenengrad']:.0f} < {k['tenengrad']:.0f}"
+                        )
+                if (
+                    candidate.get("motion_ratio") is not None
+                    and k.get("motion_ratio") is not None
+                ):
                     if candidate["motion_ratio"] < k["motion_ratio"]:
-                        reason_parts.append(f"motion ratio {candidate['motion_ratio']:.2f} < {k['motion_ratio']:.2f}")
+                        reason_parts.append(
+                            f"motion ratio {candidate['motion_ratio']:.2f} < {k['motion_ratio']:.2f}"
+                        )
                 if candidate.get("noise") is not None and k.get("noise") is not None:
                     if candidate["noise"] > k["noise"]:
-                        reason_parts.append(f"noise {candidate['noise']:.1f} > {k['noise']:.1f}")
+                        reason_parts.append(
+                            f"noise {candidate['noise']:.1f} > {k['noise']:.1f}"
+                        )
 
                 if use_similarity:
                     if keeper not in rgb_cache:
@@ -203,13 +226,17 @@ def analyze_files(
                     a = rgb_cache[keeper]
                     b = rgb_cache[m]
                     try:
-                        ssim_val = float(skimage_ssim(a, b, channel_axis=2, data_range=255))
+                        ssim_val = float(
+                            skimage_ssim(a, b, channel_axis=2, data_range=255)
+                        )
                         psnr_val = float(skimage_psnr(a, b, data_range=255))
                         reason_parts.append(f"ssim={ssim_val:.3f}, psnr={psnr_val:.1f}")
                     except Exception:
                         pass
 
-                results[m]["duplicate_reason"] = "; ".join(reason_parts) if reason_parts else "lower ranked in set"
+                results[m]["duplicate_reason"] = (
+                    "; ".join(reason_parts) if reason_parts else "lower ranked in set"
+                )
 
     for idx, r in enumerate(results):
         dup = idx in duplicate_indexes
@@ -223,7 +250,10 @@ def analyze_files(
             analysis_cfg,
         )
         if dup and r.get("duplicate_reason"):
-            reasons = ["duplicate: " + r["duplicate_reason"] if x == "duplicate" else x for x in reasons]
+            reasons = [
+                "duplicate: " + r["duplicate_reason"] if x == "duplicate" else x
+                for x in reasons
+            ]
         r["suggest_keep"] = keep
         r["decision"] = "keep" if keep else "discard"
         r["reasons"] = reasons

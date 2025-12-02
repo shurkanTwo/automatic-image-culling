@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+
 from .metrics import variance_of_laplacian
 from .preview import open_preview_rgb
 
@@ -53,7 +54,9 @@ def _get_mp_face():
     if mp is None:
         return None
     try:
-        _MP_FACE = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.3)
+        _MP_FACE = mp.solutions.face_detection.FaceDetection(
+            model_selection=1, min_detection_confidence=0.3
+        )
         return _MP_FACE
     except Exception:
         return None
@@ -69,7 +72,12 @@ def _rotate(arr: np.ndarray, orientation: int) -> np.ndarray:
     return arr
 
 
-def detect_faces(preview_path: pathlib.Path, gray_arr: np.ndarray, face_cfg: Dict, orientation: int = 1) -> Optional[Dict]:
+def detect_faces(
+    preview_path: pathlib.Path,
+    gray_arr: np.ndarray,
+    face_cfg: Dict,
+    orientation: int = 1,
+) -> Optional[Dict]:
     detector = _get_face_detector(face_cfg)
     if detector is None:
         return None
@@ -121,7 +129,9 @@ def detect_faces(preview_path: pathlib.Path, gray_arr: np.ndarray, face_cfg: Dic
                 continue
             face_gray = gray_arr[y1:y2, x1:x2]
             face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
-            faces.append({"bbox": box, "score": float(f.det_score), "sharpness": face_sharp})
+            faces.append(
+                {"bbox": box, "score": float(f.det_score), "sharpness": face_sharp}
+            )
 
     if not faces:
         return None

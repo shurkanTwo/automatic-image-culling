@@ -4,6 +4,7 @@ import pathlib
 import shutil
 from typing import Iterable, List, Optional
 
+
 import numpy as np
 
 from .analyzer import analyze_files, write_outputs
@@ -33,7 +34,12 @@ def _progress_bar(total: int, desc: str):
 
 def _exclude_list(cfg: dict) -> List[str]:
     exclude = cfg.get("exclude_dirs", [])
-    exclude = list(set(exclude + [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]))
+    exclude = list(
+        set(
+            exclude
+            + [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
+        )
+    )
     return exclude
 
 
@@ -73,7 +79,9 @@ def previews_command(args: argparse.Namespace) -> None:
     preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
     jobs = []
     bar = _progress_bar(len(files), "Previews")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=cfg.get("concurrency", 4)) as pool:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=cfg.get("concurrency", 4)
+    ) as pool:
         for p in files:
             jobs.append(pool.submit(generate_preview, p, preview_dir, preview_cfg))
         for job in concurrent.futures.as_completed(jobs):
@@ -96,7 +104,9 @@ def sort_command(args: argparse.Namespace) -> None:
         dest = plan_destination(p, exif, sort_cfg, output_dir)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if args.dry_run:
-            actions.append(f"PLAN {'COPY' if sort_cfg.get('copy', True) else 'MOVE'} {p} -> {dest}")
+            actions.append(
+                f"PLAN {'COPY' if sort_cfg.get('copy', True) else 'MOVE'} {p} -> {dest}"
+            )
             bar.update(1)
             continue
         if sort_cfg.get("copy", True):
@@ -130,7 +140,9 @@ def analyze_command(args: argparse.Namespace) -> None:
         ensure_preview(p, preview_dir, preview_cfg)
 
     bar = _progress_bar(len(files), "Analyze")
-    results = analyze_files(cfg, files, preview_dir, preview_cfg, progress_cb=bar.update)
+    results = analyze_files(
+        cfg, files, preview_dir, preview_cfg, progress_cb=bar.update
+    )
     bar.close()
     write_outputs(results, cfg.get("analysis", {}))
     print(f"Analysis written to {cfg['analysis']['results_path']}")
@@ -156,7 +168,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sort = sub.add_parser("sort", help="Copy/move files into structured folders")
     add_common(sort)
-    sort.add_argument("--apply", action="store_true", help="Perform the operations (default is dry run)")
+    sort.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform the operations (default is dry run)",
+    )
     sort.set_defaults(func=sort_command)
 
     analyze = sub.add_parser("analyze", help="Score images and emit JSON + HTML report")

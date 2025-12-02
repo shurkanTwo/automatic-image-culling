@@ -1,6 +1,7 @@
 import pathlib
 from typing import Dict, Optional
 
+
 try:
     import yaml
 except ImportError:  # pragma: no cover

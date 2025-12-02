@@ -14,11 +14,15 @@ def variance_of_laplacian(arr: np.ndarray) -> float:
 def tenengrad(arr: np.ndarray) -> float:
     padded = np.pad(arr, 1, mode="reflect")
     gx = (
-        padded[0:-2, 2:] + 2 * padded[1:-1, 2:] + padded[2:, 2:]
+        padded[0:-2, 2:]
+        + 2 * padded[1:-1, 2:]
+        + padded[2:, 2:]
         - (padded[0:-2, 0:-2] + 2 * padded[1:-1, 0:-2] + padded[2:, 0:-2])
     )
     gy = (
-        padded[2:, 0:-2] + 2 * padded[2:, 1:-1] + padded[2:, 2:]
+        padded[2:, 0:-2]
+        + 2 * padded[2:, 1:-1]
+        + padded[2:, 2:]
         - (padded[0:-2, 0:-2] + 2 * padded[0:-2, 1:-1] + padded[0:-2, 2:])
     )
     return float((gx * gx + gy * gy).mean())
@@ -30,7 +34,7 @@ def structure_tensor_ratio(arr: np.ndarray) -> Dict[str, float]:
     gyy = float((gy * gy).mean())
     gxy = float((gx * gy).mean())
     trace = gxx + gyy
-    tmp = ((gxx - gyy) ** 2 + 4 * (gxy ** 2)) ** 0.5
+    tmp = ((gxx - gyy) ** 2 + 4 * (gxy**2)) ** 0.5
     lam1 = 0.5 * (trace + tmp)
     lam2 = 0.5 * (trace - tmp)
     ratio = lam2 / lam1 if lam1 > 1e-9 else 0.0
