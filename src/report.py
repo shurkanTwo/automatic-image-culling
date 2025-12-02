@@ -68,7 +68,6 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     </thead>
     <tbody id="rows"></tbody>
   </table>
-  <div id="stats" style="margin-top: 1rem;"></div>
   <script id="data" type="application/json">{data_json}</script>
   <script>
     const data = JSON.parse(document.getElementById("data").textContent);
@@ -172,12 +171,10 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
         if (item.decision === "keep") stats.keep += 1; else stats.discard += 1;
       }});
 
-      const statsDiv = document.getElementById("stats");
       const keepPct = stats.total ? Math.round((stats.keep / stats.total) * 100) : 0;
       const discardPct = stats.total ? Math.round((stats.discard / stats.total) * 100) : 0;
-      statsDiv.innerHTML = `Keeps: ${{keepPct}}% (${{stats.keep}}/${{stats.total}}) &nbsp; Discards: ${{discardPct}}% (${{stats.discard}}/${{stats.total}})`;
       const summaryDiv = document.getElementById("summary");
-      summaryDiv.textContent = `Discarded: ${{discardPct}}% (${{stats.discard}} of ${{stats.total}})`;
+      summaryDiv.textContent = `Keeps: ${{keepPct}}% (${{stats.keep}}/${{stats.total}}) • Discards: ${{discardPct}}% (${{stats.discard}}/${{stats.total}})`;
 
       document.getElementById("loading").style.display = "none";
     }}
