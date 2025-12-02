@@ -122,12 +122,23 @@ def analyze_files(
         max_workers=cfg.get("concurrency", 4)
     ) as pool:
         futures = {pool.submit(worker, p): p for p in files}
-        for fut in concurrent.futures.as_completed(futures):
-            res = fut.result()
-            if res:
-                results.append(res)
-            if progress_cb:
-                progress_cb(1)
+        try:
+            pending = set(futures.keys())
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for fut in done:
+                    res = fut.result()
+                    if res:
+                        results.append(res)
+                    if progress_cb:
+                        progress_cb(1)
+        except KeyboardInterrupt:
+            for f in pending:
+                f.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
 
     results.sort(key=lambda r: r["path"])
 

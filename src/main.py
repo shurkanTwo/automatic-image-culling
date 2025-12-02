@@ -140,9 +140,14 @@ def analyze_command(args: argparse.Namespace) -> None:
         ensure_preview(p, preview_dir, preview_cfg)
 
     bar = _progress_bar(len(files), "Analyze")
-    results = analyze_files(
-        cfg, files, preview_dir, preview_cfg, progress_cb=bar.update
-    )
+    try:
+        results = analyze_files(
+            cfg, files, preview_dir, preview_cfg, progress_cb=bar.update
+        )
+    except KeyboardInterrupt:
+        bar.close()
+        print("Analysis cancelled by user.")
+        return
     bar.close()
     write_outputs(results, cfg.get("analysis", {}))
     print(f"Analysis written to {cfg['analysis']['results_path']}")
