@@ -9,6 +9,10 @@ import numpy as np
 from .metrics import variance_of_laplacian
 from .preview import open_preview_rgb
 
+# Suppress noisy TFLite/absl logs before loading Mediapipe.
+os.environ.setdefault("GLOG_minloglevel", "3")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
 try:
     from insightface.app import FaceAnalysis
 except Exception:  # pragma: no cover
@@ -69,13 +73,17 @@ def _get_mp_face():
 
 def _suppress_mp_logs() -> None:
     """Quiet noisy mediapipe / tflite logging."""
-    os.environ.setdefault("GLOG_minloglevel", "2")
-    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     try:
         from absl import logging as absl_logging
 
-        absl_logging.set_verbosity(absl_logging.ERROR)
+        absl_logging.set_verbosity(absl_logging.FATAL)
         absl_logging.use_absl_handler()
+    except Exception:
+        return
+    try:
+        import tensorflow as _tf
+
+        _tf.get_logger().setLevel("ERROR")
     except Exception:
         return
 
