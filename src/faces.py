@@ -1,3 +1,4 @@
+import os
 import pathlib
 import threading
 from typing import Dict, List, Optional
@@ -56,6 +57,7 @@ def _get_mp_face():
     if mp is None:
         return None
     try:
+        _suppress_mp_logs()
         detector = mp.solutions.face_detection.FaceDetection(
             model_selection=1, min_detection_confidence=0.3
         )
@@ -63,6 +65,19 @@ def _get_mp_face():
         return detector
     except Exception:
         return None
+
+
+def _suppress_mp_logs() -> None:
+    """Quiet noisy mediapipe / tflite logging."""
+    os.environ.setdefault("GLOG_minloglevel", "2")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+    try:
+        from absl import logging as absl_logging
+
+        absl_logging.set_verbosity(absl_logging.ERROR)
+        absl_logging.use_absl_handler()
+    except Exception:
+        return
 
 
 def _rotate(arr: np.ndarray, orientation: int) -> np.ndarray:
