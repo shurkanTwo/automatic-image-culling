@@ -1,4 +1,5 @@
 import pathlib
+import threading
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -19,7 +20,7 @@ except Exception:  # pragma: no cover
 
 
 _FACE_APP = None
-_MP_FACE = None
+_THREAD_LOCAL = threading.local()
 
 
 def _get_face_detector(face_cfg: Dict):
@@ -48,16 +49,18 @@ def _get_insightface(face_cfg: Dict):
 
 
 def _get_mp_face():
-    global _MP_FACE
-    if _MP_FACE is not None:
-        return _MP_FACE
+    # Mediapipe detectors are not thread-safe; keep one instance per thread.
+    detector = getattr(_THREAD_LOCAL, "mp_face", None)
+    if detector is not None:
+        return detector
     if mp is None:
         return None
     try:
-        _MP_FACE = mp.solutions.face_detection.FaceDetection(
+        detector = mp.solutions.face_detection.FaceDetection(
             model_selection=1, min_detection_confidence=0.3
         )
-        return _MP_FACE
+        _THREAD_LOCAL.mp_face = detector
+        return detector
     except Exception:
         return None
 
