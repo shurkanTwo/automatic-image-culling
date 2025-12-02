@@ -105,6 +105,9 @@ def detect_faces(
     if rgb_full is None:
         return None
     rgb_full = _rotate(rgb_full, orientation)
+    # Mediapipe/insightface expect uint8 images.
+    if rgb_full.dtype != np.uint8:
+        rgb_full = np.clip(rgb_full, 0, 255).astype(np.uint8)
     gray_arr = _rotate(gray_arr, orientation)
 
     if mp and isinstance(detector, mp.solutions.face_detection.FaceDetection):
