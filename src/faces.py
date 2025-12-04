@@ -36,8 +36,18 @@ def _get_insightface(face_cfg: Dict):
         return _FACE_APP
     if not FaceAnalysis:
         return None
+    providers_cfg = face_cfg.get("providers")
+    if isinstance(providers_cfg, str):
+        providers = [providers_cfg]
+    elif isinstance(providers_cfg, list) and providers_cfg:
+        providers = providers_cfg
+    else:
+        providers = ["CPUExecutionProvider"]
+    allowed_modules = face_cfg.get(
+        "allowed_modules", ["detection", "recognition"]
+    )
     try:
-        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        app = FaceAnalysis(name="buffalo_l", providers=providers, allowed_modules=allowed_modules)
         app.prepare(
             ctx_id=face_cfg.get("ctx_id", 0),
             det_size=(face_cfg.get("det_size", 640), face_cfg.get("det_size", 640)),
@@ -45,7 +55,24 @@ def _get_insightface(face_cfg: Dict):
         _FACE_APP = app
         return app
     except Exception:
-        return None
+        # Fallback to CPU if the requested providers fail.
+        try:
+            app = FaceAnalysis(
+                name="buffalo_l",
+                providers=["CPUExecutionProvider"],
+                allowed_modules=allowed_modules,
+            )
+            app.prepare(
+                ctx_id=face_cfg.get("ctx_id", 0),
+                det_size=(
+                    face_cfg.get("det_size", 640),
+                    face_cfg.get("det_size", 640),
+                ),
+            )
+            _FACE_APP = app
+            return app
+        except Exception:
+            return None
 
 
 def _get_mp_face():
@@ -80,13 +107,14 @@ def detect_faces(
     gray_arr: np.ndarray,
     face_cfg: Dict,
     orientation: int = 1,
+    rgb_arr: Optional[np.ndarray] = None,
 ) -> Optional[Dict]:
     detector = _get_face_detector(face_cfg)
     if detector is None:
         return None
 
     faces: List[Dict] = []
-    rgb_full = open_preview_rgb(preview_path, size=None)
+    rgb_full = rgb_arr if rgb_arr is not None else open_preview_rgb(preview_path, size=None)
     if rgb_full is None:
         return None
     rgb_full = _rotate(rgb_full, orientation)
@@ -135,9 +163,22 @@ def detect_faces(
                 continue
             face_gray = gray_arr[y1:y2, x1:x2]
             face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
-            faces.append(
-                {"bbox": box, "score": float(f.det_score), "sharpness": face_sharp}
-            )
+            face_entry = {
+                "bbox": box,
+                "score": float(f.det_score),
+                "sharpness": face_sharp,
+            }
+            if hasattr(f, "embedding") and f.embedding is not None:
+                try:
+                    face_entry["embedding"] = f.embedding.tolist()
+                except Exception:
+                    pass
+            elif hasattr(f, "normed_embedding") and f.normed_embedding is not None:
+                try:
+                    face_entry["embedding"] = f.normed_embedding.tolist()
+                except Exception:
+                    pass
+            faces.append(face_entry)
 
     if not faces:
         return None

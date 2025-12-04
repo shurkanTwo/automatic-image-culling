@@ -22,11 +22,14 @@ analysis:
   brightness_min: 0.08
   brightness_max: 0.92
   duplicate_hamming: 6
-  duplicate_window_seconds: 8
+  duplicate_window_seconds: 5
   face:
     enabled: True
     backend: insightface
     det_size: 1024
     ctx_id: 0
+    allowed_modules:
+      - detection
+      - recognition
   report_path: ./report.html
   results_path: ./analysis.json

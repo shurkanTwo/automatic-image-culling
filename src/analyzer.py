@@ -97,8 +97,13 @@ def analyze_files(
         face_info = None
         face_cfg = analysis_cfg.get("face", {})
         if face_cfg.get("enabled", False):
+            rgb_preview = open_preview_rgb(preview_path, size=None)
             face_info = detect_faces(
-                preview_path, arr, face_cfg, orientation=exif_orientation(exif)
+                preview_path,
+                arr,
+                face_cfg,
+                orientation=exif_orientation(exif),
+                rgb_arr=rgb_preview,
             )
         ph = phash(preview_path, Image=Image)
 
