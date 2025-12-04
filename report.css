@@ -1,0 +1,67 @@
+body { background: #f6f7fb; color: #1f2937; }
+img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }
+.table-alt tbody tr:nth-child(odd) td { background-color: #f4f7fb; }
+.table-alt tbody tr:nth-child(even) td { background-color: #ffffff; }
+.table-alt tbody tr:hover td { background-color: #e8f0ff; }
+.table-alt td, .table-alt th { text-align: center; vertical-align: middle; padding: 0.5rem 0.65rem; }
+.decision-cell { font-weight: 600; }
+.decision-keep { background-color: #d4edda !important; color: #0f5132 !important; }
+.decision-discard { background-color: #f8d7da !important; color: #842029 !important; }
+.table-alt tr:hover td.decision-keep { background-color: #cfe8d4 !important; }
+.table-alt tr:hover td.decision-discard { background-color: #f3cfd2 !important; }
+.content-wrap { padding: 2rem 2.5rem; }
+.metric-badge {
+  display: inline-block;
+  padding: 0.35rem 0.55rem;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  border: 1px solid rgba(15, 18, 35, 0.08);
+  min-width: 62px;
+}
+.lightbox {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+  z-index: 1000;
+}
+.lightbox.open { opacity: 1; pointer-events: all; }
+.lightbox img { max-width: 95vw; max-height: 95vh; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+#lightbox-prev, #lightbox-next {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 15vw;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.75;
+  background: rgba(255,255,255,0.14);
+  border: 0;
+  font-size: 1.5rem;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+#lightbox-prev:hover, #lightbox-next:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.22);
+}
+#lightbox-prev { left: 0; border-radius: 0 12px 12px 0; }
+#lightbox-next { right: 0; border-radius: 12px 0 0 12px; }
+.controls { display: flex; gap: 0.4rem; align-items: center; }
+.lightbox-nav {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+  padding: 0 1rem;
+}
+.lightbox-nav button {
+  pointer-events: auto;
+  opacity: 0.85;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 0.8rem; }
+.summary { margin: 0.25rem 0 0.75rem 0; font-weight: 600; }
