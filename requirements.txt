@@ -5,3 +5,6 @@ PyYAML>=6.0
 exifread>=3.0
 tqdm>=4.66
 scikit-image>=0.23
+mediapipe>=0.10
+insightface>=0.7.3
+onnxruntime>=1.17
