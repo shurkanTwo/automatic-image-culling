@@ -1,15 +1,9 @@
 ## Enter venv in git bash:
 
-py -3.11 -m venv .venv-3.11
+py -3.112 -m venv .venv-3.12
 
-source .venv-3.11/Scripts/activate
+source .venv-3.12/Scripts/activate
 
 uv pip install -r ./requirements.txt
 
 python -m src.main <command> --config config.yaml
-
----
-
-py -3.10 -m venv .venv-3.10
-
-source .venv-3.10/Scripts/activate

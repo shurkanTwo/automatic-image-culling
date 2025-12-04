@@ -8,3 +8,4 @@
 __pycache__/
 src/__pycache__/
 *.pyc
+report.html
