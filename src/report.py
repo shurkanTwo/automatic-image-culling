@@ -14,6 +14,14 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
   <style>
     body {{ background: #f6f7fb; color: #1f2937; }}
     img.preview {{ max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }}
+    .table-alt tbody tr:nth-child(odd) {{ background-color: #f4f7fb; }}
+    .table-alt tbody tr:nth-child(even) {{ background-color: #ffffff; }}
+    .table-alt tbody tr:hover {{ background-color: #e8f0ff; }}
+    .table-alt td, .table-alt th {{ text-align: center; vertical-align: middle; padding: 0.75rem 1rem; }}
+    .decision-cell {{ font-weight: 600; }}
+    .decision-keep {{ background-color: #d4edda; color: #0f5132; }}
+    .decision-discard {{ background-color: #f8d7da; color: #842029; }}
+    .content-wrap {{ padding: 2rem 2.5rem; }}
     .lightbox {{
       position: fixed; inset: 0; background: rgba(0,0,0,0.8);
       display: flex; align-items: center; justify-content: center;
@@ -22,6 +30,28 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     }}
     .lightbox.open {{ opacity: 1; pointer-events: all; }}
     .lightbox img {{ max-width: 95vw; max-height: 95vh; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
+    #lightbox-prev, #lightbox-next {{
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.9;
+    }}
+    #lightbox-prev {{ left: 16px; }}
+    #lightbox-next {{ right: 16px; }}
+    .controls {{ display: flex; gap: 0.4rem; align-items: center; }}
+    .lightbox-nav {{
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+      padding: 0 1rem;
+    }}
+    .lightbox-nav button {{
+      pointer-events: auto;
+      opacity: 0.9;
+    }}
     .lightbox-nav {{
       position: absolute;
       inset: 0;
@@ -41,7 +71,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
   </style>
 </head>
 <body>
-    <div class="container-lg py-4">
+    <div class="container-lg py-4 content-wrap">
     <h1 class="mb-1">ARW Analysis Report</h1>
     <p class="mb-3">Toggle decisions per photo and export as JSON.</p>
     <div id="summary" class="summary"></div>
@@ -55,7 +85,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
       <button id="lightbox-next" class="btn btn-light position-absolute top-50 end-0 translate-middle-y me-3">›</button>
     </div>
     <div class="table-responsive mt-3">
-      <table class="table table-striped table-hover align-middle table-bordered">
+      <table class="table table-hover align-middle table-alt">
         <thead>
           <tr id="header-row"></tr>
         </thead>
@@ -338,7 +368,8 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               break;
             }}
             case "decision": {{
-              td.className = item.decision === "keep" ? "table-success text-dark" : "table-danger text-dark";
+              const decisionClass = item.decision === "keep" ? "decision-keep" : "decision-discard";
+              td.className = `decision-cell ${{decisionClass}}`;
               const controls = document.createElement("div");
               controls.className = "controls d-flex gap-2";
               const btnKeep = document.createElement("button");
