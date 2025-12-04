@@ -1,7 +1,7 @@
 # Example configuration for ARW preprocessing and sorting
-input_dir: C:\Users\lucas\Desktop\03_Varanasi
-output_dir: C:\Users\lucas\Desktop\03_Varanasi\output
-preview_dir: C:\Users\lucas\Desktop\03_Varanasi\previews
+input_dir: C:\Users\lucas\Desktop\03_Varanasi_small
+output_dir: C:\Users\lucas\Desktop\03_Varanasi_small\output
+preview_dir: C:\Users\lucas\Desktop\03_Varanasi_small\previews
 preview:
   long_edge: 2048
   format: webp

@@ -184,6 +184,8 @@
         format: (_v, item) => formatCapture(item),
       },
       { key: "preview", label: "Preview", sortable: false },
+      { key: "decision", label: "Decision", sortable: true, type: "string", getter: (item) => item.decision ?? "" },
+      { key: "reasons", label: "Reasons", sortable: false },
       { key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) },
       { key: "tenengrad", label: "Tenengrad", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(0) },
       { key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(2) },
@@ -218,8 +220,6 @@
       { key: "composition", label: "Composition", sortable: true, type: "number", format: (v) => v.toFixed(2) },
       { key: "faces", label: "Faces", sortable: true, type: "number", getter: (item) => item.faces?.count ?? 0 },
       { key: "face_sharpness", label: "Face sharpness", sortable: true, type: "number", getter: (item) => item.faces?.best_sharpness, format: (v) => v.toFixed(1) },
-      { key: "decision", label: "Decision", sortable: true, type: "string", getter: (item) => item.decision ?? "" },
-      { key: "reasons", label: "Reasons", sortable: false },
     ];
     const columnsByKey = Object.fromEntries(columns.map((c) => [c.key, c]));
     const headerRow = document.getElementById("header-row");
@@ -279,7 +279,7 @@
 
     function render() {
       buildHeader();
-      tbody.innerHTML = "";
+      const fragment = document.createDocumentFragment();
       const stats = { total: data.length, keep: 0, discard: 0 };
       const colForSort = columnsByKey[sortState.key];
       const sortedIdx = data.map((_, idx) => idx).sort((a, b) => {
@@ -376,10 +376,11 @@
           }
           tr.appendChild(td);
         });
-        tbody.appendChild(tr);
+        fragment.appendChild(tr);
 
         if (item.decision === "keep") stats.keep += 1; else stats.discard += 1;
       });
+      tbody.replaceChildren(fragment);
 
       const keepPct = stats.total ? Math.round((stats.keep / stats.total) * 100) : 0;
       const discardPct = stats.total ? Math.round((stats.discard / stats.total) * 100) : 0;
