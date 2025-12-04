@@ -22,10 +22,17 @@ analysis:
   brightness_min: 0.08
   brightness_max: 0.92
   quality_score_min: 0.75
-  shadows_min: 0.0
-  shadows_max: 0.5
-  highlights_min: 0.0
-  highlights_max: 0.1
+  shadows_min: 0.01
+  shadows_max: 0.6
+  highlights_min: 0.01
+  highlights_max: 0.98
+  hard_fail_sharp_ratio: 0.55
+  hard_fail_teneng_ratio: 0.55
+  hard_fail_motion_ratio: 0.55
+  hard_fail_brightness_ratio: 0.5
+  hard_fail_noise_ratio: 0.45
+  hard_fail_shadows_ratio: 0.5
+  hard_fail_highlights_ratio: 0.5
   duplicate_hamming: 6
   duplicate_window_seconds: 5
   face:

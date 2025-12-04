@@ -167,15 +167,25 @@ def _suggest_keep(
 
     cutoff = cfg.get("quality_score_min", 0.75)
 
-    # Hard fails: if a critical signal is very low, reject regardless of blended score.
+    # Hard fails: configurable floor ratios to avoid keeping obviously bad frames.
+    hard_cfg = {
+        "sharp": cfg.get("hard_fail_sharp_ratio", 0.55),
+        "teneng": cfg.get("hard_fail_teneng_ratio", 0.55),
+        "motion": cfg.get("hard_fail_motion_ratio", 0.55),
+        "brightness": cfg.get("hard_fail_brightness_ratio", 0.5),
+        "noise": cfg.get("hard_fail_noise_ratio", 0.45),
+        "shadows": cfg.get("hard_fail_shadows_ratio", 0.5),
+        "highlights": cfg.get("hard_fail_highlights_ratio", 0.5),
+    }
+
     hard_fail = (
-        sharp_score < 0.55
-        or teneng_score < 0.55
-        or motion_score < 0.55
-        or brightness_score < 0.5
-        or noise_score < 0.45
-        or shadows_score < 0.5
-        or highlights_score < 0.5
+        sharp_score < hard_cfg["sharp"]
+        or teneng_score < hard_cfg["teneng"]
+        or motion_score < hard_cfg["motion"]
+        or brightness_score < hard_cfg["brightness"]
+        or noise_score < hard_cfg["noise"]
+        or shadows_score < hard_cfg["shadows"]
+        or highlights_score < hard_cfg["highlights"]
     )
 
     keep = (quality_score >= cutoff) and not hard_fail
@@ -183,28 +193,57 @@ def _suggest_keep(
     if not keep:
         if quality_score < cutoff:
             reasons.append(f"quality score {quality_score:.2f} below {cutoff:.2f}")
-        if sharp_score < 0.6:
-            reasons.append("soft")
-        if teneng_score < 0.6:
-            reasons.append("low contrast focus")
-        if motion_score < 0.6:
-            reasons.append("motion blur")
-        if noise_score < 0.6:
-            reasons.append("noisy")
-        if brightness_score < 0.6:
-            reasons.append("poor exposure")
-        if shadows_score < 0.6:
+
+        def add_reason(cond: bool, text: str) -> None:
+            if cond:
+                reasons.append(text)
+
+        add_reason(
+            sharp_score < hard_cfg["sharp"]
+            or sharpness < thresholds["sharpness_min"],
+            f"sharpness {sharpness:.1f} < min {thresholds['sharpness_min']:.1f}",
+        )
+        add_reason(
+            teneng_score < hard_cfg["teneng"]
+            or teneng < thresholds["tenengrad_min"],
+            f"contrast {teneng:.0f} < min {thresholds['tenengrad_min']:.0f}",
+        )
+        add_reason(
+            motion_score < hard_cfg["motion"]
+            or motion_ratio < thresholds["motion_ratio_min"],
+            f"motion ratio {motion_ratio:.2f} < min {thresholds['motion_ratio_min']:.2f}",
+        )
+        add_reason(
+            noise_score < hard_cfg["noise"] or noise > thresholds["noise_std_max"],
+            f"noise {noise:.1f} > max {thresholds['noise_std_max']:.1f}",
+        )
+        if brightness_score < hard_cfg["brightness"]:
+            if brightness_mean < thresholds["brightness_min"]:
+                reasons.append(
+                    f"brightness {brightness_mean:.2f} < min {thresholds['brightness_min']:.2f}"
+                )
+            elif brightness_mean > thresholds["brightness_max"]:
+                reasons.append(
+                    f"brightness {brightness_mean:.2f} > max {thresholds['brightness_max']:.2f}"
+                )
+            else:
+                reasons.append("poor exposure")
+        if shadows_score < hard_cfg["shadows"]:
             if shadows > shadows_max:
-                reasons.append("heavy shadows")
+                reasons.append(f"shadows {shadows:.2f} > max {shadows_max:.2f}")
             elif shadows < shadows_min:
-                reasons.append("flat shadows")
-        if highlights_score < 0.6:
+                reasons.append(f"shadows {shadows:.2f} < min {shadows_min:.2f}")
+        if highlights_score < hard_cfg["highlights"]:
             if highlights > highlights_max:
-                reasons.append("clipped highlights")
+                reasons.append(
+                    f"highlights {highlights:.2f} > max {highlights_max:.2f}"
+                )
             elif highlights < highlights_min:
-                reasons.append("flat highlights")
+                reasons.append(
+                    f"highlights {highlights:.2f} < min {highlights_min:.2f}"
+                )
         if comp_score < 0.4:
-            reasons.append("weak composition")
+            reasons.append(f"composition {composition:.2f} low")
     if duplicate:
         reasons.append("duplicate")
         keep = False
