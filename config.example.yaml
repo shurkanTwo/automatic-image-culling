@@ -33,6 +33,8 @@ analysis:
   hard_fail_noise_ratio: 0.45
   hard_fail_shadows_ratio: 0.5
   hard_fail_highlights_ratio: 0.5
+  hard_fail_sharp_center_ratio: 0.55
+  center_sharpness_min: 9.6
   hard_fail_composition_ratio: 0.4
   duplicate_hamming: 6
   duplicate_window_seconds: 8

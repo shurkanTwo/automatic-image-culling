@@ -104,6 +104,7 @@ def _clamp01(v: float) -> float:
 
 def _suggest_keep(
     sharpness: float,
+    sharpness_center: float,
     teneng: float,
     motion_ratio: float,
     noise: float,
@@ -119,6 +120,10 @@ def _suggest_keep(
     thresholds = _adjust_thresholds_for_exposure(cfg, exif)
 
     sharp_score = _clamp01(sharpness / thresholds["sharpness_min"])
+    center_min = cfg.get(
+        "center_sharpness_min", thresholds["sharpness_min"] * 1.2
+    )
+    sharp_center_score = _clamp01(sharpness_center / max(center_min, 1e-6))
     teneng_score = _clamp01(teneng / thresholds["tenengrad_min"])
     motion_score = _clamp01(motion_ratio / thresholds["motion_ratio_min"])
     noise_score = _clamp01(thresholds["noise_std_max"] / (thresholds["noise_std_max"] + max(noise, 1e-6)))
@@ -143,6 +148,7 @@ def _suggest_keep(
 
     weights = {
         "sharp": 1.5,
+        "sharp_center": 1.0,
         "teneng": 1.0,
         "motion": 1.0,
         "noise": 0.7,
@@ -154,6 +160,7 @@ def _suggest_keep(
 
     weighted_sum = (
         sharp_score * weights["sharp"]
+        + sharp_center_score * weights["sharp_center"]
         + teneng_score * weights["teneng"]
         + motion_score * weights["motion"]
         + noise_score * weights["noise"]
@@ -170,6 +177,7 @@ def _suggest_keep(
     # Hard fails: configurable floor ratios to avoid keeping obviously bad frames.
     hard_cfg = {
         "sharp": cfg.get("hard_fail_sharp_ratio", 0.55),
+        "sharp_center": cfg.get("hard_fail_sharp_center_ratio", 0.55),
         "teneng": cfg.get("hard_fail_teneng_ratio", 0.55),
         "motion": cfg.get("hard_fail_motion_ratio", 0.55),
         "brightness": cfg.get("hard_fail_brightness_ratio", 0.5),
@@ -181,6 +189,7 @@ def _suggest_keep(
 
     scores = {
         "sharp": sharp_score,
+        "sharp_center": sharp_center_score,
         "teneng": teneng_score,
         "motion": motion_score,
         "brightness": brightness_score,
@@ -206,6 +215,11 @@ def _suggest_keep(
             scores["sharp"] < hard_cfg["sharp"]
             or sharpness < thresholds["sharpness_min"],
             f"sharpness {sharpness:.1f} < min {thresholds['sharpness_min']:.1f}",
+        )
+        add_reason(
+            scores["sharp_center"] < hard_cfg["sharp_center"]
+            or sharpness_center < center_min,
+            f"center sharpness {sharpness_center:.1f} < min {center_min:.1f}",
         )
         add_reason(
             scores["teneng"] < hard_cfg["teneng"]
@@ -304,6 +318,12 @@ def analyze_files(
             "capture_time": dt.isoformat(),
             "capture_ts": dt.timestamp(),
             "sharpness": sharp,
+            "sharpness_center": variance_of_laplacian(
+                arr[
+                    int(arr.shape[0] * 0.25) : int(arr.shape[0] * 0.75),
+                    int(arr.shape[1] * 0.25) : int(arr.shape[1] * 0.75),
+                ]
+            ),
             "tenengrad": teneng,
             "motion_ratio": tensor["ratio"],
             "noise": noise,
@@ -449,6 +469,7 @@ def analyze_files(
         dup = idx in duplicate_indexes
         keep, reasons, quality_score = _suggest_keep(
             r["sharpness"],
+            r.get("sharpness_center", r["sharpness"]),
             r.get("tenengrad", 0.0),
             r.get("motion_ratio", 1.0),
             r.get("noise", 0.0),

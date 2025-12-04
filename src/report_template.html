@@ -231,6 +231,7 @@
         format: (_v, item) => formatCapture(item),
       },
       { key: "preview", label: "Preview", sortable: false },
+      { key: "sharpness_center", label: "Center sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) },
       { key: "decision", label: "Decision", sortable: true, type: "string", getter: (item) => item.decision ?? "" },
       { key: "reasons", label: "Reasons", sortable: false },
       { key: "quality_score", label: "Quality score", sortable: true, type: "number", metric: "quality_score", format: (v) => v.toFixed(2) },
