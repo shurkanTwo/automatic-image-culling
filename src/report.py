@@ -37,7 +37,9 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     </div>
     <div id="loading" class="d-flex align-items-center justify-content-center"><div class="spinner"></div>Loading.</div>
     <div class="lightbox" id="lightbox">
+      <button id="lightbox-prev" class="btn btn-light position-absolute top-50 start-0 translate-middle-y ms-3">‹</button>
       <img id="lightbox-img" src="" alt="Preview" />
+      <button id="lightbox-next" class="btn btn-light position-absolute top-50 end-0 translate-middle-y me-3">›</button>
     </div>
     <div class="table-responsive mt-3">
       <table class="table table-striped table-hover align-middle table-bordered">
@@ -54,7 +56,35 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     const tbody = document.getElementById("rows");
     const lightbox = document.getElementById("lightbox");
     const lightboxImg = document.getElementById("lightbox-img");
-    lightbox.onclick = () => {{ lightbox.classList.remove("open"); }};
+    const btnPrev = document.getElementById("lightbox-prev");
+    const btnNext = document.getElementById("lightbox-next");
+    let currentOrder = [];
+    let orderLookup = new Map();
+    let currentLightboxPos = null;
+    function openLightbox(pos) {{
+      if (!currentOrder.length) return;
+      if (pos < 0 || pos >= currentOrder.length) return;
+      const idx = currentOrder[pos];
+      const item = data[idx];
+      if (!item) return;
+      currentLightboxPos = pos;
+      lightboxImg.src = item.preview.replace(/\\\\/g, "/");
+      lightbox.classList.add("open");
+    }}
+    function closeLightbox() {{
+      lightbox.classList.remove("open");
+      currentLightboxPos = null;
+    }}
+    function stepLightbox(delta) {{
+      if (currentLightboxPos === null) return;
+      const nextPos = (currentLightboxPos + delta + currentOrder.length) % currentOrder.length;
+      openLightbox(nextPos);
+    }}
+    lightbox.onclick = (e) => {{
+      if (e.target === lightbox) closeLightbox();
+    }};
+    btnPrev.onclick = (e) => {{ e.stopPropagation(); stepLightbox(-1); }};
+    btnNext.onclick = (e) => {{ e.stopPropagation(); stepLightbox(1); }};
     const groups = {{}};
     data.forEach((item, idx) => {{
       if (item.duplicate_group !== undefined) {{
@@ -255,6 +285,9 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
         if (cmp !== 0) return cmp;
         return (data[a].path ?? "").localeCompare(data[b].path ?? "");
       }});
+      currentOrder = sortedIdx;
+      orderLookup = new Map(sortedIdx.map((id, pos) => [id, pos]));
+      currentLightboxPos = null;
 
       sortedIdx.forEach((idx) => {{
         const item = data[idx];
@@ -269,8 +302,8 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               img.src = item.preview.replace(/\\\\/g, "/");
               img.loading = "lazy";
               img.onclick = () => {{
-                lightboxImg.src = img.src;
-                lightbox.classList.add("open");
+                const pos = orderLookup.get(idx) ?? 0;
+                openLightbox(pos);
               }};
               td.appendChild(img);
               break;
