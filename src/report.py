@@ -12,8 +12,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
   <title>ARW Analysis Report</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QL6gUmHUh3Y0P7A5YkT2sHPyOdrFblOaUkL81P+GqjI7OU15m5uW2li31QnQ+8bN" crossorigin="anonymous">
   <style>
-    body {{ font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }}
-    h1 {{ margin-top: 0; }}
+    body {{ background: #f6f7fb; color: #1f2937; }}
     img.preview {{ max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }}
     .lightbox {{
       position: fixed; inset: 0; background: rgba(0,0,0,0.8);
@@ -23,31 +22,13 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     }}
     .lightbox.open {{ opacity: 1; pointer-events: all; }}
     .lightbox img {{ max-width: 95vw; max-height: 95vh; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
-    .controls button {{ margin-right: 0.25rem; }}
-    .keep {{ color: #22c55e; font-weight: 600; }}
-    .discard {{ color: #ef4444; font-weight: 600; }}
-    .badge {{ padding: 0.1rem 0.4rem; border-radius: 4px; background: #1f2937; margin-right: 0.3rem; }}
-    .metric-badge {{ border: 1px solid rgba(15,23,42,0.3); font-weight: 700; }}
     th.sortable {{ cursor: pointer; user-select: none; }}
     th.sortable .sort-indicator {{ margin-left: 0.25rem; opacity: 0.6; font-size: 0.8rem; }}
-    .reasons {{ margin-top: 0.35rem; color: #94a3b8; font-size: 0.9rem; }}
     .summary {{ margin: 0.25rem 0 0.75rem 0; font-weight: 600; }}
-    #loading {{
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.7); color: #e2e8f0; z-index: 2000;
-      font-size: 1.2rem; gap: 0.5rem;
-    }}
-    .spinner {{
-      width: 24px; height: 24px; border-radius: 999px; border: 3px solid #1e293b; border-top-color: #38bdf8;
-      animation: spin 0.8s linear infinite;
-    }}
-    @keyframes spin {{
-      to {{ transform: rotate(360deg); }}
-    }}
   </style>
 </head>
-<body class="bg-dark text-light">
-    <div class="container-fluid py-3">
+<body>
+    <div class="container-lg py-4">
     <h1 class="mb-1">ARW Analysis Report</h1>
     <p class="mb-3">Toggle decisions per photo and export as JSON.</p>
     <div id="summary" class="summary"></div>
@@ -58,8 +39,8 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     <div class="lightbox" id="lightbox">
       <img id="lightbox-img" src="" alt="Preview" />
     </div>
-    <div class="table-responsive">
-      <table class="table table-dark table-striped align-middle table-hover">
+    <div class="table-responsive mt-3">
+      <table class="table table-striped table-hover align-middle table-bordered">
         <thead>
           <tr id="header-row"></tr>
         </thead>
@@ -139,7 +120,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 
     function createBadge(text, metric, value) {{
       const div = document.createElement("div");
-      div.className = "badge bg-secondary text-light me-1";
+      div.className = "badge bg-secondary-subtle text-dark-emphasis border me-1";
       const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
       if (metric !== null && metric !== undefined && hasValue) {{
         const style = badgeStyle(metric, value);
@@ -153,7 +134,6 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     }}
 
     const columns = [
-      {{ key: "preview", label: "Preview", sortable: false }},
       {{
         key: "path",
         label: "File",
@@ -169,6 +149,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
         getter: (item) => item.capture_ts ?? 0,
         format: (_v, item) => item.capture_time ?? "n/a",
       }},
+      {{ key: "preview", label: "Preview", sortable: false }},
       {{ key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) }},
       {{ key: "tenengrad", label: "Tenengrad", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(0) }},
       {{ key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(2) }},
@@ -220,7 +201,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
           const indicator = document.createElement("span");
           indicator.className = "sort-indicator";
           indicator.textContent =
-            sortState.key === col.key ? (sortState.dir === "asc" ? "^" : "v") : "";
+            sortState.key === col.key ? (sortState.dir === "asc" ? "▲" : "▼") : "⇅";
           th.appendChild(indicator);
           th.onclick = () => toggleSort(col.key);
         }}
@@ -295,11 +276,13 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               break;
             }}
             case "path": {{
-              td.textContent = item.path;
+              const filename = (item.path || "").split(/[/\\\\]/).pop();
+              td.textContent = filename;
               if (item.duplicate_of) {{
                 const badge = document.createElement("div");
                 badge.className = "badge";
-                badge.textContent = "Duplicate of: " + item.duplicate_of;
+                const dupName = item.duplicate_of.split(/[/\\\\]/).pop();
+                badge.textContent = "Duplicate of: " + dupName;
                 td.appendChild(badge);
               }}
               break;
@@ -310,11 +293,8 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
             }}
             case "decision": {{
               td.className = item.decision === "keep" ? "table-success text-dark" : "table-danger text-dark";
-              const status = document.createElement("div");
-              status.className = item.decision === "keep" ? "keep" : "discard";
-              status.textContent = item.decision ? item.decision.toUpperCase() : "N/A";
               const controls = document.createElement("div");
-              controls.className = "controls d-flex gap-2 mt-2";
+              controls.className = "controls d-flex gap-2";
               const btnKeep = document.createElement("button");
               btnKeep.textContent = "Keep";
               btnKeep.className = "btn btn-success btn-sm";
@@ -332,7 +312,6 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               }};
               controls.appendChild(btnKeep);
               controls.appendChild(btnDrop);
-              td.appendChild(status);
               td.appendChild(controls);
               break;
             }}
