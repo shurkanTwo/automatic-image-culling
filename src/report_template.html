@@ -35,7 +35,9 @@
   </div>
   <script id="data" type="application/json">__DATA_JSON__</script>
   <script>
-    const data = JSON.parse(document.getElementById("data").textContent);
+    const payload = JSON.parse(document.getElementById("data").textContent);
+    const data = payload.results || [];
+    const cfgAnalysis = (payload.config && payload.config.analysis) || {};
     const tbody = document.getElementById("rows");
     const lightbox = document.getElementById("lightbox");
     const lightboxImg = document.getElementById("lightbox-img");
@@ -94,15 +96,85 @@
     };
 
     const clamp01 = (v) => Math.min(1, Math.max(0, v));
-    const scoreColor = (score) => `hsl(${Math.round(score * 120)}, 70%, 45%)`;
-    const minScore = (value, min, span = 2) => clamp01((value - min) / (min * span));
-    const maxScore = (value, max, span = 0.6) => clamp01((max - value) / (max * span));
-    const rangeScore = (value, min, max) => {
-      const mid = (min + max) / 2;
-      const half = (max - min) / 2;
-      const distance = Math.abs(value - mid);
-      return clamp01(1 - distance / half);
+    const scoreColor = (score) => {
+      const hue = Math.round(score * 120); // 0 = red, 120 = green
+      const light = Math.round(35 + 20 * score); // darker red when low, lighter green when high
+      return `hsl(${hue}, 75%, ${light}%)`;
     };
+
+    function scoreColorFromRatio(ratio) {
+      const r = Math.max(0, ratio);
+      let hue;
+      let light;
+      if (r < 1) {
+        hue = 0;
+        light = 18 + 28 * r; // dark red to brighter red
+      } else {
+        const scaled = Math.min(1, (r - 1)); // cap at 2x threshold
+        hue = scaled * 120;
+        light = 46 + 14 * scaled;
+      }
+      return `hsl(${Math.round(hue)}, 75%, ${Math.round(light)}%)`;
+    }
+
+    function metricRatio(metric, value) {
+      const thresholds = {
+        sharpnessMin: cfgAnalysis.sharpness_min ?? 8,
+        tenengradMin: cfgAnalysis.tenengrad_min ?? 200,
+        motionRatioMin: cfgAnalysis.motion_ratio_min ?? 0.02,
+        noiseStdMax: cfgAnalysis.noise_std_max ?? 25,
+        brightnessMin: cfgAnalysis.brightness_min ?? 0.08,
+        brightnessMax: cfgAnalysis.brightness_max ?? 0.92,
+        qualityScoreMin: cfgAnalysis.quality_score_min ?? 0.75,
+        shadowsMin: cfgAnalysis.shadows_min ?? 0.0,
+        shadowsMax: cfgAnalysis.shadows_max ?? 0.5,
+        highlightsMin: cfgAnalysis.highlights_min ?? 0.0,
+        highlightsMax: cfgAnalysis.highlights_max ?? 0.1,
+      };
+
+      switch (metric) {
+        case "sharpness":
+          return (value || 0) / Math.max(thresholds.sharpnessMin || 1, 1e-6);
+        case "tenengrad":
+          return (value || 0) / Math.max(thresholds.tenengradMin || 1, 1e-6);
+        case "motion_ratio":
+          return (value || 0) / Math.max(thresholds.motionRatioMin || 1, 1e-6);
+        case "noise":
+          return Math.max(thresholds.noiseStdMax || 1, 1e-6) / Math.max(value || 0, 1e-6);
+        case "brightness": {
+          if (value === undefined || value === null || Number.isNaN(value)) return 0;
+          const mid = (thresholds.brightnessMin + thresholds.brightnessMax) / 2;
+          const half = (thresholds.brightnessMax - thresholds.brightnessMin) / 2;
+          return clamp01(1 - Math.abs(value - mid) / Math.max(half, 1e-6));
+        }
+        case "quality_score": {
+          const min = thresholds.qualityScoreMin || 0.75;
+          return (value || 0) / Math.max(min, 1e-6);
+        }
+        case "shadows": {
+          const val = value || 0;
+          if (val < thresholds.shadowsMin) {
+            return clamp01(1 - (thresholds.shadowsMin - val) / Math.max(thresholds.shadowsMin, 1e-6));
+          }
+          if (val > thresholds.shadowsMax) {
+            return clamp01(1 - (val - thresholds.shadowsMax) / Math.max(1 - thresholds.shadowsMax, 1e-6));
+          }
+          return 1;
+        }
+        case "highlights": {
+          const val = value || 0;
+          if (val < thresholds.highlightsMin) {
+            return clamp01(1 - (thresholds.highlightsMin - val) / Math.max(thresholds.highlightsMin, 1e-6));
+          }
+          if (val > thresholds.highlightsMax) {
+            return clamp01(1 - (val - thresholds.highlightsMax) / Math.max(1 - thresholds.highlightsMax, 1e-6));
+          }
+          return 1;
+        }
+        default:
+          return null;
+      }
+    }
     function formatCapture(item) {
       const iso = item.capture_time;
       if (iso) {
@@ -121,35 +193,10 @@
       return "n/a";
     }
     function badgeStyle(metric, value) {
-      let score = null;
-      switch (metric) {
-        case "sharpness":
-          score = minScore(value, thresholds.sharpnessMin, 2.5);
-          break;
-        case "tenengrad":
-          score = minScore(value, thresholds.tenengradMin, 2.5);
-          break;
-        case "motion_ratio":
-          score = minScore(value, thresholds.motionRatioMin, 3);
-          break;
-        case "noise":
-          score = maxScore(value, thresholds.noiseStdMax, 1);
-          break;
-        case "brightness":
-          score = rangeScore(value, thresholds.brightnessMin, thresholds.brightnessMax);
-          break;
-        case "shadows":
-          score = maxScore(value, thresholds.shadowsMax, 1);
-          break;
-        case "highlights":
-          score = maxScore(value, thresholds.highlightsMax, 1);
-          break;
-        default:
-          score = null;
-      }
-      if (score === null) return null;
-      const backgroundColor = scoreColor(score);
-      const color = score > 0.55 ? "#0b1223" : "#f8fafc";
+      const ratio = metricRatio(metric, value);
+      if (ratio === null) return null;
+      const backgroundColor = scoreColorFromRatio(ratio);
+      const color = ratio > 0.65 ? "#0b1223" : "#f8fafc";
       return { backgroundColor, color };
     }
 
@@ -186,9 +233,10 @@
       { key: "preview", label: "Preview", sortable: false },
       { key: "decision", label: "Decision", sortable: true, type: "string", getter: (item) => item.decision ?? "" },
       { key: "reasons", label: "Reasons", sortable: false },
+      { key: "quality_score", label: "Quality score", sortable: true, type: "number", metric: "quality_score", format: (v) => v.toFixed(2) },
       { key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) },
       { key: "tenengrad", label: "Tenengrad", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(0) },
-      { key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(2) },
+      { key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => `${(v * 100).toFixed(0)}%` },
       { key: "noise", label: "Noise std", sortable: true, type: "number", metric: "noise", format: (v) => v.toFixed(1) },
       {
         key: "brightness",

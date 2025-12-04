@@ -21,6 +21,11 @@ analysis:
   noise_std_max: 25.0
   brightness_min: 0.08
   brightness_max: 0.92
+  quality_score_min: 0.75
+  shadows_min: 0.01
+  shadows_max: 0.5
+  highlights_min: 0.01
+  highlights_max: 0.98
   duplicate_hamming: 6
   duplicate_window_seconds: 8
   face:

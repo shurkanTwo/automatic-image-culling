@@ -65,10 +65,12 @@ def noise_estimate(arr: np.ndarray) -> float:
 
 def brightness_stats(arr: np.ndarray) -> Dict[str, float]:
     norm = arr / 255.0
+    shadow_cut = 0.2
+    highlight_cut = 0.7
     return {
         "mean": float(norm.mean()),
-        "shadows": float((norm < 0.1).mean()),
-        "highlights": float((norm > 0.9).mean()),
+        "shadows": float((norm < shadow_cut).mean()),
+        "highlights": float((norm > highlight_cut).mean()),
     }
 
 

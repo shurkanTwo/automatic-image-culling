@@ -1,7 +1,7 @@
 # Example configuration for ARW preprocessing and sorting
-input_dir: C:\Users\lucas\Desktop\03_Varanasi_small
-output_dir: C:\Users\lucas\Desktop\03_Varanasi_small\output
-preview_dir: C:\Users\lucas\Desktop\03_Varanasi_small\previews
+input_dir: C:\Users\lucas\Desktop\03_Varanasi
+output_dir: C:\Users\lucas\Desktop\03_Varanasi\output
+preview_dir: C:\Users\lucas\Desktop\03_Varanasi\previews
 preview:
   long_edge: 2048
   format: webp
@@ -15,12 +15,17 @@ sort:
   pattern: "{basename}"
 concurrency: 4
 analysis:
-  sharpness_min: 20.0
-  tenengrad_min: 500.0
+  sharpness_min: 40.0
+  tenengrad_min: 900.0
   motion_ratio_min: 0.02
   noise_std_max: 25.0
   brightness_min: 0.08
   brightness_max: 0.92
+  quality_score_min: 0.75
+  shadows_min: 0.0
+  shadows_max: 0.5
+  highlights_min: 0.0
+  highlights_max: 0.1
   duplicate_hamming: 6
   duplicate_window_seconds: 5
   face:

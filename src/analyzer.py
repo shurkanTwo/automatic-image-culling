@@ -31,39 +31,185 @@ except Exception:  # pragma: no cover
     skimage_psnr = None
 
 
+def _parse_iso(exif: Dict) -> Optional[float]:
+    raw = exif.get("EXIF ISOSpeedRatings") or exif.get("EXIF PhotographicSensitivity")
+    if not raw:
+        return None
+    try:
+        return float(str(raw).split()[0])
+    except Exception:
+        return None
+
+
+def _parse_shutter_seconds(exif: Dict) -> Optional[float]:
+    raw = exif.get("EXIF ExposureTime")
+    if not raw:
+        return None
+    s = str(raw).strip()
+    try:
+        if "/" in s:
+            num, den = s.split("/", 1)
+            return float(num) / float(den)
+        return float(s)
+    except Exception:
+        return None
+
+
+def _adjust_thresholds_for_exposure(cfg: Dict, exif: Dict) -> Dict[str, float]:
+    """
+    Tighten or relax thresholds based on shooting conditions:
+    - Low ISO + fast shutter -> demand more (tighten).
+    - High ISO + slow shutter -> demand less (relax).
+    """
+    iso = _parse_iso(exif) or 0.0
+    shutter = _parse_shutter_seconds(exif) or 0.0
+
+    sharp_min = cfg.get("sharpness_min", 12.0)
+    teneng_min = cfg.get("tenengrad_min", 30_000.0)
+    motion_min = cfg.get("motion_ratio_min", 0.25)
+
+    # Defaults
+    sharp_factor = 1.0
+    teneng_factor = 1.0
+    motion_factor = 1.0
+
+    low_iso, fast_shutter = 400.0, 1 / 500.0
+    high_iso, slow_shutter = 3200.0, 1 / 50.0
+
+    if iso and shutter:
+        if iso <= low_iso and shutter <= fast_shutter:
+            # Easy light: be stricter
+            sharp_factor = 1.2
+            teneng_factor = 1.15
+            motion_factor = 1.1
+        elif iso >= high_iso and shutter >= slow_shutter:
+            # Tough light: be more forgiving
+            sharp_factor = 0.8
+            teneng_factor = 0.8
+            motion_factor = 0.7
+
+    return {
+        "sharpness_min": sharp_min * sharp_factor,
+        "tenengrad_min": teneng_min * teneng_factor,
+        "motion_ratio_min": motion_min * motion_factor,
+        "noise_std_max": cfg.get("noise_std_max", 12.0),
+        "brightness_min": cfg.get("brightness_min", 0.08),
+        "brightness_max": cfg.get("brightness_max", 0.92),
+    }
+
+
+def _clamp01(v: float) -> float:
+    return max(0.0, min(1.0, v))
+
+
 def _suggest_keep(
     sharpness: float,
     teneng: float,
     motion_ratio: float,
     noise: float,
     brightness_mean: float,
+    shadows: float,
+    highlights: float,
+    composition: float,
     duplicate: bool,
     cfg: Dict,
-) -> Tuple[bool, List[str]]:
+    exif: Dict,
+) -> Tuple[bool, List[str], float]:
     reasons: List[str] = []
-    keep = True
-    if sharpness < cfg.get("sharpness_min", 12.0):
-        keep = False
-        reasons.append("soft")
-    if teneng < cfg.get("tenengrad_min", 30_000.0):
-        keep = False
-        reasons.append("low contrast focus")
-    if motion_ratio < cfg.get("motion_ratio_min", 0.25):
-        keep = False
-        reasons.append("motion blur")
-    if noise > cfg.get("noise_std_max", 12.0):
-        keep = False
-        reasons.append("noisy")
-    if brightness_mean < cfg.get("brightness_min", 0.08):
-        keep = False
-        reasons.append("too dark")
-    if brightness_mean > cfg.get("brightness_max", 0.92):
-        keep = False
-        reasons.append("too bright")
+    thresholds = _adjust_thresholds_for_exposure(cfg, exif)
+
+    sharp_score = _clamp01(sharpness / thresholds["sharpness_min"])
+    teneng_score = _clamp01(teneng / thresholds["tenengrad_min"])
+    motion_score = _clamp01(motion_ratio / thresholds["motion_ratio_min"])
+    noise_score = _clamp01(thresholds["noise_std_max"] / (thresholds["noise_std_max"] + max(noise, 1e-6)))
+    brightness_mid = (thresholds["brightness_min"] + thresholds["brightness_max"]) / 2
+    brightness_half = (thresholds["brightness_max"] - thresholds["brightness_min"]) / 2
+    brightness_score = _clamp01(1 - abs(brightness_mean - brightness_mid) / max(brightness_half, 1e-6))
+    shadows_min = cfg.get("shadows_min", 0.0)
+    shadows_max = cfg.get("shadows_max", 0.5)
+    highlights_min = cfg.get("highlights_min", 0.0)
+    highlights_max = cfg.get("highlights_max", 0.1)
+
+    def range_score(val: float, lo: float, hi: float) -> float:
+        if val < lo:
+            return _clamp01(1 - (lo - val) / max(lo, 1e-6))
+        if val > hi:
+            return _clamp01(1 - (val - hi) / max(1 - hi, 1e-6))
+        return 1.0
+
+    shadows_score = range_score(shadows, shadows_min, shadows_max)
+    highlights_score = range_score(highlights, highlights_min, highlights_max)
+    comp_score = _clamp01(composition if composition is not None else 0.0)
+
+    weights = {
+        "sharp": 1.5,
+        "teneng": 1.0,
+        "motion": 1.0,
+        "noise": 0.7,
+        "brightness": 0.8,
+        "shadows": 0.5,
+        "highlights": 0.5,
+        "composition": 0.4,
+    }
+
+    weighted_sum = (
+        sharp_score * weights["sharp"]
+        + teneng_score * weights["teneng"]
+        + motion_score * weights["motion"]
+        + noise_score * weights["noise"]
+        + brightness_score * weights["brightness"]
+        + shadows_score * weights["shadows"]
+        + highlights_score * weights["highlights"]
+        + comp_score * weights["composition"]
+    )
+    total_weights = sum(weights.values())
+    quality_score = weighted_sum / total_weights if total_weights else 0.0
+
+    cutoff = cfg.get("quality_score_min", 0.75)
+
+    # Hard fails: if a critical signal is very low, reject regardless of blended score.
+    hard_fail = (
+        sharp_score < 0.55
+        or teneng_score < 0.55
+        or motion_score < 0.55
+        or brightness_score < 0.5
+        or noise_score < 0.45
+        or shadows_score < 0.5
+        or highlights_score < 0.5
+    )
+
+    keep = (quality_score >= cutoff) and not hard_fail
+
+    if not keep:
+        if quality_score < cutoff:
+            reasons.append(f"quality score {quality_score:.2f} below {cutoff:.2f}")
+        if sharp_score < 0.6:
+            reasons.append("soft")
+        if teneng_score < 0.6:
+            reasons.append("low contrast focus")
+        if motion_score < 0.6:
+            reasons.append("motion blur")
+        if noise_score < 0.6:
+            reasons.append("noisy")
+        if brightness_score < 0.6:
+            reasons.append("poor exposure")
+        if shadows_score < 0.6:
+            if shadows > shadows_max:
+                reasons.append("heavy shadows")
+            elif shadows < shadows_min:
+                reasons.append("flat shadows")
+        if highlights_score < 0.6:
+            if highlights > highlights_max:
+                reasons.append("clipped highlights")
+            elif highlights < highlights_min:
+                reasons.append("flat highlights")
+        if comp_score < 0.4:
+            reasons.append("weak composition")
     if duplicate:
-        keep = False
         reasons.append("duplicate")
-    return keep, reasons
+        keep = False
+
+    return keep, reasons, quality_score
 
 
 def analyze_files(
@@ -256,15 +402,20 @@ def analyze_files(
 
     for idx, r in enumerate(results):
         dup = idx in duplicate_indexes
-        keep, reasons = _suggest_keep(
+        keep, reasons, quality_score = _suggest_keep(
             r["sharpness"],
             r.get("tenengrad", 0.0),
             r.get("motion_ratio", 1.0),
             r.get("noise", 0.0),
             r["brightness"]["mean"],
+            r["brightness"].get("shadows", 0.0),
+            r["brightness"].get("highlights", 0.0),
+            r.get("composition", 0.0),
             dup,
             analysis_cfg,
+            r.get("exif", {}),
         )
+        r["quality_score"] = quality_score
         if dup and r.get("duplicate_reason"):
             reasons = [
                 "duplicate: " + r["duplicate_reason"] if x == "duplicate" else x
@@ -293,4 +444,4 @@ def write_outputs(results: List[Dict], analysis_cfg: Dict) -> None:
     output_json = pathlib.Path(analysis_cfg.get("results_path", "./analysis.json"))
     output_json.write_text(json.dumps(results, indent=2), encoding="utf-8")
     report_path = pathlib.Path(analysis_cfg.get("report_path", "./report.html"))
-    write_html_report(results, report_path)
+    write_html_report(results, report_path, {"analysis": analysis_cfg})

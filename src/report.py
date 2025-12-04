@@ -7,12 +7,13 @@ TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
 
 
-def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
+def write_html_report(results: List[Dict], path: pathlib.Path, config: Dict = None) -> None:
     """
     Render the analysis results into an HTML report using an external template and CSS.
     """
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
-    rendered = template.replace("__DATA_JSON__", json.dumps(results))
+    payload = {"results": results, "config": config or {}}
+    rendered = template.replace("__DATA_JSON__", json.dumps(payload))
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered, encoding="utf-8")
