@@ -22,6 +22,19 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     }}
     .lightbox.open {{ opacity: 1; pointer-events: all; }}
     .lightbox img {{ max-width: 95vw; max-height: 95vh; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
+    .lightbox-nav {{
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+      padding: 0 1rem;
+    }}
+    .lightbox-nav button {{
+      pointer-events: auto;
+      opacity: 0.85;
+    }}
     th.sortable {{ cursor: pointer; user-select: none; }}
     th.sortable .sort-indicator {{ margin-left: 0.25rem; opacity: 0.6; font-size: 0.8rem; }}
     .summary {{ margin: 0.25rem 0 0.75rem 0; font-weight: 600; }}

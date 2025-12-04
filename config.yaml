@@ -26,7 +26,7 @@ analysis:
   face:
     enabled: True
     backend: insightface
-    det_size: 1024
+    det_size: 640
     ctx_id: 0
     allowed_modules:
       - detection
