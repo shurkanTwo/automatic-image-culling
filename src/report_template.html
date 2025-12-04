@@ -19,6 +19,7 @@
       <span class="text-muted">Loading...</span>
     </div>
     <div class="lightbox" id="lightbox">
+      <button id="lightbox-close" class="btn btn-light lightbox-close" aria-label="Close viewer">✕</button>
       <button id="lightbox-prev" class="btn btn-light" aria-label="Previous image">❮</button>
       <img id="lightbox-img" src="" alt="Preview" />
       <button id="lightbox-next" class="btn btn-light" aria-label="Next image">❯</button>
@@ -40,6 +41,7 @@
     const lightboxImg = document.getElementById("lightbox-img");
     const btnPrev = document.getElementById("lightbox-prev");
     const btnNext = document.getElementById("lightbox-next");
+    const btnClose = document.getElementById("lightbox-close");
     const loading = document.getElementById("loading");
     let currentOrder = [];
     let orderLookup = new Map();
@@ -69,6 +71,7 @@
     };
     btnPrev.onclick = (e) => { e.stopPropagation(); stepLightbox(-1); };
     btnNext.onclick = (e) => { e.stopPropagation(); stepLightbox(1); };
+    btnClose.onclick = (e) => { e.stopPropagation(); closeLightbox(); };
 
     const groups = {};
     data.forEach((item, idx) => {
