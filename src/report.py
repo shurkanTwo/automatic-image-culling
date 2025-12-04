@@ -28,6 +28,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     .keep {{ color: #22c55e; font-weight: 600; }}
     .discard {{ color: #ef4444; font-weight: 600; }}
     .badge {{ padding: 0.1rem 0.4rem; border-radius: 4px; background: #1f2937; margin-right: 0.3rem; }}
+    .metric-badge {{ border: 1px solid rgba(15,23,42,0.3); font-weight: 700; }}
     .row {{ background: #0b1223; }}
     .row:nth-child(odd) {{ background: #0c162b; }}
     .reasons {{ margin-top: 0.35rem; color: #94a3b8; font-size: 0.9rem; }}
@@ -84,6 +85,75 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
       }}
     }});
 
+    const thresholds = {{
+      sharpnessMin: 8,
+      tenengradMin: 200,
+      motionRatioMin: 0.02,
+      noiseStdMax: 25,
+      brightnessMin: 0.08,
+      brightnessMax: 0.92,
+      highlightsMax: 0.92,
+      shadowsMax: 0.5,
+    }};
+
+    const clamp01 = (v) => Math.min(1, Math.max(0, v));
+    const scoreColor = (score) => `hsl(${{Math.round(score * 120)}}, 70%, 45%)`;
+    const minScore = (value, min, span = 2) => clamp01((value - min) / (min * span));
+    const maxScore = (value, max, span = 0.6) => clamp01((max - value) / (max * span));
+    const rangeScore = (value, min, max) => {{
+      const mid = (min + max) / 2;
+      const half = (max - min) / 2;
+      const distance = Math.abs(value - mid);
+      return clamp01(1 - distance / half);
+    }};
+    function badgeStyle(metric, value) {{
+      let score = null;
+      switch (metric) {{
+        case "sharpness":
+          score = minScore(value, thresholds.sharpnessMin, 2.5);
+          break;
+        case "tenengrad":
+          score = minScore(value, thresholds.tenengradMin, 2.5);
+          break;
+        case "motion_ratio":
+          score = minScore(value, thresholds.motionRatioMin, 3);
+          break;
+        case "noise":
+          score = maxScore(value, thresholds.noiseStdMax, 1);
+          break;
+        case "brightness":
+          score = rangeScore(value, thresholds.brightnessMin, thresholds.brightnessMax);
+          break;
+        case "shadows":
+          score = maxScore(value, thresholds.shadowsMax, 1);
+          break;
+        case "highlights":
+          score = maxScore(value, thresholds.highlightsMax, 1);
+          break;
+        default:
+          score = null;
+      }}
+      if (score === null) return null;
+      const backgroundColor = scoreColor(score);
+      const color = score > 0.55 ? "#0b1223" : "#f8fafc";
+      return {{ backgroundColor, color }};
+    }}
+
+    function createBadge(text, metric, value) {{
+      const div = document.createElement("div");
+      div.className = "badge";
+      const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
+      if (metric !== null && metric !== undefined && hasValue) {{
+        const style = badgeStyle(metric, value);
+        if (style) {{
+          Object.assign(div.style, style);
+          div.classList.add("metric-badge");
+        }}
+      }}
+      div.textContent = text;
+      return div;
+    }}
+
     function hasOtherKeep(groupId, excludeIdx) {{
       if (!groups[groupId]) return false;
       return groups[groupId].some(i => i !== excludeIdx && data[i].decision === "keep");
@@ -116,21 +186,30 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
           tdFile.appendChild(badge);
         }}
 
-        const faceBadges = item.faces
-          ? `<div class="badge">Faces: ${{item.faces.count}}</div><div class="badge">Face sharpness: ${{item.faces.best_sharpness?.toFixed(1) ?? 'n/a'}}</div>`
-          : "";
         const tdScores = document.createElement("td");
-        tdScores.innerHTML = `
-          <div class="badge">Sharpness: ${{item.sharpness.toFixed(1)}}</div>
-          <div class="badge">Tenengrad: ${{item.tenengrad?.toFixed(0) ?? 'n/a'}}</div>
-          <div class="badge">Motion ratio: ${{item.motion_ratio?.toFixed(2) ?? 'n/a'}}</div>
-          <div class="badge">Noise std: ${{item.noise?.toFixed(1) ?? 'n/a'}}</div>
-          ${{faceBadges}}
-          <div class="badge">Brightness: ${{(item.brightness.mean * 100).toFixed(0)}}%</div>
-          <div class="badge">Shadows: ${{(item.brightness.shadows * 100).toFixed(0)}}%</div>
-          <div class="badge">Highlights: ${{(item.brightness.highlights * 100).toFixed(0)}}%</div>
-          <div class="badge">Composition: ${{item.composition.toFixed(2)}}</div>
-        `;
+        const addBadge = (label, metricKey, value, formatter = (v) => v) => {{
+          const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
+          const display = hasValue ? formatter(value) : "n/a";
+          tdScores.appendChild(createBadge(`${{label}}: ${{display}}`, hasValue ? metricKey : null, value));
+        }};
+
+        addBadge("Sharpness", "sharpness", item.sharpness, (v) => v.toFixed(1));
+        addBadge("Tenengrad", "tenengrad", item.tenengrad, (v) => v.toFixed(0));
+        addBadge("Motion ratio", "motion_ratio", item.motion_ratio, (v) => v.toFixed(2));
+        addBadge("Noise std", "noise", item.noise, (v) => v.toFixed(1));
+
+        if (item.faces) {{
+          addBadge("Faces", null, item.faces.count, (v) => v);
+          addBadge("Face sharpness", null, item.faces.best_sharpness, (v) => v.toFixed(1));
+        }}
+
+        if (item.brightness) {{
+          addBadge("Brightness", "brightness", item.brightness.mean, (v) => `${{(v * 100).toFixed(0)}}%`);
+          addBadge("Shadows", "shadows", item.brightness.shadows, (v) => `${{(v * 100).toFixed(0)}}%`);
+          addBadge("Highlights", "highlights", item.brightness.highlights, (v) => `${{(v * 100).toFixed(0)}}%`);
+        }}
+
+        addBadge("Composition", null, item.composition, (v) => v.toFixed(2));
 
         const tdDecision = document.createElement("td");
         const status = document.createElement("div");
