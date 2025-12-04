@@ -126,9 +126,7 @@
         brightnessMin: cfgAnalysis.brightness_min ?? 0.08,
         brightnessMax: cfgAnalysis.brightness_max ?? 0.92,
         qualityScoreMin: cfgAnalysis.quality_score_min ?? 0.75,
-        shadowsMin: cfgAnalysis.shadows_min ?? 0.0,
         shadowsMax: cfgAnalysis.shadows_max ?? 0.5,
-        highlightsMin: cfgAnalysis.highlights_min ?? 0.0,
         highlightsMax: cfgAnalysis.highlights_max ?? 0.1,
       };
 
@@ -152,24 +150,25 @@
           return (value || 0) / Math.max(min, 1e-6);
         }
         case "shadows": {
-          const val = value || 0;
-          if (val < thresholds.shadowsMin) {
-            return clamp01(1 - (thresholds.shadowsMin - val) / Math.max(thresholds.shadowsMin, 1e-6));
-          }
-          if (val > thresholds.shadowsMax) {
-            return clamp01(1 - (val - thresholds.shadowsMax) / Math.max(1 - thresholds.shadowsMax, 1e-6));
-          }
-          return 1;
+          const val = value ?? 0;
+          const lo = thresholds.shadowsMin ?? 0;
+          const hi = thresholds.shadowsMax ?? 1;
+          const span = Math.max(hi - lo, 1e-6);
+          // Triangle: red below lo, red above hi, green at midpoint
+          const mid = lo + span / 2;
+          const dist = Math.abs(val - mid);
+          const norm = clamp01(1 - dist / (span / 2));
+          return 1 + norm; // >1 inside band -> green, <1 outside -> red
         }
         case "highlights": {
-          const val = value || 0;
-          if (val < thresholds.highlightsMin) {
-            return clamp01(1 - (thresholds.highlightsMin - val) / Math.max(thresholds.highlightsMin, 1e-6));
-          }
-          if (val > thresholds.highlightsMax) {
-            return clamp01(1 - (val - thresholds.highlightsMax) / Math.max(1 - thresholds.highlightsMax, 1e-6));
-          }
-          return 1;
+          const val = value ?? 0;
+          const lo = thresholds.highlightsMin ?? 0;
+          const hi = thresholds.highlightsMax ?? 1;
+          const span = Math.max(hi - lo, 1e-6);
+          const mid = lo + span / 2;
+          const dist = Math.abs(val - mid);
+          const norm = clamp01(1 - dist / (span / 2));
+          return 1 + norm;
         }
         default:
           return null;
