@@ -10,18 +10,29 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 <head>
   <meta charset="utf-8" />
   <title>ARW Analysis Report</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QL6gUmHUh3Y0P7A5YkT2sHPyOdrFblOaUkL81P+GqjI7OU15m5uW2li31QnQ+8bN" crossorigin="anonymous">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body {{ background: #f6f7fb; color: #1f2937; }}
     img.preview {{ max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }}
-    .table-alt tbody tr:nth-child(odd) {{ background-color: #f4f7fb; }}
-    .table-alt tbody tr:nth-child(even) {{ background-color: #ffffff; }}
-    .table-alt tbody tr:hover {{ background-color: #e8f0ff; }}
-    .table-alt td, .table-alt th {{ text-align: center; vertical-align: middle; padding: 0.75rem 1rem; }}
+    .table-alt tbody tr:nth-child(odd) td {{ background-color: #f4f7fb; }}
+    .table-alt tbody tr:nth-child(even) td {{ background-color: #ffffff; }}
+    .table-alt tbody tr:hover td {{ background-color: #e8f0ff; }}
+    .table-alt td, .table-alt th {{ text-align: center; vertical-align: middle; padding: 0.5rem 0.65rem; }}
     .decision-cell {{ font-weight: 600; }}
-    .decision-keep {{ background-color: #d4edda; color: #0f5132; }}
-    .decision-discard {{ background-color: #f8d7da; color: #842029; }}
+    .decision-keep {{ background-color: #d4edda !important; color: #0f5132 !important; }}
+    .decision-discard {{ background-color: #f8d7da !important; color: #842029 !important; }}
+    .table-alt tr:hover td.decision-keep {{ background-color: #cfe8d4 !important; }}
+    .table-alt tr:hover td.decision-discard {{ background-color: #f3cfd2 !important; }}
     .content-wrap {{ padding: 2rem 2.5rem; }}
+    .metric-badge {{
+      display: inline-block;
+      padding: 0.35rem 0.55rem;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      border: 1px solid rgba(15, 18, 35, 0.08);
+      min-width: 62px;
+    }}
     .lightbox {{
       position: fixed; inset: 0; background: rgba(0,0,0,0.8);
       display: flex; align-items: center; justify-content: center;
@@ -32,12 +43,25 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     .lightbox img {{ max-width: 95vw; max-height: 95vh; border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }}
     #lightbox-prev, #lightbox-next {{
       position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      opacity: 0.9;
+      top: 0;
+      bottom: 0;
+      width: 18vw;
+      min-width: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.75;
+      background: rgba(255,255,255,0.14);
+      border: 0;
+      font-size: 1.5rem;
+      transition: opacity 0.15s ease, background-color 0.15s ease;
     }}
-    #lightbox-prev {{ left: 16px; }}
-    #lightbox-next {{ right: 16px; }}
+    #lightbox-prev:hover, #lightbox-next:hover {{
+      opacity: 1;
+      background: rgba(255,255,255,0.22);
+    }}
+    #lightbox-prev {{ left: 0; border-radius: 0 12px 12px 0; }}
+    #lightbox-next {{ right: 0; border-radius: 12px 0 0 12px; }}
     .controls {{ display: flex; gap: 0.4rem; align-items: center; }}
     .lightbox-nav {{
       position: absolute;
@@ -71,18 +95,21 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
   </style>
 </head>
 <body>
-    <div class="container-lg py-4 content-wrap">
+    <div class="container-fluid py-4 content-wrap">
     <h1 class="mb-1">ARW Analysis Report</h1>
     <p class="mb-3">Toggle decisions per photo and export as JSON.</p>
     <div id="summary" class="summary"></div>
     <div class="mb-3">
       <button id="export" class="btn btn-primary btn-sm">Download decisions JSON</button>
     </div>
-    <div id="loading" class="d-flex align-items-center justify-content-center"><div class="spinner"></div>Loading.</div>
+    <div id="loading" class="d-flex align-items-center justify-content-center py-3">
+      <div class="spinner-border text-primary me-2" role="status" aria-hidden="true"></div>
+      <span class="text-muted">Loading...</span>
+    </div>
     <div class="lightbox" id="lightbox">
-      <button id="lightbox-prev" class="btn btn-light position-absolute top-50 start-0 translate-middle-y ms-3">‹</button>
+      <button id="lightbox-prev" class="btn btn-light">‹</button>
       <img id="lightbox-img" src="" alt="Preview" />
-      <button id="lightbox-next" class="btn btn-light position-absolute top-50 end-0 translate-middle-y me-3">›</button>
+      <button id="lightbox-next" class="btn btn-light">›</button>
     </div>
     <div class="table-responsive mt-3">
       <table class="table table-hover align-middle table-alt">
@@ -101,6 +128,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     const lightboxImg = document.getElementById("lightbox-img");
     const btnPrev = document.getElementById("lightbox-prev");
     const btnNext = document.getElementById("lightbox-next");
+    const loading = document.getElementById("loading");
     let currentOrder = [];
     let orderLookup = new Map();
     let currentLightboxPos = null;
@@ -158,6 +186,23 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
       const distance = Math.abs(value - mid);
       return clamp01(1 - distance / half);
     }};
+    function formatCapture(item) {{
+      const iso = item.capture_time;
+      if (iso) {{
+        const d = new Date(iso);
+        if (!Number.isNaN(d.getTime())) {{
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, "0");
+          const day = String(d.getDate()).padStart(2, "0");
+          const hh = String(d.getHours()).padStart(2, "0");
+          const mm = String(d.getMinutes()).padStart(2, "0");
+          return `${{y}}-${{m}}-${{day}} ${{hh}}:${{mm}}`;
+        }}
+        if (iso.length >= 16) return iso.replace("T", " ").slice(0, 16);
+        return iso;
+      }}
+      return "n/a";
+    }}
     function badgeStyle(metric, value) {{
       let score = null;
       switch (metric) {{
@@ -193,13 +238,12 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 
     function createBadge(text, metric, value) {{
       const div = document.createElement("div");
-      div.className = "badge bg-secondary-subtle text-dark-emphasis border me-1";
+      div.className = "metric-badge me-1";
       const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
       if (metric !== null && metric !== undefined && hasValue) {{
         const style = badgeStyle(metric, value);
         if (style) {{
           Object.assign(div.style, style);
-          div.classList.add("metric-badge");
         }}
       }}
       div.textContent = text;
@@ -220,7 +264,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
         sortable: true,
         type: "number",
         getter: (item) => item.capture_ts ?? 0,
-        format: (_v, item) => item.capture_time ?? "n/a",
+        format: (_v, item) => formatCapture(item),
       }},
       {{ key: "preview", label: "Preview", sortable: false }},
       {{ key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) }},
@@ -356,7 +400,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               td.textContent = filename;
               if (item.duplicate_of) {{
                 const badge = document.createElement("div");
-                badge.className = "badge";
+                badge.className = "badge bg-light text-dark border";
                 const dupName = item.duplicate_of.split(/[/\\\\]/).pop();
                 badge.textContent = "Duplicate of: " + dupName;
                 td.appendChild(badge);
@@ -364,7 +408,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
               break;
             }}
             case "capture": {{
-              td.textContent = item.capture_time ?? "n/a";
+              td.textContent = formatCapture(item);
               break;
             }}
             case "decision": {{
@@ -425,7 +469,9 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
       const summaryDiv = document.getElementById("summary");
       summaryDiv.textContent = `Keeps: ${{keepPct}}% (${{stats.keep}}/${{stats.total}}) • Discards: ${{discardPct}}% (${{stats.discard}}/${{stats.total}})`;
 
-      document.getElementById("loading").style.display = "none";
+      if (loading && loading.parentNode) {{
+        loading.parentNode.removeChild(loading);
+      }}
     }}
 
     render();

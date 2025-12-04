@@ -24,7 +24,7 @@ analysis:
   duplicate_hamming: 6
   duplicate_window_seconds: 5
   face:
-    enabled: True
+    enabled: False
     backend: insightface
     det_size: 640
     ctx_id: 0
