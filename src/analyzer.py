@@ -176,17 +176,21 @@ def _suggest_keep(
         "noise": cfg.get("hard_fail_noise_ratio", 0.45),
         "shadows": cfg.get("hard_fail_shadows_ratio", 0.5),
         "highlights": cfg.get("hard_fail_highlights_ratio", 0.5),
+        "composition": cfg.get("hard_fail_composition_ratio", 0.4),
     }
 
-    hard_fail = (
-        sharp_score < hard_cfg["sharp"]
-        or teneng_score < hard_cfg["teneng"]
-        or motion_score < hard_cfg["motion"]
-        or brightness_score < hard_cfg["brightness"]
-        or noise_score < hard_cfg["noise"]
-        or shadows_score < hard_cfg["shadows"]
-        or highlights_score < hard_cfg["highlights"]
-    )
+    scores = {
+        "sharp": sharp_score,
+        "teneng": teneng_score,
+        "motion": motion_score,
+        "brightness": brightness_score,
+        "noise": noise_score,
+        "shadows": shadows_score,
+        "highlights": highlights_score,
+        "composition": comp_score,
+    }
+
+    hard_fail = any(scores[k] < hard_cfg[k] for k in scores)
 
     keep = (quality_score >= cutoff) and not hard_fail
 
@@ -199,25 +203,25 @@ def _suggest_keep(
                 reasons.append(text)
 
         add_reason(
-            sharp_score < hard_cfg["sharp"]
+            scores["sharp"] < hard_cfg["sharp"]
             or sharpness < thresholds["sharpness_min"],
             f"sharpness {sharpness:.1f} < min {thresholds['sharpness_min']:.1f}",
         )
         add_reason(
-            teneng_score < hard_cfg["teneng"]
+            scores["teneng"] < hard_cfg["teneng"]
             or teneng < thresholds["tenengrad_min"],
             f"contrast {teneng:.0f} < min {thresholds['tenengrad_min']:.0f}",
         )
         add_reason(
-            motion_score < hard_cfg["motion"]
+            scores["motion"] < hard_cfg["motion"]
             or motion_ratio < thresholds["motion_ratio_min"],
             f"motion ratio {motion_ratio:.2f} < min {thresholds['motion_ratio_min']:.2f}",
         )
         add_reason(
-            noise_score < hard_cfg["noise"] or noise > thresholds["noise_std_max"],
+            scores["noise"] < hard_cfg["noise"] or noise > thresholds["noise_std_max"],
             f"noise {noise:.1f} > max {thresholds['noise_std_max']:.1f}",
         )
-        if brightness_score < hard_cfg["brightness"]:
+        if scores["brightness"] < hard_cfg["brightness"]:
             if brightness_mean < thresholds["brightness_min"]:
                 reasons.append(
                     f"brightness {brightness_mean:.2f} < min {thresholds['brightness_min']:.2f}"
@@ -228,12 +232,12 @@ def _suggest_keep(
                 )
             else:
                 reasons.append("poor exposure")
-        if shadows_score < hard_cfg["shadows"]:
+        if scores["shadows"] < hard_cfg["shadows"]:
             if shadows > shadows_max:
                 reasons.append(f"shadows {shadows:.2f} > max {shadows_max:.2f}")
             elif shadows < shadows_min:
                 reasons.append(f"shadows {shadows:.2f} < min {shadows_min:.2f}")
-        if highlights_score < hard_cfg["highlights"]:
+        if scores["highlights"] < hard_cfg["highlights"]:
             if highlights > highlights_max:
                 reasons.append(
                     f"highlights {highlights:.2f} > max {highlights_max:.2f}"
@@ -242,8 +246,10 @@ def _suggest_keep(
                 reasons.append(
                     f"highlights {highlights:.2f} < min {highlights_min:.2f}"
                 )
-        if comp_score < 0.4:
-            reasons.append(f"composition {composition:.2f} low")
+        if scores["composition"] < hard_cfg["composition"]:
+            reasons.append(
+                f"composition {composition:.2f} < min {hard_cfg['composition']:.2f}"
+            )
     if duplicate:
         reasons.append("duplicate")
         keep = False
