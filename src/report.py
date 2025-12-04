@@ -10,12 +10,11 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 <head>
   <meta charset="utf-8" />
   <title>ARW Analysis Report</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QL6gUmHUh3Y0P7A5YkT2sHPyOdrFblOaUkL81P+GqjI7OU15m5uW2li31QnQ+8bN" crossorigin="anonymous">
   <style>
-    body {{ font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 1rem; }}
+    body {{ font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }}
     h1 {{ margin-top: 0; }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ padding: 0.5rem; border-bottom: 1px solid #1e293b; vertical-align: top; }}
-    img.preview {{ max-width: 200px; height: auto; border-radius: 4px; cursor: zoom-in; }}
+    img.preview {{ max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }}
     .lightbox {{
       position: fixed; inset: 0; background: rgba(0,0,0,0.8);
       display: flex; align-items: center; justify-content: center;
@@ -29,8 +28,8 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     .discard {{ color: #ef4444; font-weight: 600; }}
     .badge {{ padding: 0.1rem 0.4rem; border-radius: 4px; background: #1f2937; margin-right: 0.3rem; }}
     .metric-badge {{ border: 1px solid rgba(15,23,42,0.3); font-weight: 700; }}
-    .row {{ background: #0b1223; }}
-    .row:nth-child(odd) {{ background: #0c162b; }}
+    th.sortable {{ cursor: pointer; user-select: none; }}
+    th.sortable .sort-indicator {{ margin-left: 0.25rem; opacity: 0.6; font-size: 0.8rem; }}
     .reasons {{ margin-top: 0.35rem; color: #94a3b8; font-size: 0.9rem; }}
     .summary {{ margin: 0.25rem 0 0.75rem 0; font-weight: 600; }}
     #loading {{
@@ -47,28 +46,27 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
     }}
   </style>
 </head>
-<body>
-  <h1>ARW Analysis Report</h1>
-  <p>Toggle decisions per photo and export as JSON.</p>
-  <div id="summary" class="summary"></div>
-  <div style="margin-bottom: 1rem;">
-    <button id="export">Download decisions JSON</button>
+<body class="bg-dark text-light">
+    <div class="container-fluid py-3">
+    <h1 class="mb-1">ARW Analysis Report</h1>
+    <p class="mb-3">Toggle decisions per photo and export as JSON.</p>
+    <div id="summary" class="summary"></div>
+    <div class="mb-3">
+      <button id="export" class="btn btn-primary btn-sm">Download decisions JSON</button>
+    </div>
+    <div id="loading" class="d-flex align-items-center justify-content-center"><div class="spinner"></div>Loading.</div>
+    <div class="lightbox" id="lightbox">
+      <img id="lightbox-img" src="" alt="Preview" />
+    </div>
+    <div class="table-responsive">
+      <table class="table table-dark table-striped align-middle table-hover">
+        <thead>
+          <tr id="header-row"></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
   </div>
-  <div id="loading"><div class="spinner"></div>Loading…</div>
-  <div class="lightbox" id="lightbox">
-    <img id="lightbox-img" src="" alt="Preview" />
-  </div>
-  <table>
-    <thead>
-      <tr>
-        <th>Preview</th>
-        <th>File</th>
-        <th>Scores</th>
-        <th>Decision</th>
-      </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
   <script id="data" type="application/json">{data_json}</script>
   <script>
     const data = JSON.parse(document.getElementById("data").textContent);
@@ -141,7 +139,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 
     function createBadge(text, metric, value) {{
       const div = document.createElement("div");
-      div.className = "badge";
+      div.className = "badge bg-secondary text-light me-1";
       const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
       if (metric !== null && metric !== undefined && hasValue) {{
         const style = badgeStyle(metric, value);
@@ -154,97 +152,213 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
       return div;
     }}
 
+    const columns = [
+      {{ key: "preview", label: "Preview", sortable: false }},
+      {{
+        key: "path",
+        label: "File",
+        sortable: true,
+        type: "string",
+        getter: (item) => item.path?.toLowerCase() ?? "",
+      }},
+      {{
+        key: "capture",
+        label: "Captured",
+        sortable: true,
+        type: "number",
+        getter: (item) => item.capture_ts ?? 0,
+        format: (_v, item) => item.capture_time ?? "n/a",
+      }},
+      {{ key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) }},
+      {{ key: "tenengrad", label: "Tenengrad", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(0) }},
+      {{ key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(2) }},
+      {{ key: "noise", label: "Noise std", sortable: true, type: "number", metric: "noise", format: (v) => v.toFixed(1) }},
+      {{
+        key: "brightness",
+        label: "Brightness",
+        sortable: true,
+        type: "number",
+        metric: "brightness",
+        getter: (item) => item.brightness?.mean,
+        format: (v) => `${{(v * 100).toFixed(0)}}%`,
+      }},
+      {{
+        key: "shadows",
+        label: "Shadows",
+        sortable: true,
+        type: "number",
+        metric: "shadows",
+        getter: (item) => item.brightness?.shadows,
+        format: (v) => `${{(v * 100).toFixed(0)}}%`,
+      }},
+      {{
+        key: "highlights",
+        label: "Highlights",
+        sortable: true,
+        type: "number",
+        metric: "highlights",
+        getter: (item) => item.brightness?.highlights,
+        format: (v) => `${{(v * 100).toFixed(0)}}%`,
+      }},
+      {{ key: "composition", label: "Composition", sortable: true, type: "number", format: (v) => v.toFixed(2) }},
+      {{ key: "faces", label: "Faces", sortable: true, type: "number", getter: (item) => item.faces?.count ?? 0 }},
+      {{ key: "face_sharpness", label: "Face sharpness", sortable: true, type: "number", getter: (item) => item.faces?.best_sharpness, format: (v) => v.toFixed(1) }},
+      {{ key: "decision", label: "Decision", sortable: true, type: "string", getter: (item) => item.decision ?? "" }},
+      {{ key: "reasons", label: "Reasons", sortable: false }},
+    ];
+    const columnsByKey = Object.fromEntries(columns.map((c) => [c.key, c]));
+    const headerRow = document.getElementById("header-row");
+    let sortState = {{ key: "path", dir: "asc" }};
+
+    function buildHeader() {{
+      headerRow.innerHTML = "";
+      columns.forEach((col) => {{
+        const th = document.createElement("th");
+        th.textContent = col.label;
+        if (col.sortable !== false) {{
+          th.classList.add("sortable");
+          const indicator = document.createElement("span");
+          indicator.className = "sort-indicator";
+          indicator.textContent =
+            sortState.key === col.key ? (sortState.dir === "asc" ? "^" : "v") : "";
+          th.appendChild(indicator);
+          th.onclick = () => toggleSort(col.key);
+        }}
+        headerRow.appendChild(th);
+      }});
+    }}
+
+    function toggleSort(key) {{
+      const col = columnsByKey[key];
+      if (!col || col.sortable === false) return;
+      if (sortState.key === key) {{
+        sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+      }} else {{
+        sortState = {{ key, dir: "asc" }};
+      }}
+      render();
+    }}
+
+    function valueForSort(item, col) {{
+      if (!col) return item.path ?? "";
+      if (col.getter) return col.getter(item);
+      return item[col.key];
+    }}
+
+    function compareValues(a, b, col) {{
+      const direction = sortState.dir === "asc" ? 1 : -1;
+      if (a === undefined || a === null) return (b === undefined || b === null) ? 0 : 1;
+      if (b === undefined || b === null) return -1;
+      if (col && col.type === "string") {{
+        return a.toString().localeCompare(b.toString()) * direction;
+      }}
+      if (a > b) return 1 * direction;
+      if (a < b) return -1 * direction;
+      return 0;
+    }}
+
     function hasOtherKeep(groupId, excludeIdx) {{
       if (!groups[groupId]) return false;
       return groups[groupId].some(i => i !== excludeIdx && data[i].decision === "keep");
     }}
 
     function render() {{
+      buildHeader();
       tbody.innerHTML = "";
       const stats = {{ total: data.length, keep: 0, discard: 0 }};
-      data.forEach((item, idx) => {{
+      const colForSort = columnsByKey[sortState.key];
+      const sortedIdx = data.map((_, idx) => idx).sort((a, b) => {{
+        const av = valueForSort(data[a], colForSort);
+        const bv = valueForSort(data[b], colForSort);
+        const cmp = compareValues(av, bv, colForSort);
+        if (cmp !== 0) return cmp;
+        return (data[a].path ?? "").localeCompare(data[b].path ?? "");
+      }});
+
+      sortedIdx.forEach((idx) => {{
+        const item = data[idx];
         const tr = document.createElement("tr");
-        tr.className = "row";
 
-        const tdImg = document.createElement("td");
-        const img = document.createElement("img");
-        img.className = "preview";
-        img.src = item.preview.replace(/\\\\/g, "/");
-        img.loading = "lazy";
-        img.onclick = () => {{
-          lightboxImg.src = img.src;
-          lightbox.classList.add("open");
-        }};
-        tdImg.appendChild(img);
-
-        const tdFile = document.createElement("td");
-        tdFile.innerHTML = `<div>{'{'}${{item.path}}{'}'}</div>`;
-        if (item.duplicate_of) {{
-          const badge = document.createElement("div");
-          badge.className = "badge";
-          badge.textContent = "Duplicate of: " + item.duplicate_of;
-          tdFile.appendChild(badge);
-        }}
-
-        const tdScores = document.createElement("td");
-        const addBadge = (label, metricKey, value, formatter = (v) => v) => {{
-          const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
-          const display = hasValue ? formatter(value) : "n/a";
-          tdScores.appendChild(createBadge(`${{label}}: ${{display}}`, hasValue ? metricKey : null, value));
-        }};
-
-        addBadge("Sharpness", "sharpness", item.sharpness, (v) => v.toFixed(1));
-        addBadge("Tenengrad", "tenengrad", item.tenengrad, (v) => v.toFixed(0));
-        addBadge("Motion ratio", "motion_ratio", item.motion_ratio, (v) => v.toFixed(2));
-        addBadge("Noise std", "noise", item.noise, (v) => v.toFixed(1));
-
-        if (item.faces) {{
-          addBadge("Faces", null, item.faces.count, (v) => v);
-          addBadge("Face sharpness", null, item.faces.best_sharpness, (v) => v.toFixed(1));
-        }}
-
-        if (item.brightness) {{
-          addBadge("Brightness", "brightness", item.brightness.mean, (v) => `${{(v * 100).toFixed(0)}}%`);
-          addBadge("Shadows", "shadows", item.brightness.shadows, (v) => `${{(v * 100).toFixed(0)}}%`);
-          addBadge("Highlights", "highlights", item.brightness.highlights, (v) => `${{(v * 100).toFixed(0)}}%`);
-        }}
-
-        addBadge("Composition", null, item.composition, (v) => v.toFixed(2));
-
-        const tdDecision = document.createElement("td");
-        const status = document.createElement("div");
-        status.className = item.decision === "keep" ? "keep" : "discard";
-        status.textContent = item.decision.toUpperCase();
-        const controls = document.createElement("div");
-        controls.className = "controls";
-        const btnKeep = document.createElement("button");
-        btnKeep.textContent = "Keep";
-        btnKeep.onclick = () => {{ item.decision = "keep"; render(); }};
-        const btnDrop = document.createElement("button");
-        btnDrop.textContent = "Discard";
-        btnDrop.onclick = () => {{
-          if (item.duplicate_group !== undefined && !hasOtherKeep(item.duplicate_group, idx)) {{
-            alert("At least one photo in a duplicate set must be kept.");
-            return;
+        columns.forEach((col) => {{
+          const td = document.createElement("td");
+          switch (col.key) {{
+            case "preview": {{
+              const img = document.createElement("img");
+              img.className = "preview";
+              img.src = item.preview.replace(/\\\\/g, "/");
+              img.loading = "lazy";
+              img.onclick = () => {{
+                lightboxImg.src = img.src;
+                lightbox.classList.add("open");
+              }};
+              td.appendChild(img);
+              break;
+            }}
+            case "path": {{
+              td.textContent = item.path;
+              if (item.duplicate_of) {{
+                const badge = document.createElement("div");
+                badge.className = "badge";
+                badge.textContent = "Duplicate of: " + item.duplicate_of;
+                td.appendChild(badge);
+              }}
+              break;
+            }}
+            case "capture": {{
+              td.textContent = item.capture_time ?? "n/a";
+              break;
+            }}
+            case "decision": {{
+              td.className = item.decision === "keep" ? "table-success text-dark" : "table-danger text-dark";
+              const status = document.createElement("div");
+              status.className = item.decision === "keep" ? "keep" : "discard";
+              status.textContent = item.decision ? item.decision.toUpperCase() : "N/A";
+              const controls = document.createElement("div");
+              controls.className = "controls d-flex gap-2 mt-2";
+              const btnKeep = document.createElement("button");
+              btnKeep.textContent = "Keep";
+              btnKeep.className = "btn btn-success btn-sm";
+              btnKeep.onclick = () => {{ item.decision = "keep"; render(); }};
+              const btnDrop = document.createElement("button");
+              btnDrop.textContent = "Discard";
+              btnDrop.className = "btn btn-danger btn-sm";
+              btnDrop.onclick = () => {{
+                if (item.duplicate_group !== undefined && !hasOtherKeep(item.duplicate_group, idx)) {{
+                  alert("At least one photo in a duplicate set must be kept.");
+                  return;
+                }}
+                item.decision = "discard";
+                render();
+              }};
+              controls.appendChild(btnKeep);
+              controls.appendChild(btnDrop);
+              td.appendChild(status);
+              td.appendChild(controls);
+              break;
+            }}
+            case "reasons": {{
+              if (item.reasons && item.reasons.length) {{
+                td.textContent = item.reasons.join(", ");
+              }} else {{
+                td.textContent = "—";
+              }}
+              break;
+            }}
+            default: {{
+              const value = col.getter ? col.getter(item) : item[col.key];
+              const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
+              const display = hasValue
+                ? (col.format ? col.format(value, item) : value)
+                : "n/a";
+              if (col.metric) {{
+                td.appendChild(createBadge(display, col.metric, value));
+              }} else {{
+                td.textContent = display;
+              }}
+            }}
           }}
-          item.decision = "discard";
-          render();
-        }};
-        controls.appendChild(btnKeep);
-        controls.appendChild(btnDrop);
-        tdDecision.appendChild(status);
-        tdDecision.appendChild(controls);
-        if (item.reasons && item.reasons.length) {{
-          const reasons = document.createElement("div");
-          reasons.className = "reasons";
-          reasons.textContent = "Reasons: " + item.reasons.join(", ");
-          tdDecision.appendChild(reasons);
-        }}
-
-        tr.appendChild(tdImg);
-        tr.appendChild(tdFile);
-        tr.appendChild(tdScores);
-        tr.appendChild(tdDecision);
+          tr.appendChild(td);
+        }});
         tbody.appendChild(tr);
 
         if (item.decision === "keep") stats.keep += 1; else stats.discard += 1;
@@ -274,3 +388,7 @@ def write_html_report(results: List[Dict], path: pathlib.Path) -> None:
 </html>
 """
     path.write_text(html, encoding="utf-8")
+
+
+
+

@@ -15,8 +15,8 @@ sort:
   pattern: "{basename}"
 concurrency: 4
 analysis:
-  sharpness_min: 8.0
-  tenengrad_min: 200.0
+  sharpness_min: 20.0
+  tenengrad_min: 500.0
   motion_ratio_min: 0.02
   noise_std_max: 25.0
   brightness_min: 0.08
