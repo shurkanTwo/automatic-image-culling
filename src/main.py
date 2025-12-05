@@ -5,7 +5,7 @@ import concurrent.futures
 import datetime as _dt
 import pathlib
 import shutil
-from typing import Any, Iterable, List, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
 from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
@@ -41,11 +41,6 @@ class _Progress:
             self._impl.close()
 
 
-def _progress_bar(total: int, desc: str) -> _Progress:
-    """Return a simple progress tracker."""
-    return _Progress(total, desc)
-
-
 def _exclude_list(cfg: AppConfig) -> List[str]:
     """Return a de-duplicated, deterministic list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
@@ -62,6 +57,11 @@ def _preview_config(cfg: AppConfig) -> PreviewConfig:
     preview_cfg.setdefault("format", "webp")
     preview_cfg.setdefault("quality", 85)
     return preview_cfg
+
+
+def _preview_dir(cfg: AppConfig) -> pathlib.Path:
+    """Return the configured preview directory path."""
+    return pathlib.Path(cfg.get("preview_dir", "./previews"))
 
 
 def _prepare_analysis_config(
@@ -88,7 +88,7 @@ def scan_command(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     print(f"Found {len(files)} .ARW files in {cfg['input_dir']}")
-    bar = _progress_bar(len(files), "Scan")
+    bar = _Progress(len(files), "Scan")
 
     def _exif_with_fallback(path: pathlib.Path) -> Tuple[ExifData, _dt.datetime]:
         exif = read_exif(path)
@@ -119,8 +119,8 @@ def previews_command(args: argparse.Namespace) -> None:
     if not files:
         print("No .ARW files found")
         return
-    preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
-    bar = _progress_bar(len(files), "Previews")
+    preview_dir = _preview_dir(cfg)
+    bar = _Progress(len(files), "Previews")
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=cfg.get("concurrency", 4)
     ) as pool:
@@ -176,7 +176,7 @@ def analyze_command(args: argparse.Namespace) -> None:
         print("No .ARW files found")
         return
 
-    preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
+    preview_dir = _preview_dir(cfg)
     for path in files:
         ensure_preview(path, preview_dir, preview_cfg)
 
@@ -186,7 +186,7 @@ def analyze_command(args: argparse.Namespace) -> None:
     analysis_cfg = _prepare_analysis_config(cfg, analysis_dir)
     cfg["analysis"] = analysis_cfg
 
-    bar = _progress_bar(len(files), "Analyze")
+    bar = _Progress(len(files), "Analyze")
     try:
         results = analyze_files(
             cfg, files, preview_dir, preview_cfg, progress_cb=bar.update
@@ -207,22 +207,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Path to YAML config file", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def add_common(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument(
-            "--config", help="Path to YAML config file", default=None
-        )
-
     scan = sub.add_parser("scan", help="List .ARW files and basic EXIF info")
-    add_common(scan)
     scan.add_argument("--json", action="store_true", help="Output JSON metadata")
     scan.set_defaults(func=scan_command)
 
     prev = sub.add_parser("previews", help="Generate quick previews")
-    add_common(prev)
     prev.set_defaults(func=previews_command)
 
     sort = sub.add_parser("sort", help="Copy/move files into structured folders")
-    add_common(sort)
     sort.add_argument(
         "--apply",
         action="store_true",
@@ -231,7 +223,6 @@ def build_parser() -> argparse.ArgumentParser:
     sort.set_defaults(func=sort_command)
 
     analyze = sub.add_parser("analyze", help="Score images and emit JSON + HTML report")
-    add_common(analyze)
     analyze.set_defaults(func=analyze_command)
 
     return parser
