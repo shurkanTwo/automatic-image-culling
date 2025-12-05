@@ -114,16 +114,21 @@ def composition_score(arr: np.ndarray) -> float:
 
 
 def phash(
-    preview_path: pathlib.Path, image_module: Optional[Any] = None
+    preview_path: pathlib.Path,
+    image_module: Optional[Any] = None,
+    image: Optional[Any] = None,
 ) -> Optional[int]:
-    """Compute a perceptual hash over an 8x8 luminance thumbnail."""
+    """Compute a perceptual hash over an 8x8 luminance thumbnail.
+
+    Accepts either a pre-opened PIL image via ``image`` or opens from ``preview_path``.
+    """
+    if image is None:
+        if image_module is None:
+            return None
+        image = image_module.open(preview_path)
     if image_module is None:
         return None
-    img = (
-        image_module.open(preview_path)
-        .convert("L")
-        .resize((8, 8), image_module.LANCZOS)
-    )
+    img = image.convert("L").resize((8, 8), image_module.LANCZOS)
     pixels = list(img.getdata())
     avg = sum(pixels) / len(pixels)
     bits = 0

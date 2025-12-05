@@ -29,7 +29,7 @@ from .metrics import (
     tenengrad,
     variance_of_laplacian,
 )
-from .preview import open_preview_gray, open_preview_rgb, preview_path_for
+from .preview import open_preview_rgb, preview_path_for
 from .report import write_html_report
 
 try:
@@ -385,6 +385,23 @@ def _suggest_keep(
     return keep, reasons, score_breakdown.quality_score
 
 
+def _load_preview_arrays(
+    preview_path: pathlib.Path,
+) -> Optional[Tuple[np.ndarray, np.ndarray, Optional[int]]]:
+    """Load preview once and return RGB uint8 array, grayscale float32 array, and pHash."""
+    if Image is None:
+        return None
+    try:
+        with Image.open(preview_path) as img_handle:
+            img_rgb = img_handle.convert("RGB")
+            rgb_arr = np.array(img_rgb, dtype=np.uint8)
+            gray_arr = np.array(img_rgb.convert("L"), dtype=np.float32)
+            hash_val = phash(preview_path, image_module=Image, image=img_rgb)
+    except Exception:
+        return None
+    return rgb_arr, gray_arr, hash_val
+
+
 def _analyze_single_file(
     path: pathlib.Path,
     preview_dir: pathlib.Path,
@@ -398,9 +415,10 @@ def _analyze_single_file(
 
     exif = read_exif(path)
     dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(path.stat().st_mtime))
-    gray_arr = open_preview_gray(preview_path)
-    if gray_arr is None:
+    preview_data = _load_preview_arrays(preview_path)
+    if preview_data is None:
         return None
+    rgb_full, gray_arr, hash_val = preview_data
 
     sharpness = variance_of_laplacian(gray_arr)
     center_slice = gray_arr[
@@ -409,15 +427,13 @@ def _analyze_single_file(
     ]
     face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
     face_info: Optional[FaceSummary] = None
-    rgb_preview: Optional[np.ndarray] = None
     if face_cfg.get("enabled", False):
-        rgb_preview = open_preview_rgb(preview_path, size=None)
         face_info = detect_faces(
             preview_path,
             gray_arr,
             face_cfg,
             orientation=exif_orientation(exif),
-            rgb_arr=rgb_preview,
+            rgb_arr=rgb_full,
         )
 
     return cast(
@@ -434,7 +450,7 @@ def _analyze_single_file(
             "noise": noise_estimate(gray_arr),
             "brightness": brightness_stats(gray_arr),
             "composition": composition_score(gray_arr),
-            "phash": phash(preview_path, image_module=Image),
+            "phash": hash_val,
             "exif": exif,
             "faces": face_info,
         },

@@ -5,6 +5,7 @@ import concurrent.futures
 import datetime as _dt
 import pathlib
 import shutil
+import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
@@ -234,7 +235,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.command == "sort":
         args.dry_run = not args.apply
-    args.func(args)
+    start = time.perf_counter()
+    try:
+        args.func(args)
+    finally:
+        elapsed = time.perf_counter() - start
+        print(f"{args.command} completed in {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
