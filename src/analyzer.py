@@ -5,14 +5,21 @@ import datetime as _dt
 import json
 import pathlib
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast
 
 import numpy as np
 from PIL import Image
 
-from .discovery import capture_date, exif_orientation, find_arw_files, read_exif
-from .faces import detect_faces
+from .config import AnalysisConfig, AppConfig, FaceConfig, PreviewConfig
+from .discovery import (
+    ExifData,
+    capture_date,
+    exif_orientation,
+    read_exif,
+)
+from .faces import FaceSummary, detect_faces
 from .metrics import (
+    BrightnessStats,
     brightness_stats,
     composition_score,
     hamming,
@@ -33,6 +40,32 @@ except Exception:  # pragma: no cover
     skimage_psnr = None
 
 ProgressCallback = Optional[Callable[[int], None]]
+
+
+class AnalysisResult(TypedDict, total=False):
+    """Single frame analysis result."""
+
+    path: str
+    preview: str
+    capture_time: str
+    capture_ts: float
+    sharpness: float
+    sharpness_center: float
+    tenengrad: float
+    motion_ratio: float
+    noise: float
+    brightness: BrightnessStats
+    composition: float
+    phash: Optional[int]
+    exif: ExifData
+    faces: FaceSummary
+    duplicate_group: int
+    duplicate_of: str
+    duplicate_reason: str
+    quality_score: float
+    suggest_keep: bool
+    decision: str
+    reasons: List[str]
 
 
 @dataclass(frozen=True)
@@ -67,13 +100,13 @@ class Thresholds:
     highlights_max: float
 
     @classmethod
-    def from_config(cls, cfg: Dict[str, Any], exif: Dict[str, Any]) -> "Thresholds":
+    def from_config(cls, cfg: AnalysisConfig, exif: ExifData) -> "Thresholds":
         iso = _parse_iso(exif) or 0.0
         shutter = _parse_shutter_seconds(exif) or 0.0
 
-        sharp_min = cfg.get("sharpness_min", 12.0)
-        teneng_min = cfg.get("tenengrad_min", 30_000.0)
-        motion_min = cfg.get("motion_ratio_min", 0.25)
+        sharp_min = float(cfg.get("sharpness_min", 12.0))
+        teneng_min = float(cfg.get("tenengrad_min", 30_000.0))
+        motion_min = float(cfg.get("motion_ratio_min", 0.25))
 
         sharp_factor = 1.0
         teneng_factor = 1.0
@@ -95,16 +128,18 @@ class Thresholds:
         sharpness_min = sharp_min * sharp_factor
         return cls(
             sharpness_min=sharpness_min,
-            center_sharpness_min=cfg.get("center_sharpness_min", sharpness_min * 1.2),
+            center_sharpness_min=float(
+                cfg.get("center_sharpness_min", sharpness_min * 1.2)
+            ),
             tenengrad_min=teneng_min * teneng_factor,
             motion_ratio_min=motion_min * motion_factor,
-            noise_std_max=cfg.get("noise_std_max", 12.0),
-            brightness_min=cfg.get("brightness_min", 0.08),
-            brightness_max=cfg.get("brightness_max", 0.92),
-            shadows_min=cfg.get("shadows_min", 0.0),
-            shadows_max=cfg.get("shadows_max", 0.5),
-            highlights_min=cfg.get("highlights_min", 0.0),
-            highlights_max=cfg.get("highlights_max", 0.1),
+            noise_std_max=float(cfg.get("noise_std_max", 12.0)),
+            brightness_min=float(cfg.get("brightness_min", 0.08)),
+            brightness_max=float(cfg.get("brightness_max", 0.92)),
+            shadows_min=float(cfg.get("shadows_min", 0.0)),
+            shadows_max=float(cfg.get("shadows_max", 0.5)),
+            highlights_min=float(cfg.get("highlights_min", 0.0)),
+            highlights_max=float(cfg.get("highlights_max", 0.1)),
         )
 
 
@@ -116,7 +151,7 @@ class ScoreBreakdown:
     quality_score: float
 
 
-def _parse_iso(exif: Dict[str, Any]) -> Optional[float]:
+def _parse_iso(exif: ExifData) -> Optional[float]:
     """Extract ISO value from EXIF dictionary."""
     raw = exif.get("EXIF ISOSpeedRatings") or exif.get("EXIF PhotographicSensitivity")
     if not raw:
@@ -127,7 +162,7 @@ def _parse_iso(exif: Dict[str, Any]) -> Optional[float]:
         return None
 
 
-def _parse_shutter_seconds(exif: Dict[str, Any]) -> Optional[float]:
+def _parse_shutter_seconds(exif: ExifData) -> Optional[float]:
     """Extract shutter speed in seconds from EXIF dictionary."""
     raw = exif.get("EXIF ExposureTime")
     if not raw:
@@ -147,18 +182,18 @@ def _clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 
 
-def _hard_fail_thresholds(cfg: Dict[str, Any]) -> Dict[str, float]:
+def _hard_fail_thresholds(cfg: AnalysisConfig) -> Dict[str, float]:
     """Return configured hard-fail ratios for each metric."""
     return {
-        "sharp": cfg.get("hard_fail_sharp_ratio", 0.55),
-        "sharp_center": cfg.get("hard_fail_sharp_center_ratio", 0.55),
-        "teneng": cfg.get("hard_fail_teneng_ratio", 0.55),
-        "motion": cfg.get("hard_fail_motion_ratio", 0.55),
-        "brightness": cfg.get("hard_fail_brightness_ratio", 0.5),
-        "noise": cfg.get("hard_fail_noise_ratio", 0.45),
-        "shadows": cfg.get("hard_fail_shadows_ratio", 0.5),
-        "highlights": cfg.get("hard_fail_highlights_ratio", 0.5),
-        "composition": cfg.get("hard_fail_composition_ratio", 0.4),
+        "sharp": float(cfg.get("hard_fail_sharp_ratio", 0.55)),
+        "sharp_center": float(cfg.get("hard_fail_sharp_center_ratio", 0.55)),
+        "teneng": float(cfg.get("hard_fail_teneng_ratio", 0.55)),
+        "motion": float(cfg.get("hard_fail_motion_ratio", 0.55)),
+        "brightness": float(cfg.get("hard_fail_brightness_ratio", 0.5)),
+        "noise": float(cfg.get("hard_fail_noise_ratio", 0.45)),
+        "shadows": float(cfg.get("hard_fail_shadows_ratio", 0.5)),
+        "highlights": float(cfg.get("hard_fail_highlights_ratio", 0.5)),
+        "composition": float(cfg.get("hard_fail_composition_ratio", 0.4)),
     }
 
 
@@ -304,9 +339,9 @@ def _quality_reasons(
     return reasons
 
 
-def _frame_metrics_from_result(result: Dict[str, Any]) -> FrameMetrics:
+def _frame_metrics_from_result(result: AnalysisResult) -> FrameMetrics:
     """Build a FrameMetrics instance from the raw analysis dictionary."""
-    brightness = result["brightness"]
+    brightness: BrightnessStats = result["brightness"]
     return FrameMetrics(
         sharpness=result["sharpness"],
         sharpness_center=result.get("sharpness_center", result["sharpness"]),
@@ -321,12 +356,12 @@ def _frame_metrics_from_result(result: Dict[str, Any]) -> FrameMetrics:
 
 
 def _suggest_keep(
-    metrics: FrameMetrics, duplicate: bool, cfg: Dict[str, Any], exif: Dict[str, Any]
+    metrics: FrameMetrics, duplicate: bool, cfg: AnalysisConfig, exif: ExifData
 ) -> Tuple[bool, List[str], float]:
     """Return keep/discard suggestion, reasons, and quality score for a frame."""
     thresholds = Thresholds.from_config(cfg, exif)
     hard_cfg = _hard_fail_thresholds(cfg)
-    cutoff = cfg.get("quality_score_min", 0.75)
+    cutoff = float(cfg.get("quality_score_min", 0.75))
     score_breakdown = _score_metrics(metrics, thresholds)
     hard_fail = any(
         score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
@@ -349,9 +384,9 @@ def _suggest_keep(
 def _analyze_single_file(
     path: pathlib.Path,
     preview_dir: pathlib.Path,
-    preview_cfg: Dict[str, Any],
-    analysis_cfg: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
+    preview_cfg: PreviewConfig,
+    analysis_cfg: AnalysisConfig,
+) -> Optional[AnalysisResult]:
     """Analyze a single RAW file using its generated preview."""
     preview_path = preview_path_for(path, preview_dir, preview_cfg)
     if not preview_path.exists():
@@ -368,9 +403,9 @@ def _analyze_single_file(
         int(gray_arr.shape[0] * 0.25) : int(gray_arr.shape[0] * 0.75),
         int(gray_arr.shape[1] * 0.25) : int(gray_arr.shape[1] * 0.75),
     ]
-    face_cfg = analysis_cfg.get("face", {})
-    face_info = None
-    rgb_preview = None
+    face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
+    face_info: Optional[FaceSummary] = None
+    rgb_preview: Optional[np.ndarray] = None
     if face_cfg.get("enabled", False):
         rgb_preview = open_preview_rgb(preview_path, size=None)
         face_info = detect_faces(
@@ -381,40 +416,44 @@ def _analyze_single_file(
             rgb_arr=rgb_preview,
         )
 
-    return {
-        "path": str(path),
-        "preview": str(preview_path),
-        "capture_time": dt.isoformat(),
-        "capture_ts": dt.timestamp(),
-        "sharpness": sharpness,
-        "sharpness_center": variance_of_laplacian(center_slice),
-        "tenengrad": tenengrad(gray_arr),
-        "motion_ratio": structure_tensor_ratio(gray_arr)["ratio"],
-        "noise": noise_estimate(gray_arr),
-        "brightness": brightness_stats(gray_arr),
-        "composition": composition_score(gray_arr),
-        "phash": phash(preview_path, image_module=Image),
-        "exif": exif,
-        "faces": face_info,
-    }
+    return cast(
+        AnalysisResult,
+        {
+            "path": str(path),
+            "preview": str(preview_path),
+            "capture_time": dt.isoformat(),
+            "capture_ts": dt.timestamp(),
+            "sharpness": sharpness,
+            "sharpness_center": variance_of_laplacian(center_slice),
+            "tenengrad": tenengrad(gray_arr),
+            "motion_ratio": structure_tensor_ratio(gray_arr)["ratio"],
+            "noise": noise_estimate(gray_arr),
+            "brightness": brightness_stats(gray_arr),
+            "composition": composition_score(gray_arr),
+            "phash": phash(preview_path, image_module=Image),
+            "exif": exif,
+            "faces": face_info,
+        },
+    )
 
 
 def analyze_files(
-    cfg: Dict[str, Any],
+    cfg: AppConfig,
     files: List[pathlib.Path],
     preview_dir: pathlib.Path,
-    preview_cfg: Dict[str, Any],
+    preview_cfg: PreviewConfig,
     progress_cb: ProgressCallback = None,
-) -> List[Dict[str, Any]]:
+) -> List[AnalysisResult]:
     """Analyze a collection of RAW files and return structured metrics."""
-    analysis_cfg = cfg.get("analysis", {})
+    analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
     use_similarity = skimage_ssim is not None and skimage_psnr is not None
+    concurrency = int(cfg.get("concurrency", 4) or 4)
     results = _run_analysis_workers(
         files,
         preview_dir,
         preview_cfg,
         analysis_cfg,
-        concurrency=cfg.get("concurrency", 4),
+        concurrency=concurrency,
         progress_cb=progress_cb,
     )
     duplicate_indexes = _label_duplicates(results, analysis_cfg, use_similarity)
@@ -425,14 +464,15 @@ def analyze_files(
 def _run_analysis_workers(
     files: List[pathlib.Path],
     preview_dir: pathlib.Path,
-    preview_cfg: Dict[str, Any],
-    analysis_cfg: Dict[str, Any],
+    preview_cfg: PreviewConfig,
+    analysis_cfg: AnalysisConfig,
     concurrency: int,
     progress_cb: ProgressCallback,
-) -> List[Dict[str, Any]]:
+) -> List[AnalysisResult]:
     """Analyze files concurrently and return sorted results."""
-    results: List[Dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+    results: List[AnalysisResult] = []
+    worker_count = max(1, concurrency)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
         futures = [
             pool.submit(
                 _analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg
@@ -456,8 +496,8 @@ def _run_analysis_workers(
 
 
 def _label_duplicates(
-    results: List[Dict[str, Any]],
-    analysis_cfg: Dict[str, Any],
+    results: List[AnalysisResult],
+    analysis_cfg: AnalysisConfig,
     use_similarity: bool,
 ) -> Set[int]:
     """Detect duplicate frames and annotate results with grouping metadata."""
@@ -604,8 +644,8 @@ def _to_windows_path(path_value: str) -> str:
 
 
 def _apply_quality_decisions(
-    results: List[Dict[str, Any]],
-    analysis_cfg: Dict[str, Any],
+    results: List[AnalysisResult],
+    analysis_cfg: AnalysisConfig,
     duplicate_indexes: Set[int],
 ) -> None:
     """Apply quality scoring and final keep/discard decisions."""
@@ -646,20 +686,20 @@ def _apply_quality_decisions(
         results[fallback]["reasons"].append("kept to avoid discarding all duplicates")
 
 
-def _convert_paths_for_host(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _convert_paths_for_host(results: List[AnalysisResult]) -> List[AnalysisResult]:
     """Return a copy of results with paths converted to Windows-style when applicable."""
-    converted: List[Dict[str, Any]] = []
+    converted: List[AnalysisResult] = []
     for entry in results:
         item = dict(entry)
         item["path"] = _to_windows_path(item["path"])
         item["preview"] = _to_windows_path(item["preview"])
         if "duplicate_of" in item:
             item["duplicate_of"] = _to_windows_path(item["duplicate_of"])
-        converted.append(item)
+        converted.append(cast(AnalysisResult, item))
     return converted
 
 
-def write_outputs(results: List[Dict[str, Any]], analysis_cfg: Dict[str, Any]) -> None:
+def write_outputs(results: List[AnalysisResult], analysis_cfg: AnalysisConfig) -> None:
     """Persist analysis results to JSON and render the HTML report."""
     results_for_host = _convert_paths_for_host(results)
     output_json = pathlib.Path(analysis_cfg.get("results_path", "./analysis.json"))

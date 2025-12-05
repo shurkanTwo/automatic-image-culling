@@ -39,6 +39,9 @@
 
   const groups = buildDuplicateGroups(data);
 
+  const hasValue = (value) =>
+    value !== undefined && value !== null && !Number.isNaN(value);
+
   function buildDuplicateGroups(items) {
     const map = new Map();
     items.forEach((item, idx) => {
@@ -135,8 +138,7 @@
   function createBadge(text, metric, value) {
     const div = document.createElement("div");
     div.className = "metric-badge me-1";
-    const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
-    if (hasValue && metric !== null && metric !== undefined) {
+    if (hasValue(value) && metric !== null && metric !== undefined) {
       const style = badgeStyle(metric, value);
       if (style) Object.assign(div.style, style);
     }
@@ -411,8 +413,8 @@
           }
           default: {
             const value = col.getter ? col.getter(item) : item[col.key];
-            const hasValue = value !== undefined && value !== null && !Number.isNaN(value);
-            const display = hasValue ? (col.format ? col.format(value, item) : value) : "n/a";
+            const present = hasValue(value);
+            const display = present ? (col.format ? col.format(value, item) : value) : "n/a";
             if (col.metric) {
               td.appendChild(createBadge(display, col.metric, value));
             } else {
@@ -458,5 +460,3 @@
   bindExport();
   render();
 })();
-
-

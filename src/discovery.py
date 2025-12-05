@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .config import SortConfig
+
 try:
     import exifread
 except ImportError:  # pragma: no cover
@@ -91,7 +93,7 @@ def _safe_mtime(exif: ExifData) -> float:
 
 
 def plan_destination(
-    path: Path, exif: ExifData, cfg: Dict[str, Any], output_dir: Path
+    path: Path, exif: ExifData, cfg: SortConfig, output_dir: Path
 ) -> Path:
     """Return the destination path for a file given EXIF metadata and sort config."""
     mtime = path.stat().st_mtime

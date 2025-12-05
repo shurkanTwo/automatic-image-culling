@@ -2,7 +2,7 @@
 
 import copy
 import pathlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, TypedDict, Union
 
 try:
     import yaml
@@ -10,7 +10,78 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 
-DEFAULT_CONFIG: Dict[str, Any] = {
+class PreviewConfig(TypedDict, total=False):
+    """Preview generation options."""
+
+    long_edge: int
+    format: str
+    quality: int
+
+
+class SortConfig(TypedDict, total=False):
+    """Output sorting options."""
+
+    strategy: str
+    copy: bool
+    pattern: str
+
+
+class FaceConfig(TypedDict, total=False):
+    """Face detection backend configuration."""
+
+    enabled: bool
+    backend: str
+    providers: Union[str, List[str]]
+    allowed_modules: List[str]
+    det_size: int
+    ctx_id: int
+
+
+class AnalysisConfig(TypedDict, total=False):
+    """Image analysis scoring thresholds and output paths."""
+
+    sharpness_min: float
+    center_sharpness_min: float
+    tenengrad_min: float
+    motion_ratio_min: float
+    noise_std_max: float
+    brightness_min: float
+    brightness_max: float
+    shadows_min: float
+    shadows_max: float
+    highlights_min: float
+    highlights_max: float
+    duplicate_hamming: int
+    duplicate_window_seconds: int
+    quality_score_min: float
+    hard_fail_sharp_ratio: float
+    hard_fail_sharp_center_ratio: float
+    hard_fail_teneng_ratio: float
+    hard_fail_motion_ratio: float
+    hard_fail_brightness_ratio: float
+    hard_fail_noise_ratio: float
+    hard_fail_shadows_ratio: float
+    hard_fail_highlights_ratio: float
+    hard_fail_composition_ratio: float
+    face: FaceConfig
+    report_path: str
+    results_path: str
+
+
+class AppConfig(TypedDict, total=False):
+    """Top-level application configuration."""
+
+    input_dir: str
+    output_dir: str
+    preview_dir: str
+    preview: PreviewConfig
+    sort: SortConfig
+    analysis: AnalysisConfig
+    concurrency: int
+    exclude_dirs: List[str]
+
+
+DEFAULT_CONFIG: AppConfig = {
     "input_dir": "./input",
     "output_dir": "./output",
     "preview_dir": "./previews",
@@ -38,7 +109,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
-def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_update(base: AppConfig, override: Dict[str, Any]) -> AppConfig:
     """Recursively merge override values into base and return the updated mapping."""
     for key, value in (override or {}).items():
         if isinstance(value, dict) and isinstance(base.get(key), dict):
@@ -48,12 +119,12 @@ def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, An
     return base
 
 
-def _clone_defaults() -> Dict[str, Any]:
+def _clone_defaults() -> AppConfig:
     """Create a safe deep copy of the default configuration."""
     return copy.deepcopy(DEFAULT_CONFIG)
 
 
-def load_config(path: Optional[str]) -> Dict[str, Any]:
+def load_config(path: Optional[str]) -> AppConfig:
     """
     Load configuration from YAML if present; otherwise return defaults.
 

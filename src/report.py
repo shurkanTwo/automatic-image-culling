@@ -2,7 +2,7 @@
 
 import json
 import pathlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
@@ -17,7 +17,7 @@ def _write_sidecar(source: pathlib.Path, target: pathlib.Path) -> None:
 
 
 def write_html_report(
-    results: List[Dict[str, Any]],
+    results: Sequence[Mapping[str, Any]],
     path: pathlib.Path,
     config: Optional[Dict[str, Any]] = None,
 ) -> None:

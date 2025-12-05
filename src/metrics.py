@@ -1,9 +1,25 @@
 """Image metric helpers used by the analyzer pipeline."""
 
 import pathlib
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TypedDict
 
 import numpy as np
+
+
+class BrightnessStats(TypedDict):
+    """Summarized brightness statistics for an image."""
+
+    mean: float
+    shadows: float
+    highlights: float
+
+
+class StructureTensorStats(TypedDict):
+    """Eigenvalues and ratio derived from the structure tensor."""
+
+    lambda_max: float
+    lambda_min: float
+    ratio: float
 
 
 def variance_of_laplacian(arr: np.ndarray) -> float:
@@ -34,7 +50,7 @@ def tenengrad(arr: np.ndarray) -> float:
     return float((gx * gx + gy * gy).mean())
 
 
-def structure_tensor_ratio(arr: np.ndarray) -> Dict[str, float]:
+def structure_tensor_ratio(arr: np.ndarray) -> StructureTensorStats:
     """Return structure tensor eigenvalues and their ratio for motion estimation."""
     gx, gy = np.gradient(arr)
     gxx = float((gx * gx).mean())
@@ -71,7 +87,7 @@ def noise_estimate(arr: np.ndarray) -> float:
     return float(residual.std())
 
 
-def brightness_stats(arr: np.ndarray) -> Dict[str, float]:
+def brightness_stats(arr: np.ndarray) -> BrightnessStats:
     """Summarize brightness, shadows, and highlights for an array."""
     norm = arr / 255.0
     shadow_cut = 0.2

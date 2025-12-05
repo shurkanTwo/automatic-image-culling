@@ -4,10 +4,10 @@ import argparse
 import concurrent.futures
 import pathlib
 import shutil
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Iterable, List, Optional, cast
 
 from .analyzer import analyze_files, write_outputs
-from .config import load_config
+from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
 from .discovery import capture_date, find_arw_files, plan_destination, read_exif
 from .preview import ensure_preview, generate_preview
 
@@ -36,10 +36,11 @@ class _Progress:
 
 
 def _progress_bar(total: int, desc: str) -> _Progress:
+    """Return a simple progress tracker."""
     return _Progress(total, desc)
 
 
-def _exclude_list(cfg: Dict[str, Any]) -> List[str]:
+def _exclude_list(cfg: AppConfig) -> List[str]:
     """Return a de-duplicated, deterministic list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
     exclude_dirs.extend(
@@ -48,13 +49,30 @@ def _exclude_list(cfg: Dict[str, Any]) -> List[str]:
     return list(dict.fromkeys(exclude_dirs))
 
 
-def _preview_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _preview_config(cfg: AppConfig) -> PreviewConfig:
     """Return a defensive copy of the preview configuration."""
-    preview_cfg = dict(cfg.get("preview", {}))
+    preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
     preview_cfg.setdefault("long_edge", 2048)
     preview_cfg.setdefault("format", "webp")
     preview_cfg.setdefault("quality", 85)
     return preview_cfg
+
+
+def _prepare_analysis_config(cfg: AppConfig, analysis_dir: pathlib.Path) -> AnalysisConfig:
+    """Return analysis config with resolved output paths."""
+    analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
+
+    results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+    if not results_path.is_absolute():
+        results_path = analysis_dir / results_path
+    analysis_cfg["results_path"] = str(results_path)
+
+    report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+    if not report_path.is_absolute():
+        report_path = analysis_dir / report_path
+    analysis_cfg["report_path"] = str(report_path)
+
+    return analysis_cfg
 
 
 def scan_command(args: argparse.Namespace) -> None:
@@ -109,7 +127,7 @@ def previews_command(args: argparse.Namespace) -> None:
 def sort_command(args: argparse.Namespace) -> None:
     """Copy or move RAW files into structured destination folders."""
     cfg = load_config(args.config)
-    sort_cfg = cfg.get("sort", {})
+    sort_cfg = cast(SortConfig, cfg.get("sort", {}))
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
     actions: List[str] = []
@@ -141,7 +159,6 @@ def analyze_command(args: argparse.Namespace) -> None:
     """Run analysis pipeline and emit JSON and HTML outputs."""
     cfg = load_config(args.config)
     preview_cfg = _preview_config(cfg)
-    analysis_cfg = dict(cfg.get("analysis", {}))
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
@@ -154,15 +171,8 @@ def analyze_command(args: argparse.Namespace) -> None:
     analysis_dir = pathlib.Path(cfg.get("output_dir", "./output")) / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
-    results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
-    if not results_path.is_absolute():
-        results_path = analysis_dir / results_path
-    analysis_cfg["results_path"] = str(results_path)
-
-    report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
-    if not report_path.is_absolute():
-        report_path = analysis_dir / report_path
-    analysis_cfg["report_path"] = str(report_path)
+    analysis_cfg = _prepare_analysis_config(cfg, analysis_dir)
+    cfg["analysis"] = analysis_cfg
 
     bar = _progress_bar(len(files), "Analyze")
     try:

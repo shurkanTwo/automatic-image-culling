@@ -2,10 +2,11 @@
 
 import pathlib
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional, TypedDict
 
 import numpy as np
 
+from .config import FaceConfig
 from .metrics import variance_of_laplacian
 from .preview import open_preview_rgb
 
@@ -23,7 +24,25 @@ _FACE_APP: Optional[Any] = None
 _THREAD_LOCAL = threading.local()
 
 
-def _get_face_detector(face_cfg: Dict[str, Any]) -> Any:
+class FaceDetection(TypedDict, total=False):
+    """Single face detection data."""
+
+    bbox: List[int]
+    score: float
+    sharpness: float
+    embedding: List[float]
+
+
+class FaceSummary(TypedDict):
+    """Aggregate results for a frame."""
+
+    count: int
+    best_sharpness: float
+    best_score: float
+    faces: List[FaceDetection]
+
+
+def _get_face_detector(face_cfg: FaceConfig) -> Optional[Any]:
     """Return a face detector instance based on configuration."""
     backend = (face_cfg.get("backend") or "mediapipe").lower()
     if backend == "mediapipe":
@@ -31,7 +50,7 @@ def _get_face_detector(face_cfg: Dict[str, Any]) -> Any:
     return _get_insightface(face_cfg)
 
 
-def _get_insightface(face_cfg: Dict[str, Any]) -> Any:
+def _get_insightface(face_cfg: FaceConfig) -> Optional[Any]:
     """Construct or reuse a global InsightFace detector."""
     global _FACE_APP
     if _FACE_APP is not None:
@@ -69,7 +88,7 @@ def _get_insightface(face_cfg: Dict[str, Any]) -> Any:
     return detector
 
 
-def _get_mp_face() -> Any:
+def _get_mp_face() -> Optional[Any]:
     """Return a thread-local Mediapipe detector."""
     detector = getattr(_THREAD_LOCAL, "mp_face", None)
     if detector is not None:
@@ -97,13 +116,86 @@ def _rotate(arr: np.ndarray, orientation: int) -> np.ndarray:
     return arr
 
 
+def _ensure_uint8(arr: np.ndarray) -> np.ndarray:
+    """Clamp array values and cast to uint8."""
+    if arr.dtype == np.uint8:
+        return arr
+    return np.clip(arr, 0, 255).astype(np.uint8)
+
+
+def _detect_with_mediapipe(
+    detector: Any, rgb_full: np.ndarray, gray_arr: np.ndarray
+) -> List[FaceDetection]:
+    """Run Mediapipe detection and return face data."""
+    detections: List[FaceDetection] = []
+    results_mp = detector.process(rgb_full.astype(np.uint8))
+    if not results_mp.detections:
+        return detections
+    height, width, _ = rgb_full.shape
+    for det in results_mp.detections:
+        bbox = det.location_data.relative_bounding_box
+        x1 = int(bbox.xmin * width)
+        y1 = int(bbox.ymin * height)
+        x2 = int((bbox.xmin + bbox.width) * width)
+        y2 = int((bbox.ymin + bbox.height) * height)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(width, x2), min(height, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        face_gray = gray_arr[y1:y2, x1:x2]
+        face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
+        detections.append(
+            {
+                "bbox": [x1, y1, x2, y2],
+                "score": float(det.score[0]) if det.score else 0.0,
+                "sharpness": face_sharp,
+            }
+        )
+    return detections
+
+
+def _detect_with_insightface(
+    detector: Any, rgb_full: np.ndarray, gray_arr: np.ndarray
+) -> List[FaceDetection]:
+    """Run InsightFace detection and return face data."""
+    detections: List[FaceDetection] = []
+    bgr = _ensure_uint8(rgb_full)[:, :, ::-1]
+    detector_results = detector.get(bgr)
+    for face in detector_results:
+        box = [float(value) for value in face.bbox.tolist()]
+        x1, y1, x2, y2 = map(int, box)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(bgr.shape[1], x2), min(bgr.shape[0], y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        face_gray = gray_arr[y1:y2, x1:x2]
+        face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
+        face_entry: FaceDetection = {
+            "bbox": box,
+            "score": float(face.det_score),
+            "sharpness": face_sharp,
+        }
+        if hasattr(face, "embedding") and face.embedding is not None:
+            try:
+                face_entry["embedding"] = face.embedding.tolist()
+            except Exception:
+                pass
+        elif hasattr(face, "normed_embedding") and face.normed_embedding is not None:
+            try:
+                face_entry["embedding"] = face.normed_embedding.tolist()
+            except Exception:
+                pass
+        detections.append(face_entry)
+    return detections
+
+
 def detect_faces(
     preview_path: pathlib.Path,
     gray_arr: np.ndarray,
-    face_cfg: Dict[str, Any],
+    face_cfg: FaceConfig,
     orientation: int = 1,
     rgb_arr: Optional[np.ndarray] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[FaceSummary]:
     """
     Detect faces in a preview image and return summary statistics.
 
@@ -119,66 +211,17 @@ def detect_faces(
     )
     if rgb_full is None:
         return None
-    rgb_full = _rotate(rgb_full, orientation)
-    if rgb_full.dtype != np.uint8:
-        rgb_full = np.clip(rgb_full, 0, 255).astype(np.uint8)
-    gray_arr = _rotate(gray_arr, orientation)
 
-    faces: List[Dict[str, Any]] = []
+    oriented_rgb = _ensure_uint8(_rotate(rgb_full, orientation))
+    oriented_gray = _rotate(gray_arr, orientation)
+
+    faces: List[FaceDetection]
     if mp and isinstance(detector, mp.solutions.face_detection.FaceDetection):
-        results_mp = detector.process(rgb_full.astype(np.uint8))
-        if results_mp.detections:
-            height, width, _ = rgb_full.shape
-            for det in results_mp.detections:
-                bbox = det.location_data.relative_bounding_box
-                x1 = int(bbox.xmin * width)
-                y1 = int(bbox.ymin * height)
-                x2 = int((bbox.xmin + bbox.width) * width)
-                y2 = int((bbox.ymin + bbox.height) * height)
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(width, x2), min(height, y2)
-                if x2 <= x1 or y2 <= y1:
-                    continue
-                face_gray = gray_arr[y1:y2, x1:x2]
-                face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
-                faces.append(
-                    {
-                        "bbox": [x1, y1, x2, y2],
-                        "score": float(det.score[0]) if det.score else 0.0,
-                        "sharpness": face_sharp,
-                    }
-                )
-
+        faces = _detect_with_mediapipe(detector, oriented_rgb, oriented_gray)
     elif FaceAnalysis and hasattr(detector, "get"):
-        bgr = rgb_full[:, :, ::-1].astype(np.uint8)
-        detections = detector.get(bgr)
-        for face in detections:
-            box = [float(value) for value in face.bbox.tolist()]
-            x1, y1, x2, y2 = map(int, box)
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(bgr.shape[1], x2), min(bgr.shape[0], y2)
-            if x2 <= x1 or y2 <= y1:
-                continue
-            face_gray = gray_arr[y1:y2, x1:x2]
-            face_sharp = variance_of_laplacian(face_gray) if face_gray.size else 0.0
-            face_entry: Dict[str, Any] = {
-                "bbox": box,
-                "score": float(face.det_score),
-                "sharpness": face_sharp,
-            }
-            if hasattr(face, "embedding") and face.embedding is not None:
-                try:
-                    face_entry["embedding"] = face.embedding.tolist()
-                except Exception:
-                    pass
-            elif (
-                hasattr(face, "normed_embedding") and face.normed_embedding is not None
-            ):
-                try:
-                    face_entry["embedding"] = face.normed_embedding.tolist()
-                except Exception:
-                    pass
-            faces.append(face_entry)
+        faces = _detect_with_insightface(detector, oriented_rgb, oriented_gray)
+    else:
+        faces = []
 
     if not faces:
         return None

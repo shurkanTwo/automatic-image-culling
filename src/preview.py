@@ -2,7 +2,7 @@
 
 import io
 import pathlib
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import numpy as np
 
@@ -16,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     Image = None
 
+from .config import PreviewConfig
 from .discovery import exif_orientation, read_exif
 
 
@@ -44,13 +45,13 @@ def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
     return img
 
 
-def _preview_format(cfg: Dict[str, Any]) -> str:
+def _preview_format(cfg: PreviewConfig) -> str:
     """Return the desired preview format with a safe default."""
     return cfg.get("format", "webp")
 
 
 def generate_preview(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> Optional[pathlib.Path]:
     """Write a resized preview for a RAW file if missing and return its path."""
     if not rawpy or not Image:
@@ -80,7 +81,7 @@ def generate_preview(
 
 
 def ensure_preview(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> Optional[pathlib.Path]:
     """Guarantee that a preview file exists for the given RAW file."""
     preview = preview_path_for(path, preview_dir, cfg)
@@ -113,7 +114,7 @@ def open_preview_rgb(
 
 
 def preview_path_for(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> pathlib.Path:
     """Return the expected preview path for a RAW file and preview config."""
     return preview_dir / f"{path.stem}.{_preview_format(cfg)}"
