@@ -52,7 +52,9 @@ def _get_insightface(face_cfg: Dict[str, Any]) -> Any:
     def prepare_detector(provider_list: List[str]) -> Optional[Any]:
         try:
             app = FaceAnalysis(
-                name="buffalo_l", providers=provider_list, allowed_modules=allowed_modules
+                name="buffalo_l",
+                providers=provider_list,
+                allowed_modules=allowed_modules,
             )
             app.prepare(
                 ctx_id=face_cfg.get("ctx_id", 0),
@@ -112,7 +114,9 @@ def detect_faces(
     if detector is None:
         return None
 
-    rgb_full = rgb_arr if rgb_arr is not None else open_preview_rgb(preview_path, size=None)
+    rgb_full = (
+        rgb_arr if rgb_arr is not None else open_preview_rgb(preview_path, size=None)
+    )
     if rgb_full is None:
         return None
     rgb_full = _rotate(rgb_full, orientation)
@@ -167,7 +171,9 @@ def detect_faces(
                     face_entry["embedding"] = face.embedding.tolist()
                 except Exception:
                     pass
-            elif hasattr(face, "normed_embedding") and face.normed_embedding is not None:
+            elif (
+                hasattr(face, "normed_embedding") and face.normed_embedding is not None
+            ):
                 try:
                     face_entry["embedding"] = face.normed_embedding.tolist()
                 except Exception:

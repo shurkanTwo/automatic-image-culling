@@ -4,8 +4,8 @@ import concurrent.futures
 import datetime as _dt
 import json
 import pathlib
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-
 
 import numpy as np
 from PIL import Image
@@ -35,7 +35,88 @@ except Exception:  # pragma: no cover
 ProgressCallback = Optional[Callable[[int], None]]
 
 
-def _parse_iso(exif: Dict) -> Optional[float]:
+@dataclass(frozen=True)
+class FrameMetrics:
+    """Container for the measurements calculated for a frame."""
+
+    sharpness: float
+    sharpness_center: float
+    tenengrad: float
+    motion_ratio: float
+    noise: float
+    brightness_mean: float
+    shadows: float
+    highlights: float
+    composition: float
+
+
+@dataclass(frozen=True)
+class Thresholds:
+    """Aggregated thresholds derived from configuration and shooting context."""
+
+    sharpness_min: float
+    center_sharpness_min: float
+    tenengrad_min: float
+    motion_ratio_min: float
+    noise_std_max: float
+    brightness_min: float
+    brightness_max: float
+    shadows_min: float
+    shadows_max: float
+    highlights_min: float
+    highlights_max: float
+
+    @classmethod
+    def from_config(cls, cfg: Dict[str, Any], exif: Dict[str, Any]) -> "Thresholds":
+        iso = _parse_iso(exif) or 0.0
+        shutter = _parse_shutter_seconds(exif) or 0.0
+
+        sharp_min = cfg.get("sharpness_min", 12.0)
+        teneng_min = cfg.get("tenengrad_min", 30_000.0)
+        motion_min = cfg.get("motion_ratio_min", 0.25)
+
+        sharp_factor = 1.0
+        teneng_factor = 1.0
+        motion_factor = 1.0
+
+        low_iso, fast_shutter = 400.0, 1 / 500.0
+        high_iso, slow_shutter = 3200.0, 1 / 50.0
+
+        if iso and shutter:
+            if iso <= low_iso and shutter <= fast_shutter:
+                sharp_factor = 1.2
+                teneng_factor = 1.15
+                motion_factor = 1.1
+            elif iso >= high_iso and shutter >= slow_shutter:
+                sharp_factor = 0.8
+                teneng_factor = 0.8
+                motion_factor = 0.7
+
+        sharpness_min = sharp_min * sharp_factor
+        return cls(
+            sharpness_min=sharpness_min,
+            center_sharpness_min=cfg.get("center_sharpness_min", sharpness_min * 1.2),
+            tenengrad_min=teneng_min * teneng_factor,
+            motion_ratio_min=motion_min * motion_factor,
+            noise_std_max=cfg.get("noise_std_max", 12.0),
+            brightness_min=cfg.get("brightness_min", 0.08),
+            brightness_max=cfg.get("brightness_max", 0.92),
+            shadows_min=cfg.get("shadows_min", 0.0),
+            shadows_max=cfg.get("shadows_max", 0.5),
+            highlights_min=cfg.get("highlights_min", 0.0),
+            highlights_max=cfg.get("highlights_max", 0.1),
+        )
+
+
+@dataclass(frozen=True)
+class ScoreBreakdown:
+    """Normalized score per metric and overall quality score."""
+
+    scores: Dict[str, float]
+    quality_score: float
+
+
+def _parse_iso(exif: Dict[str, Any]) -> Optional[float]:
     """Extract ISO value from EXIF dictionary."""
     raw = exif.get("EXIF ISOSpeedRatings") or exif.get("EXIF PhotographicSensitivity")
     if not raw:
@@ -46,7 +127,7 @@ def _parse_iso(exif: Dict) -> Optional[float]:
         return None
 
 
-def _parse_shutter_seconds(exif: Dict) -> Optional[float]:
+def _parse_shutter_seconds(exif: Dict[str, Any]) -> Optional[float]:
     """Extract shutter speed in seconds from EXIF dictionary."""
     raw = exif.get("EXIF ExposureTime")
     if not raw:
@@ -61,87 +142,44 @@ def _parse_shutter_seconds(exif: Dict) -> Optional[float]:
         return None
 
 
-def _adjust_thresholds_for_exposure(cfg: Dict, exif: Dict) -> Dict[str, float]:
-    """
-    Tighten or relax thresholds based on shooting conditions:
-    - Low ISO + fast shutter -> demand more (tighten).
-    - High ISO + slow shutter -> demand less (relax).
-    """
-    iso = _parse_iso(exif) or 0.0
-    shutter = _parse_shutter_seconds(exif) or 0.0
-
-    sharp_min = cfg.get("sharpness_min", 12.0)
-    teneng_min = cfg.get("tenengrad_min", 30_000.0)
-    motion_min = cfg.get("motion_ratio_min", 0.25)
-
-    # Defaults
-    sharp_factor = 1.0
-    teneng_factor = 1.0
-    motion_factor = 1.0
-
-    low_iso, fast_shutter = 400.0, 1 / 500.0
-    high_iso, slow_shutter = 3200.0, 1 / 50.0
-
-    if iso and shutter:
-        if iso <= low_iso and shutter <= fast_shutter:
-            # Easy light: be stricter
-            sharp_factor = 1.2
-            teneng_factor = 1.15
-            motion_factor = 1.1
-        elif iso >= high_iso and shutter >= slow_shutter:
-            # Tough light: be more forgiving
-            sharp_factor = 0.8
-            teneng_factor = 0.8
-            motion_factor = 0.7
-
-    return {
-        "sharpness_min": sharp_min * sharp_factor,
-        "tenengrad_min": teneng_min * teneng_factor,
-        "motion_ratio_min": motion_min * motion_factor,
-        "noise_std_max": cfg.get("noise_std_max", 12.0),
-        "brightness_min": cfg.get("brightness_min", 0.08),
-        "brightness_max": cfg.get("brightness_max", 0.92),
-    }
-
-
 def _clamp01(v: float) -> float:
     """Clamp a float into the inclusive [0, 1] range."""
     return max(0.0, min(1.0, v))
 
 
-def _suggest_keep(
-    sharpness: float,
-    sharpness_center: float,
-    teneng: float,
-    motion_ratio: float,
-    noise: float,
-    brightness_mean: float,
-    shadows: float,
-    highlights: float,
-    composition: float,
-    duplicate: bool,
-    cfg: Dict,
-    exif: Dict,
-) -> Tuple[bool, List[str], float]:
-    """Return keep/discard suggestion, reasons, and quality score for a frame."""
-    reasons: List[str] = []
-    thresholds = _adjust_thresholds_for_exposure(cfg, exif)
+def _hard_fail_thresholds(cfg: Dict[str, Any]) -> Dict[str, float]:
+    """Return configured hard-fail ratios for each metric."""
+    return {
+        "sharp": cfg.get("hard_fail_sharp_ratio", 0.55),
+        "sharp_center": cfg.get("hard_fail_sharp_center_ratio", 0.55),
+        "teneng": cfg.get("hard_fail_teneng_ratio", 0.55),
+        "motion": cfg.get("hard_fail_motion_ratio", 0.55),
+        "brightness": cfg.get("hard_fail_brightness_ratio", 0.5),
+        "noise": cfg.get("hard_fail_noise_ratio", 0.45),
+        "shadows": cfg.get("hard_fail_shadows_ratio", 0.5),
+        "highlights": cfg.get("hard_fail_highlights_ratio", 0.5),
+        "composition": cfg.get("hard_fail_composition_ratio", 0.4),
+    }
 
-    sharp_score = _clamp01(sharpness / thresholds["sharpness_min"])
-    center_min = cfg.get(
-        "center_sharpness_min", thresholds["sharpness_min"] * 1.2
+
+def _score_metrics(metrics: FrameMetrics, thresholds: Thresholds) -> ScoreBreakdown:
+    """Normalize each metric and compute the combined quality score."""
+    sharp_score = _clamp01(metrics.sharpness / max(thresholds.sharpness_min, 1e-6))
+    sharp_center_score = _clamp01(
+        metrics.sharpness_center / max(thresholds.center_sharpness_min, 1e-6)
     )
-    sharp_center_score = _clamp01(sharpness_center / max(center_min, 1e-6))
-    teneng_score = _clamp01(teneng / thresholds["tenengrad_min"])
-    motion_score = _clamp01(motion_ratio / thresholds["motion_ratio_min"])
-    noise_score = _clamp01(thresholds["noise_std_max"] / (thresholds["noise_std_max"] + max(noise, 1e-6)))
-    brightness_mid = (thresholds["brightness_min"] + thresholds["brightness_max"]) / 2
-    brightness_half = (thresholds["brightness_max"] - thresholds["brightness_min"]) / 2
-    brightness_score = _clamp01(1 - abs(brightness_mean - brightness_mid) / max(brightness_half, 1e-6))
-    shadows_min = cfg.get("shadows_min", 0.0)
-    shadows_max = cfg.get("shadows_max", 0.5)
-    highlights_min = cfg.get("highlights_min", 0.0)
-    highlights_max = cfg.get("highlights_max", 0.1)
+    teneng_score = _clamp01(metrics.tenengrad / max(thresholds.tenengrad_min, 1e-6))
+    motion_score = _clamp01(
+        metrics.motion_ratio / max(thresholds.motion_ratio_min, 1e-6)
+    )
+    noise_score = _clamp01(
+        thresholds.noise_std_max / (thresholds.noise_std_max + max(metrics.noise, 1e-6))
+    )
+    brightness_mid = (thresholds.brightness_min + thresholds.brightness_max) / 2
+    brightness_half = (thresholds.brightness_max - thresholds.brightness_min) / 2
+    brightness_score = _clamp01(
+        1 - abs(metrics.brightness_mean - brightness_mid) / max(brightness_half, 1e-6)
+    )
 
     def range_score(val: float, lo: float, hi: float) -> float:
         if val < lo:
@@ -150,9 +188,13 @@ def _suggest_keep(
             return _clamp01(1 - (val - hi) / max(1 - hi, 1e-6))
         return 1.0
 
-    shadows_score = range_score(shadows, shadows_min, shadows_max)
-    highlights_score = range_score(highlights, highlights_min, highlights_max)
-    comp_score = _clamp01(composition if composition is not None else 0.0)
+    shadows_score = range_score(
+        metrics.shadows, thresholds.shadows_min, thresholds.shadows_max
+    )
+    highlights_score = range_score(
+        metrics.highlights, thresholds.highlights_min, thresholds.highlights_max
+    )
+    comp_score = _clamp01(metrics.composition)
 
     weights = {
         "sharp": 1.5,
@@ -164,35 +206,6 @@ def _suggest_keep(
         "shadows": 0.5,
         "highlights": 0.5,
         "composition": 0.4,
-    }
-
-    weighted_sum = (
-        sharp_score * weights["sharp"]
-        + sharp_center_score * weights["sharp_center"]
-        + teneng_score * weights["teneng"]
-        + motion_score * weights["motion"]
-        + noise_score * weights["noise"]
-        + brightness_score * weights["brightness"]
-        + shadows_score * weights["shadows"]
-        + highlights_score * weights["highlights"]
-        + comp_score * weights["composition"]
-    )
-    total_weights = sum(weights.values())
-    quality_score = weighted_sum / total_weights if total_weights else 0.0
-
-    cutoff = cfg.get("quality_score_min", 0.75)
-
-    # Hard fails: configurable floor ratios to avoid keeping obviously bad frames.
-    hard_cfg = {
-        "sharp": cfg.get("hard_fail_sharp_ratio", 0.55),
-        "sharp_center": cfg.get("hard_fail_sharp_center_ratio", 0.55),
-        "teneng": cfg.get("hard_fail_teneng_ratio", 0.55),
-        "motion": cfg.get("hard_fail_motion_ratio", 0.55),
-        "brightness": cfg.get("hard_fail_brightness_ratio", 0.5),
-        "noise": cfg.get("hard_fail_noise_ratio", 0.45),
-        "shadows": cfg.get("hard_fail_shadows_ratio", 0.5),
-        "highlights": cfg.get("hard_fail_highlights_ratio", 0.5),
-        "composition": cfg.get("hard_fail_composition_ratio", 0.4),
     }
 
     scores = {
@@ -207,83 +220,137 @@ def _suggest_keep(
         "composition": comp_score,
     }
 
-    hard_fail = any(scores[k] < hard_cfg[k] for k in scores)
+    weighted_sum = sum(scores[key] * weights[key] for key in scores)
+    total_weights = sum(weights.values())
+    quality_score = weighted_sum / total_weights if total_weights else 0.0
+    return ScoreBreakdown(scores=scores, quality_score=quality_score)
 
-    keep = (quality_score >= cutoff) and not hard_fail
 
-    if not keep:
-        if quality_score < cutoff:
-            reasons.append(f"quality score {quality_score:.2f} below {cutoff:.2f}")
+def _quality_reasons(
+    metrics: FrameMetrics,
+    thresholds: Thresholds,
+    scores: Dict[str, float],
+    hard_cfg: Dict[str, float],
+    quality_score: float,
+    cutoff: float,
+) -> List[str]:
+    """Compile human-readable reasons for discarding a frame."""
+    reasons: List[str] = []
+    if quality_score < cutoff:
+        reasons.append(f"quality score {quality_score:.2f} below {cutoff:.2f}")
 
-        def add_reason(cond: bool, text: str) -> None:
-            if cond:
-                reasons.append(text)
+    def add_reason(condition: bool, text: str) -> None:
+        if condition:
+            reasons.append(text)
 
-        add_reason(
-            scores["sharp"] < hard_cfg["sharp"]
-            or sharpness < thresholds["sharpness_min"],
-            f"sharpness {sharpness:.1f} < min {thresholds['sharpness_min']:.1f}",
-        )
-        add_reason(
-            scores["sharp_center"] < hard_cfg["sharp_center"]
-            or sharpness_center < center_min,
-            f"center sharpness {sharpness_center:.1f} < min {center_min:.1f}",
-        )
-        add_reason(
-            scores["teneng"] < hard_cfg["teneng"]
-            or teneng < thresholds["tenengrad_min"],
-            f"contrast {teneng:.0f} < min {thresholds['tenengrad_min']:.0f}",
-        )
-        add_reason(
-            scores["motion"] < hard_cfg["motion"]
-            or motion_ratio < thresholds["motion_ratio_min"],
-            f"motion ratio {motion_ratio:.2f} < min {thresholds['motion_ratio_min']:.2f}",
-        )
-        add_reason(
-            scores["noise"] < hard_cfg["noise"] or noise > thresholds["noise_std_max"],
-            f"noise {noise:.1f} > max {thresholds['noise_std_max']:.1f}",
-        )
-        if scores["brightness"] < hard_cfg["brightness"]:
-            if brightness_mean < thresholds["brightness_min"]:
-                reasons.append(
-                    f"brightness {brightness_mean:.2f} < min {thresholds['brightness_min']:.2f}"
-                )
-            elif brightness_mean > thresholds["brightness_max"]:
-                reasons.append(
-                    f"brightness {brightness_mean:.2f} > max {thresholds['brightness_max']:.2f}"
-                )
-            else:
-                reasons.append("poor exposure")
-        if scores["shadows"] < hard_cfg["shadows"]:
-            if shadows > shadows_max:
-                reasons.append(f"shadows {shadows:.2f} > max {shadows_max:.2f}")
-            elif shadows < shadows_min:
-                reasons.append(f"shadows {shadows:.2f} < min {shadows_min:.2f}")
-        if scores["highlights"] < hard_cfg["highlights"]:
-            if highlights > highlights_max:
-                reasons.append(
-                    f"highlights {highlights:.2f} > max {highlights_max:.2f}"
-                )
-            elif highlights < highlights_min:
-                reasons.append(
-                    f"highlights {highlights:.2f} < min {highlights_min:.2f}"
-                )
-        if scores["composition"] < hard_cfg["composition"]:
+    add_reason(
+        scores["sharp"] < hard_cfg["sharp"]
+        or metrics.sharpness < thresholds.sharpness_min,
+        f"sharpness {metrics.sharpness:.1f} < min {thresholds.sharpness_min:.1f}",
+    )
+    add_reason(
+        scores["sharp_center"] < hard_cfg["sharp_center"]
+        or metrics.sharpness_center < thresholds.center_sharpness_min,
+        f"center sharpness {metrics.sharpness_center:.1f} < min {thresholds.center_sharpness_min:.1f}",
+    )
+    add_reason(
+        scores["teneng"] < hard_cfg["teneng"]
+        or metrics.tenengrad < thresholds.tenengrad_min,
+        f"contrast {metrics.tenengrad:.0f} < min {thresholds.tenengrad_min:.0f}",
+    )
+    add_reason(
+        scores["motion"] < hard_cfg["motion"]
+        or metrics.motion_ratio < thresholds.motion_ratio_min,
+        f"motion ratio {metrics.motion_ratio:.2f} < min {thresholds.motion_ratio_min:.2f}",
+    )
+    add_reason(
+        scores["noise"] < hard_cfg["noise"] or metrics.noise > thresholds.noise_std_max,
+        f"noise {metrics.noise:.1f} > max {thresholds.noise_std_max:.1f}",
+    )
+
+    if scores["brightness"] < hard_cfg["brightness"]:
+        if metrics.brightness_mean < thresholds.brightness_min:
             reasons.append(
-                f"composition {composition:.2f} < min {hard_cfg['composition']:.2f}"
+                f"brightness {metrics.brightness_mean:.2f} < min {thresholds.brightness_min:.2f}"
             )
+        elif metrics.brightness_mean > thresholds.brightness_max:
+            reasons.append(
+                f"brightness {metrics.brightness_mean:.2f} > max {thresholds.brightness_max:.2f}"
+            )
+        else:
+            reasons.append("poor exposure")
+    if scores["shadows"] < hard_cfg["shadows"]:
+        if metrics.shadows > thresholds.shadows_max:
+            reasons.append(
+                f"shadows {metrics.shadows:.2f} > max {thresholds.shadows_max:.2f}"
+            )
+        elif metrics.shadows < thresholds.shadows_min:
+            reasons.append(
+                f"shadows {metrics.shadows:.2f} < min {thresholds.shadows_min:.2f}"
+            )
+    if scores["highlights"] < hard_cfg["highlights"]:
+        if metrics.highlights > thresholds.highlights_max:
+            reasons.append(
+                f"highlights {metrics.highlights:.2f} > max {thresholds.highlights_max:.2f}"
+            )
+        elif metrics.highlights < thresholds.highlights_min:
+            reasons.append(
+                f"highlights {metrics.highlights:.2f} < min {thresholds.highlights_min:.2f}"
+            )
+    if scores["composition"] < hard_cfg["composition"]:
+        reasons.append(
+            f"composition {metrics.composition:.2f} < min {hard_cfg['composition']:.2f}"
+        )
+    return reasons
+
+
+def _frame_metrics_from_result(result: Dict[str, Any]) -> FrameMetrics:
+    """Build a FrameMetrics instance from the raw analysis dictionary."""
+    brightness = result["brightness"]
+    return FrameMetrics(
+        sharpness=result["sharpness"],
+        sharpness_center=result.get("sharpness_center", result["sharpness"]),
+        tenengrad=result.get("tenengrad", 0.0),
+        motion_ratio=result.get("motion_ratio", 1.0),
+        noise=result.get("noise", 0.0),
+        brightness_mean=brightness["mean"],
+        shadows=brightness.get("shadows", 0.0),
+        highlights=brightness.get("highlights", 0.0),
+        composition=result.get("composition", 0.0) or 0.0,
+    )
+
+
+def _suggest_keep(
+    metrics: FrameMetrics, duplicate: bool, cfg: Dict[str, Any], exif: Dict[str, Any]
+) -> Tuple[bool, List[str], float]:
+    """Return keep/discard suggestion, reasons, and quality score for a frame."""
+    thresholds = Thresholds.from_config(cfg, exif)
+    hard_cfg = _hard_fail_thresholds(cfg)
+    cutoff = cfg.get("quality_score_min", 0.75)
+    score_breakdown = _score_metrics(metrics, thresholds)
+    hard_fail = any(
+        score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
+    )
+    keep = score_breakdown.quality_score >= cutoff and not hard_fail
+    reasons = _quality_reasons(
+        metrics,
+        thresholds,
+        score_breakdown.scores,
+        hard_cfg,
+        score_breakdown.quality_score,
+        cutoff,
+    )
     if duplicate:
         reasons.append("duplicate")
         keep = False
-
-    return keep, reasons, quality_score
+    return keep, reasons, score_breakdown.quality_score
 
 
 def _analyze_single_file(
     path: pathlib.Path,
     preview_dir: pathlib.Path,
-    preview_cfg: Dict,
-    analysis_cfg: Dict,
+    preview_cfg: Dict[str, Any],
+    analysis_cfg: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
     """Analyze a single RAW file using its generated preview."""
     preview_path = preview_path_for(path, preview_dir, preview_cfg)
@@ -326,19 +393,19 @@ def _analyze_single_file(
         "noise": noise_estimate(gray_arr),
         "brightness": brightness_stats(gray_arr),
         "composition": composition_score(gray_arr),
-        "phash": phash(preview_path, Image=Image),
+        "phash": phash(preview_path, image_module=Image),
         "exif": exif,
         "faces": face_info,
     }
 
 
 def analyze_files(
-    cfg: Dict,
+    cfg: Dict[str, Any],
     files: List[pathlib.Path],
     preview_dir: pathlib.Path,
-    preview_cfg: Dict,
+    preview_cfg: Dict[str, Any],
     progress_cb: ProgressCallback = None,
-) -> List[Dict]:
+) -> List[Dict[str, Any]]:
     """Analyze a collection of RAW files and return structured metrics."""
     analysis_cfg = cfg.get("analysis", {})
     use_similarity = skimage_ssim is not None and skimage_psnr is not None
@@ -358,8 +425,8 @@ def analyze_files(
 def _run_analysis_workers(
     files: List[pathlib.Path],
     preview_dir: pathlib.Path,
-    preview_cfg: Dict,
-    analysis_cfg: Dict,
+    preview_cfg: Dict[str, Any],
+    analysis_cfg: Dict[str, Any],
     concurrency: int,
     progress_cb: ProgressCallback,
 ) -> List[Dict[str, Any]]:
@@ -367,7 +434,9 @@ def _run_analysis_workers(
     results: List[Dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures = [
-            pool.submit(_analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg)
+            pool.submit(
+                _analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg
+            )
             for path in files
         ]
         try:
@@ -388,7 +457,7 @@ def _run_analysis_workers(
 
 def _label_duplicates(
     results: List[Dict[str, Any]],
-    analysis_cfg: Dict,
+    analysis_cfg: Dict[str, Any],
     use_similarity: bool,
 ) -> Set[int]:
     """Detect duplicate frames and annotate results with grouping metadata."""
@@ -436,18 +505,31 @@ def _label_duplicates(
         if keeper_idx not in rgb_cache:
             arr_keep = open_preview_rgb(pathlib.Path(keeper["preview"]))
             rgb_cache[keeper_idx] = (
-                arr_keep if arr_keep is not None else np.zeros((1, 1, 3), dtype=np.float32)
+                arr_keep
+                if arr_keep is not None
+                else np.zeros((1, 1, 3), dtype=np.float32)
             )
         if candidate_idx not in rgb_cache:
             arr_dup = open_preview_rgb(pathlib.Path(candidate["preview"]))
             rgb_cache[candidate_idx] = (
-                arr_dup if arr_dup is not None else np.zeros((1, 1, 3), dtype=np.float32)
+                arr_dup
+                if arr_dup is not None
+                else np.zeros((1, 1, 3), dtype=np.float32)
             )
         try:
             ssim_val = float(
-                skimage_ssim(rgb_cache[keeper_idx], rgb_cache[candidate_idx], channel_axis=2, data_range=255)
+                skimage_ssim(
+                    rgb_cache[keeper_idx],
+                    rgb_cache[candidate_idx],
+                    channel_axis=2,
+                    data_range=255,
+                )
             )
-            psnr_val = float(skimage_psnr(rgb_cache[keeper_idx], rgb_cache[candidate_idx], data_range=255))
+            psnr_val = float(
+                skimage_psnr(
+                    rgb_cache[keeper_idx], rgb_cache[candidate_idx], data_range=255
+                )
+            )
             return f"ssim={ssim_val:.3f}, psnr={psnr_val:.1f}"
         except Exception:
             return ""
@@ -455,7 +537,9 @@ def _label_duplicates(
     for members in groups.values():
         if len(members) < 2:
             continue
-        members_sorted = sorted(members, key=lambda i: results[i]["sharpness"], reverse=True)
+        members_sorted = sorted(
+            members, key=lambda i: results[i]["sharpness"], reverse=True
+        )
         keeper = members_sorted[0]
         keeper_result = results[keeper]
         for member in members:
@@ -470,17 +554,26 @@ def _label_duplicates(
                 reason_parts.append(
                     f"sharpness {candidate['sharpness']:.1f} < {keeper_result['sharpness']:.1f}"
                 )
-            if candidate.get("tenengrad") is not None and keeper_result.get("tenengrad") is not None:
+            if (
+                candidate.get("tenengrad") is not None
+                and keeper_result.get("tenengrad") is not None
+            ):
                 if candidate["tenengrad"] < keeper_result["tenengrad"]:
                     reason_parts.append(
                         f"contrast {candidate['tenengrad']:.0f} < {keeper_result['tenengrad']:.0f}"
                     )
-            if candidate.get("motion_ratio") is not None and keeper_result.get("motion_ratio") is not None:
+            if (
+                candidate.get("motion_ratio") is not None
+                and keeper_result.get("motion_ratio") is not None
+            ):
                 if candidate["motion_ratio"] < keeper_result["motion_ratio"]:
                     reason_parts.append(
                         f"motion ratio {candidate['motion_ratio']:.2f} < {keeper_result['motion_ratio']:.2f}"
                     )
-            if candidate.get("noise") is not None and keeper_result.get("noise") is not None:
+            if (
+                candidate.get("noise") is not None
+                and keeper_result.get("noise") is not None
+            ):
                 if candidate["noise"] > keeper_result["noise"]:
                     reason_parts.append(
                         f"noise {candidate['noise']:.1f} > {keeper_result['noise']:.1f}"
@@ -498,30 +591,28 @@ def _label_duplicates(
 
 def _apply_quality_decisions(
     results: List[Dict[str, Any]],
-    analysis_cfg: Dict,
+    analysis_cfg: Dict[str, Any],
     duplicate_indexes: Set[int],
 ) -> None:
     """Apply quality scoring and final keep/discard decisions."""
     for idx, result in enumerate(results):
         is_duplicate = idx in duplicate_indexes
+        metrics = _frame_metrics_from_result(result)
+        exif = result.get("exif", {})
         keep, reasons, quality_score = _suggest_keep(
-            result["sharpness"],
-            result.get("sharpness_center", result["sharpness"]),
-            result.get("tenengrad", 0.0),
-            result.get("motion_ratio", 1.0),
-            result.get("noise", 0.0),
-            result["brightness"]["mean"],
-            result["brightness"].get("shadows", 0.0),
-            result["brightness"].get("highlights", 0.0),
-            result.get("composition", 0.0),
+            metrics,
             is_duplicate,
             analysis_cfg,
-            result.get("exif", {}),
+            exif,
         )
         result["quality_score"] = quality_score
         if is_duplicate and result.get("duplicate_reason"):
             reasons = [
-                "duplicate: " + result["duplicate_reason"] if reason == "duplicate" else reason
+                (
+                    "duplicate: " + result["duplicate_reason"]
+                    if reason == "duplicate"
+                    else reason
+                )
                 for reason in reasons
             ]
         result["suggest_keep"] = keep
@@ -541,7 +632,7 @@ def _apply_quality_decisions(
         results[fallback]["reasons"].append("kept to avoid discarding all duplicates")
 
 
-def write_outputs(results: List[Dict], analysis_cfg: Dict) -> None:
+def write_outputs(results: List[Dict[str, Any]], analysis_cfg: Dict[str, Any]) -> None:
     """Persist analysis results to JSON and render the HTML report."""
     output_json = pathlib.Path(analysis_cfg.get("results_path", "./analysis.json"))
     output_json.write_text(json.dumps(results, indent=2), encoding="utf-8")

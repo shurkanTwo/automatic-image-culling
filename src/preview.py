@@ -2,7 +2,7 @@
 
 import io
 import pathlib
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -44,17 +44,25 @@ def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
     return img
 
 
+def _preview_format(cfg: Dict[str, Any]) -> str:
+    """Return the desired preview format with a safe default."""
+    return cfg.get("format", "webp")
+
+
 def generate_preview(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
 ) -> Optional[pathlib.Path]:
     """Write a resized preview for a RAW file if missing and return its path."""
     if not rawpy or not Image:
         return None
     preview_dir.mkdir(parents=True, exist_ok=True)
-    target = preview_dir / f"{path.stem}.{cfg['format']}"
+    target = preview_path_for(path, preview_dir, cfg)
     if target.exists():
         return target
     orientation = exif_orientation(read_exif(path))
+    long_edge = int(cfg.get("long_edge", 2048))
+    fmt = _preview_format(cfg)
+    quality = int(cfg.get("quality", 85))
     with rawpy.imread(str(path)) as raw:
         try:
             thumb = raw.extract_thumb()
@@ -66,16 +74,16 @@ def generate_preview(
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
             img = Image.fromarray(rgb)
     img = _apply_orientation(img, orientation)
-    img = resize_image(img, cfg["long_edge"])
-    img.save(target, cfg["format"].upper(), quality=cfg["quality"])
+    img = resize_image(img, long_edge)
+    img.save(target, fmt.upper(), quality=quality)
     return target
 
 
 def ensure_preview(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
 ) -> Optional[pathlib.Path]:
     """Guarantee that a preview file exists for the given RAW file."""
-    preview = preview_dir / f"{path.stem}.{cfg['format']}"
+    preview = preview_path_for(path, preview_dir, cfg)
     if preview.exists():
         return preview
     return generate_preview(path, preview_dir, cfg)
@@ -105,7 +113,7 @@ def open_preview_rgb(
 
 
 def preview_path_for(
-    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
+    path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict[str, Any]
 ) -> pathlib.Path:
     """Return the expected preview path for a RAW file and preview config."""
-    return preview_dir / f"{path.stem}.{cfg['format']}"
+    return preview_dir / f"{path.stem}.{_preview_format(cfg)}"

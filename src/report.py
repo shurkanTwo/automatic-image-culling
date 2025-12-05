@@ -2,7 +2,7 @@
 
 import json
 import pathlib
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
@@ -17,7 +17,9 @@ def _write_sidecar(source: pathlib.Path, target: pathlib.Path) -> None:
 
 
 def write_html_report(
-    results: List[Dict], path: pathlib.Path, config: Optional[Dict] = None
+    results: List[Dict[str, Any]],
+    path: pathlib.Path,
+    config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Render the analysis results into an HTML report."""
     template = TEMPLATE_FILE.read_text(encoding="utf-8")

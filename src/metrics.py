@@ -1,8 +1,10 @@
 """Image metric helpers used by the analyzer pipeline."""
 
-from typing import Dict, Optional
+import pathlib
+from typing import Any, Dict, Optional
 
 import numpy as np
+
 
 def variance_of_laplacian(arr: np.ndarray) -> float:
     """Return a simple focus measure using a Laplacian kernel."""
@@ -95,11 +97,17 @@ def composition_score(arr: np.ndarray) -> float:
     return score
 
 
-def phash(preview_path, Image=None) -> Optional[int]:
+def phash(
+    preview_path: pathlib.Path, image_module: Optional[Any] = None
+) -> Optional[int]:
     """Compute a perceptual hash over an 8x8 luminance thumbnail."""
-    if Image is None:
+    if image_module is None:
         return None
-    img = Image.open(preview_path).convert("L").resize((8, 8), Image.LANCZOS)
+    img = (
+        image_module.open(preview_path)
+        .convert("L")
+        .resize((8, 8), image_module.LANCZOS)
+    )
     pixels = list(img.getdata())
     avg = sum(pixels) / len(pixels)
     bits = 0

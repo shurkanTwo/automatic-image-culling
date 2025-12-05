@@ -4,7 +4,7 @@ import argparse
 import concurrent.futures
 import pathlib
 import shutil
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .analyzer import analyze_files, write_outputs
 from .config import load_config
@@ -39,17 +39,16 @@ def _progress_bar(total: int, desc: str) -> _Progress:
     return _Progress(total, desc)
 
 
-def _exclude_list(cfg: Dict) -> List[str]:
-    exclude = cfg.get("exclude_dirs", [])
-    return list(
-        set(
-            exclude
-            + [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
-        )
+def _exclude_list(cfg: Dict[str, Any]) -> List[str]:
+    """Return a de-duplicated, deterministic list of directories to ignore."""
+    exclude_dirs = list(cfg.get("exclude_dirs", []))
+    exclude_dirs.extend(
+        [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
     )
+    return list(dict.fromkeys(exclude_dirs))
 
 
-def _preview_config(cfg: Dict) -> Dict:
+def _preview_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Return a defensive copy of the preview configuration."""
     preview_cfg = dict(cfg.get("preview", {}))
     preview_cfg.setdefault("long_edge", 2048)
@@ -173,7 +172,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument("--config", help="Path to YAML config file", default=None)
+        subparser.add_argument(
+            "--config", help="Path to YAML config file", default=None
+        )
 
     scan = sub.add_parser("scan", help="List .ARW files and basic EXIF info")
     add_common(scan)
