@@ -141,6 +141,7 @@ def analyze_command(args: argparse.Namespace) -> None:
     """Run analysis pipeline and emit JSON and HTML outputs."""
     cfg = load_config(args.config)
     preview_cfg = _preview_config(cfg)
+    analysis_cfg = dict(cfg.get("analysis", {}))
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
@@ -149,6 +150,19 @@ def analyze_command(args: argparse.Namespace) -> None:
     preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
     for path in files:
         ensure_preview(path, preview_dir, preview_cfg)
+
+    analysis_dir = pathlib.Path(cfg.get("output_dir", "./output")) / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+
+    results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+    if not results_path.is_absolute():
+        results_path = analysis_dir / results_path
+    analysis_cfg["results_path"] = str(results_path)
+
+    report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+    if not report_path.is_absolute():
+        report_path = analysis_dir / report_path
+    analysis_cfg["report_path"] = str(report_path)
 
     bar = _progress_bar(len(files), "Analyze")
     try:
@@ -160,9 +174,9 @@ def analyze_command(args: argparse.Namespace) -> None:
         print("Analysis cancelled by user.")
         return
     bar.close()
-    write_outputs(results, cfg.get("analysis", {}))
-    print(f"Analysis written to {cfg['analysis']['results_path']}")
-    print(f"HTML report written to {cfg['analysis']['report_path']}")
+    write_outputs(results, analysis_cfg)
+    print(f"Analysis written to {analysis_cfg['results_path']}")
+    print(f"HTML report written to {analysis_cfg['report_path']}")
 
 
 def build_parser() -> argparse.ArgumentParser:
