@@ -589,6 +589,20 @@ def _label_duplicates(
     return duplicate_indexes
 
 
+def _to_windows_path(path_value: str) -> str:
+    """Convert WSL-style /mnt/<drive>/ paths to Windows paths for host consumption."""
+    if not isinstance(path_value, str):
+        return path_value
+    if len(path_value) >= 3 and path_value[1:3] == ":\\":
+        return path_value
+    parts = path_value.split("/")
+    if len(parts) > 3 and parts[0] == "" and parts[1] == "mnt" and len(parts[2]) == 1:
+        drive = f"{parts[2].upper()}:"
+        rest = [part for part in parts[3:] if part]
+        return str(pathlib.PureWindowsPath(drive, *rest))
+    return path_value
+
+
 def _apply_quality_decisions(
     results: List[Dict[str, Any]],
     analysis_cfg: Dict[str, Any],
@@ -632,9 +646,23 @@ def _apply_quality_decisions(
         results[fallback]["reasons"].append("kept to avoid discarding all duplicates")
 
 
+def _convert_paths_for_host(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return a copy of results with paths converted to Windows-style when applicable."""
+    converted: List[Dict[str, Any]] = []
+    for entry in results:
+        item = dict(entry)
+        item["path"] = _to_windows_path(item["path"])
+        item["preview"] = _to_windows_path(item["preview"])
+        if "duplicate_of" in item:
+            item["duplicate_of"] = _to_windows_path(item["duplicate_of"])
+        converted.append(item)
+    return converted
+
+
 def write_outputs(results: List[Dict[str, Any]], analysis_cfg: Dict[str, Any]) -> None:
     """Persist analysis results to JSON and render the HTML report."""
+    results_for_host = _convert_paths_for_host(results)
     output_json = pathlib.Path(analysis_cfg.get("results_path", "./analysis.json"))
-    output_json.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    output_json.write_text(json.dumps(results_for_host, indent=2), encoding="utf-8")
     report_path = pathlib.Path(analysis_cfg.get("report_path", "./report.html"))
-    write_html_report(results, report_path, {"analysis": analysis_cfg})
+    write_html_report(results_for_host, report_path, {"analysis": analysis_cfg})
