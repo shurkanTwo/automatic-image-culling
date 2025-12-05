@@ -9,6 +9,10 @@ uv pip install -r ./requirements.txt
 python -m src.main <command> --config config.yaml
 python -m src.main analyze
 
+## Code standards
+
+See `CODING_STANDARDS.md` for required style and quality guidelines.
+
 ### Face detection/recognition prerequisites
 
 - Install build tools on Windows if you run into compilation errors (e.g., Visual Studio Build Tools with MSVC; but wheels are provided for required libs).
