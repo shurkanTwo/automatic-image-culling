@@ -4,6 +4,7 @@ import concurrent.futures
 import datetime as _dt
 import json
 import pathlib
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast
 
@@ -395,8 +396,13 @@ def _load_preview_arrays(
         with Image.open(preview_path) as img_handle:
             img_rgb = img_handle.convert("RGB")
             rgb_arr = np.array(img_rgb, dtype=np.uint8)
-            gray_arr = np.array(img_rgb.convert("L"), dtype=np.float32)
-            hash_val = phash(preview_path, image_module=Image, image=img_rgb)
+            # Fast luminance approximation without an extra PIL convert call.
+            gray_arr = (
+                0.299 * rgb_arr[:, :, 0]
+                + 0.587 * rgb_arr[:, :, 1]
+                + 0.114 * rgb_arr[:, :, 2]
+            ).astype(np.float32)
+            hash_val = phash(preview_path, gray_array=gray_arr)
     except Exception:
         return None
     return rgb_arr, gray_arr, hash_val
@@ -523,12 +529,19 @@ def _label_duplicates(
     """Detect duplicate frames and annotate results with grouping metadata."""
     dup_threshold = int(analysis_cfg.get("duplicate_hamming", 6))
     window_sec = float(analysis_cfg.get("duplicate_window_seconds", 8))
+    bucket_bits = max(0, int(analysis_cfg.get("duplicate_bucket_bits", 8)))
+    bucket_shift = max(0, 64 - bucket_bits) if bucket_bits else 0
+
+    def bucket_key(hash_val: int) -> int:
+        return hash_val >> bucket_shift if bucket_bits else 0
+
     entries: List[Tuple[int, int, float]] = []
     for idx, result in enumerate(results):
         if result["phash"] is not None and result.get("capture_ts") is not None:
             entries.append((idx, int(result["phash"]), float(result["capture_ts"])))
     entries.sort(key=lambda item: item[2])
     parent = {idx: idx for idx, _, _ in entries}
+    hash_by_idx = {idx: hash_val for idx, hash_val, _ in entries}
 
     def find(node: int) -> int:
         while parent[node] != node:
@@ -541,13 +554,28 @@ def _label_duplicates(
         if root_a != root_b:
             parent[root_b] = root_a
 
-    for i, (idx_i, hash_i, ts_i) in enumerate(entries):
-        for j in range(i - 1, -1, -1):
-            idx_j, hash_j, ts_j = entries[j]
-            if ts_i - ts_j > window_sec:
-                break
-            if hamming(hash_i, hash_j) <= dup_threshold:
-                union(idx_i, idx_j)
+    active_window = deque()  # (result_idx, bucket, timestamp)
+    bucket_index: Dict[int, List[int]] = defaultdict(list)
+
+    for idx_i, hash_i, ts_i in entries:
+        while active_window and ts_i - active_window[0][2] > window_sec:
+            expired_idx, expired_bucket, _ = active_window.popleft()
+            bucket_list = bucket_index.get(expired_bucket)
+            if bucket_list:
+                try:
+                    bucket_list.remove(expired_idx)
+                except ValueError:
+                    pass
+                if not bucket_list:
+                    bucket_index.pop(expired_bucket, None)
+
+        key = bucket_key(hash_i)
+        for candidate_idx in list(bucket_index.get(key, [])):
+            if hamming(hash_i, hash_by_idx[candidate_idx]) <= dup_threshold:
+                union(idx_i, candidate_idx)
+
+        active_window.append((idx_i, key, ts_i))
+        bucket_index[key].append(idx_i)
 
     groups: Dict[int, List[int]] = {}
     for idx, _, _ in entries:
@@ -598,7 +626,13 @@ def _label_duplicates(
         if len(members) < 2:
             continue
         members_sorted = sorted(
-            members, key=lambda i: results[i]["sharpness"], reverse=True
+            members,
+            key=lambda i: (
+                results[i].get("sharpness", 0.0),
+                results[i].get("tenengrad", 0.0) or 0.0,
+                results[i].get("motion_ratio", 0.0) or 0.0,
+            ),
+            reverse=True,
         )
         keeper = members_sorted[0]
         keeper_result = results[keeper]

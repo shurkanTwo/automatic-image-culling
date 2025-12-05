@@ -28,17 +28,24 @@ except ImportError:  # pragma: no cover
 class _Progress:
     """Minimal progress interface compatible with tqdm update/close."""
 
-    def __init__(self, total: int, desc: str):
+    def __init__(self, total: int, desc: str, batch_size: int = 16):
         self._impl: Optional[Any] = None
+        self._pending = 0
+        self._batch_size = max(1, batch_size)
         if tqdm is not None:
             self._impl = tqdm.tqdm(total=total, desc=desc, leave=False)
 
     def update(self, amount: int = 1) -> None:
-        if self._impl is not None:
-            self._impl.update(amount)
+        self._pending += amount
+        if self._impl is not None and self._pending >= self._batch_size:
+            self._impl.update(self._pending)
+            self._pending = 0
 
     def close(self) -> None:
         if self._impl is not None:
+            if self._pending:
+                self._impl.update(self._pending)
+                self._pending = 0
             self._impl.close()
 
 

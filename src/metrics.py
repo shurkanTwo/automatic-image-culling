@@ -64,8 +64,15 @@ def structure_tensor_ratio(arr: np.ndarray) -> StructureTensorStats:
     return {"lambda_max": lam1, "lambda_min": lam2, "ratio": ratio}
 
 
-def noise_estimate(arr: np.ndarray) -> float:
-    """Estimate noise via residual variance after a simple box blur."""
+def noise_estimate(arr: np.ndarray, sample_step: int = 2) -> float:
+    """Estimate noise via residual variance after a simple box blur.
+
+    Downsamples by ``sample_step`` to reduce work; set to 1 to use full resolution.
+    """
+    if sample_step > 1:
+        arr = arr[::sample_step, ::sample_step]
+    if arr.size == 0:
+        return 0.0
     padded = np.pad(arr, 1, mode="reflect")
     blur = (
         padded[:-2, :-2]
@@ -123,19 +130,41 @@ def phash(
     preview_path: pathlib.Path,
     image_module: Optional[Any] = None,
     image: Optional[Any] = None,
+    gray_array: Optional[np.ndarray] = None,
 ) -> Optional[int]:
     """Compute a perceptual hash over an 8x8 luminance thumbnail.
 
-    Accepts either a pre-opened PIL image via ``image`` or opens from ``preview_path``.
+    Accepts either a pre-opened PIL image via ``image`` or a precomputed grayscale
+    array via ``gray_array``. Falls back to opening from ``preview_path`` when
+    needed.
     """
-    if image is None:
+    if gray_array is not None:
+        gray = np.asarray(gray_array, dtype=np.float32)
+        if gray.ndim != 2 or gray.size == 0:
+            return None
+        h, w = gray.shape
+        if h < 1 or w < 1:
+            return None
+        # Downsample to 8x8 using block averaging without Python loops.
+        y_edges = np.linspace(0, h, num=9, dtype=int)
+        x_edges = np.linspace(0, w, num=9, dtype=int)
+        block_sums = np.add.reduceat(
+            np.add.reduceat(gray, y_edges[:-1], axis=0), x_edges[:-1], axis=1
+        )
+        heights = np.diff(y_edges).astype(np.float32)
+        widths = np.diff(x_edges).astype(np.float32)
+        area = np.maximum(heights[:, None] * widths[None, :], 1.0)
+        small = block_sums / area
+        pixels = small.astype(np.float32).ravel()
+    else:
+        if image is None:
+            if image_module is None:
+                return None
+            image = image_module.open(preview_path)
         if image_module is None:
             return None
-        image = image_module.open(preview_path)
-    if image_module is None:
-        return None
-    img = image.convert("L").resize((8, 8), image_module.LANCZOS)
-    pixels = list(img.getdata())
+        img = image.convert("L").resize((8, 8), image_module.LANCZOS)
+        pixels = np.array(img, dtype=np.float32).ravel()
     avg = sum(pixels) / len(pixels)
     bits = 0
     for i, p in enumerate(pixels):

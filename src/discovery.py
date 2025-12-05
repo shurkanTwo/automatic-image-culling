@@ -3,7 +3,7 @@
 import datetime as _dt
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .config import SortConfig
 
@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover
 
 
 ExifData = Dict[str, Any]
+_EXIF_CACHE: Dict[Tuple[Path, int], ExifData] = {}
 
 
 def _is_under(child: Path, parent: Path) -> bool:
@@ -67,9 +68,18 @@ def read_exif(path: Path) -> ExifData:
     """Read EXIF data from the given image path, returning a plain dictionary."""
     if exifread is None:
         return {}
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return {}
+    cache_key = (path.resolve(), int(stat.st_mtime_ns))
+    if cache_key in _EXIF_CACHE:
+        return _EXIF_CACHE[cache_key]
     with path.open("rb") as file_handle:
         tags = exifread.process_file(file_handle, details=False)
-    return {str(key): str(value) for key, value in tags.items()}
+    exif_dict = {str(key): str(value) for key, value in tags.items()}
+    _EXIF_CACHE[cache_key] = exif_dict
+    return exif_dict
 
 
 def capture_date(
