@@ -1,47 +1,45 @@
-## Hinweis:
+# Automatic Image Culling
 
-- This project was entirely build with vibe coding using OpenAIs GPT-5.1-Codex-Max
+Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag keepers with an HTML report.
 
-## Enter venv in git bash:
+## Quick start
 
-Windows:
-py -3.112 -m venv .venv-3.12
+### Windows (PowerShell)
+1) `py -3.12 -m venv .venv-3.12`
+2) `.\\.venv-3.12\\Scripts\\Activate.ps1`
+3) Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+4) `uv pip install -r requirements.txt`
+5) Edit `config.yaml` (set `input_dir`/`output_dir`/`preview_dir` to Windows paths)
+6) `python -m src.main analyze --config config.yaml`
+   - Outputs land in `output_dir\\analysis` (`analysis.json`, `report.html`, `report.css`, `report.js`), with Windows paths for opening from the host.
 
-source .venv-3.12/Scripts/activate
+### Linux / WSL (Ubuntu)
+1) `sudo apt update && sudo apt install python3.12 python3.12-venv build-essential python3.12-dev`
+2) `python3.12 -m venv .venv-3.12 && source .venv-3.12/bin/activate`
+3) Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` then `source ~/.profile`
+4) `uv pip install -r requirements.txt`
+5) Edit `config.yaml` (use `/mnt/c/...` paths if targeting Windows storage)
+6) `python -m src.main analyze --config config.yaml`
+   - Outputs land in `output_dir/analysis`; paths in the report are converted to Windows form for host opening.
 
-uv pip install -r ./requirements.txt
+## Commands
+- `python -m src.main scan --config config.yaml` — list discovered `.ARW` files (+EXIF if `--json`).
+- `python -m src.main previews --config config.yaml` — generate and cache previews.
+- `python -m src.main sort --config config.yaml [--apply]` — copy/move files into the configured pattern.
+- `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
 
-python -m src.main <command> --config config.yaml
-python -m src.main analyze
+## Configuration
+- See `config.example.yaml` for a working template (Windows paths).  
+- `preview` block controls preview size/format; `analysis` block tunes thresholds; `sort` block controls copy/move.
+- Under WSL, set `output_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
 
-Ubuntu:
-sudo apt install python3.12 python3.12-venv
-python3.12 -m venv .venv-3.12
-source .venv-3.12/bin/activate
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.profile
-uv --version
-uv pip install -r requirements.txt
+## Face detection (optional)
+- Mediapipe (default) and InsightFace are installed via `requirements.txt`; enable with `analysis.face.enabled: true`.
+- GPU users on Windows may need CUDA/CUDNN on `PATH` (e.g., `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin` and CUDNN `bin`).
 
-sudo apt update
-sudo apt install build-essential
-sudo apt install python3.12-dev
+## Style and testing
+- Follow `CODING_STANDARDS.md`; format with `black src`.
+- Fast sanity check: `python3 -m compileall src`.
 
-uv pip install black
-python3 -m black src
-
-## Code standards
-
-See `CODING_STANDARDS.md` for required style and quality guidelines.
-
-### Face detection/recognition prerequisites
-
-- Install build tools on Windows if you run into compilation errors (e.g., Visual Studio Build Tools with MSVC; but wheels are provided for required libs).
-- Mediapipe and InsightFace are installed via `requirements.txt` (wheels available for most Python versions).
-- For CPU-only: nothing beyond the above (default).
-- If you see protobuf-related errors, ensure `protobuf` stays on the pinned version from `requirements.txt` (>=4.25,<5).
-
-export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/bin:$PATH"
-
-export PATH="/c/Program Files/NVIDIA/CUDNN/v9.16/bin/12.9:$PATH"
-where cudnn64_9.dll
+## Credits
+- Built collaboratively with OpenAI GPT-5.1-Codex-Max via vibe coding sessions.
