@@ -1,8 +1,11 @@
-import numpy as np
+"""Image metric helpers used by the analyzer pipeline."""
+
 from typing import Dict, Optional
 
+import numpy as np
 
 def variance_of_laplacian(arr: np.ndarray) -> float:
+    """Return a simple focus measure using a Laplacian kernel."""
     core = -4 * arr[1:-1, 1:-1]
     core += arr[:-2, 1:-1]
     core += arr[2:, 1:-1]
@@ -12,6 +15,7 @@ def variance_of_laplacian(arr: np.ndarray) -> float:
 
 
 def tenengrad(arr: np.ndarray) -> float:
+    """Compute the Tenengrad focus measure using Sobel operators."""
     padded = np.pad(arr, 1, mode="reflect")
     gx = (
         padded[0:-2, 2:]
@@ -29,6 +33,7 @@ def tenengrad(arr: np.ndarray) -> float:
 
 
 def structure_tensor_ratio(arr: np.ndarray) -> Dict[str, float]:
+    """Return structure tensor eigenvalues and their ratio for motion estimation."""
     gx, gy = np.gradient(arr)
     gxx = float((gx * gx).mean())
     gyy = float((gy * gy).mean())
@@ -42,6 +47,7 @@ def structure_tensor_ratio(arr: np.ndarray) -> Dict[str, float]:
 
 
 def noise_estimate(arr: np.ndarray) -> float:
+    """Estimate noise via residual variance after a simple box blur."""
     padded = np.pad(arr, 1, mode="reflect")
     blur = (
         padded[:-2, :-2]
@@ -64,6 +70,7 @@ def noise_estimate(arr: np.ndarray) -> float:
 
 
 def brightness_stats(arr: np.ndarray) -> Dict[str, float]:
+    """Summarize brightness, shadows, and highlights for an array."""
     norm = arr / 255.0
     shadow_cut = 0.2
     highlight_cut = 0.7
@@ -75,6 +82,7 @@ def brightness_stats(arr: np.ndarray) -> Dict[str, float]:
 
 
 def composition_score(arr: np.ndarray) -> float:
+    """Score how close the weighted center is to rule-of-thirds intersections."""
     h, w = arr.shape
     y, x = np.indices(arr.shape)
     weight = arr + 1e-6
@@ -88,6 +96,7 @@ def composition_score(arr: np.ndarray) -> float:
 
 
 def phash(preview_path, Image=None) -> Optional[int]:
+    """Compute a perceptual hash over an 8x8 luminance thumbnail."""
     if Image is None:
         return None
     img = Image.open(preview_path).convert("L").resize((8, 8), Image.LANCZOS)
@@ -101,4 +110,5 @@ def phash(preview_path, Image=None) -> Optional[int]:
 
 
 def hamming(a: int, b: int) -> int:
+    """Return the Hamming distance between two hash integers."""
     return (a ^ b).bit_count()

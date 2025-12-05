@@ -1,17 +1,25 @@
+"""Report rendering utilities."""
+
 import json
 import pathlib
-from typing import Dict, List
-
+from typing import Dict, List, Optional
 
 TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
 JS_FILE = pathlib.Path(__file__).with_name("report.js")
 
 
-def write_html_report(results: List[Dict], path: pathlib.Path, config: Dict = None) -> None:
-    """
-    Render the analysis results into an HTML report using an external template and CSS.
-    """
+def _write_sidecar(source: pathlib.Path, target: pathlib.Path) -> None:
+    """Copy a sidecar asset when the source exists."""
+    if not source.exists():
+        return
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def write_html_report(
+    results: List[Dict], path: pathlib.Path, config: Optional[Dict] = None
+) -> None:
+    """Render the analysis results into an HTML report."""
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
     payload = {"results": results, "config": config or {}}
     rendered = template.replace("__DATA_JSON__", json.dumps(payload))
@@ -19,9 +27,5 @@ def write_html_report(results: List[Dict], path: pathlib.Path, config: Dict = No
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered, encoding="utf-8")
 
-    if CSS_FILE.exists():
-        target_css = path.with_name(CSS_FILE.name)
-        target_css.write_text(CSS_FILE.read_text(encoding="utf-8"), encoding="utf-8")
-    if JS_FILE.exists():
-        target_js = path.with_name(JS_FILE.name)
-        target_js.write_text(JS_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    _write_sidecar(CSS_FILE, path.with_name(CSS_FILE.name))
+    _write_sidecar(JS_FILE, path.with_name(JS_FILE.name))

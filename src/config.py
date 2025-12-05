@@ -1,6 +1,8 @@
-import pathlib
-from typing import Dict, Optional
+"""Configuration loading and defaults."""
 
+import copy
+import pathlib
+from typing import Any, Dict, Optional
 
 try:
     import yaml
@@ -8,7 +10,7 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 
-DEFAULT_CONFIG: Dict = {
+DEFAULT_CONFIG: Dict[str, Any] = {
     "input_dir": "./input",
     "output_dir": "./output",
     "preview_dir": "./previews",
@@ -25,7 +27,7 @@ DEFAULT_CONFIG: Dict = {
         "noise_std_max": 25.0,
         "face": {
             "enabled": True,
-            "backend": "mediapipe",  # mediapipe or insightface
+            "backend": "mediapipe",
             "det_size": 640,
             "ctx_id": 0,
         },
@@ -36,25 +38,33 @@ DEFAULT_CONFIG: Dict = {
 }
 
 
-def _deep_update(base: Dict, override: Dict) -> Dict:
-    for k, v in (override or {}).items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            base[k] = _deep_update(base[k], v)
+def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merge override values into base and return the updated mapping."""
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            base[key] = _deep_update(base[key], value)
         else:
-            base[k] = v
+            base[key] = value
     return base
 
 
-def load_config(path: Optional[str]) -> Dict:
-    cfg = DEFAULT_CONFIG.copy()
-    cfg["analysis"] = dict(DEFAULT_CONFIG["analysis"])  # shallow clone nested
-    cfg["preview"] = dict(DEFAULT_CONFIG["preview"])
-    cfg["sort"] = dict(DEFAULT_CONFIG["sort"])
-    cfg["analysis"]["face"] = dict(DEFAULT_CONFIG["analysis"]["face"])
+def _clone_defaults() -> Dict[str, Any]:
+    """Create a safe deep copy of the default configuration."""
+    return copy.deepcopy(DEFAULT_CONFIG)
+
+
+def load_config(path: Optional[str]) -> Dict[str, Any]:
+    """
+    Load configuration from YAML if present; otherwise return defaults.
+
+    Path resolution prefers the provided path and falls back to ``config.yaml``.
+    """
+    cfg = _clone_defaults()
 
     cfg_path = pathlib.Path(path) if path else pathlib.Path("config.yaml")
-    if cfg_path.exists() and yaml:
-        with cfg_path.open("r", encoding="utf-8") as fh:
-            loaded = yaml.safe_load(fh) or {}
-            cfg = _deep_update(cfg, loaded)
-    return cfg
+    if not cfg_path.exists() or yaml is None:
+        return cfg
+
+    with cfg_path.open("r", encoding="utf-8") as file_handle:
+        loaded = yaml.safe_load(file_handle) or {}
+        return _deep_update(cfg, loaded)

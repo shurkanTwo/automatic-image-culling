@@ -1,8 +1,9 @@
-import os
-import pathlib
-import datetime as _dt
-from typing import Dict, List, Optional
+"""Discovery helpers for locating files and reading EXIF metadata."""
 
+import datetime as _dt
+import os
+from pathlib import Path
+from typing import Dict, List, Optional
 
 try:
     import exifread
@@ -10,7 +11,8 @@ except ImportError:  # pragma: no cover
     exifread = None
 
 
-def _is_under(child: pathlib.Path, parent: pathlib.Path) -> bool:
+def _is_under(child: Path, parent: Path) -> bool:
+    """Return True when child is located within parent."""
     try:
         child.resolve().relative_to(parent.resolve())
         return True
@@ -18,42 +20,51 @@ def _is_under(child: pathlib.Path, parent: pathlib.Path) -> bool:
         return False
 
 
-def find_arw_files(
-    directory: str, exclude_dirs: Optional[List[str]] = None
-) -> List[pathlib.Path]:
-    root = pathlib.Path(directory)
+def _normalize_exclude_dirs(directory: Path, exclude_dirs: Optional[List[str]]) -> List[Path]:
+    """Convert optional exclude directories into absolute resolved Paths."""
+    exclude_paths: List[Path] = []
+    for candidate in exclude_dirs or []:
+        path_candidate = Path(candidate)
+        if not path_candidate.is_absolute():
+            path_candidate = directory / path_candidate
+        exclude_paths.append(path_candidate.resolve())
+    return exclude_paths
+
+
+def find_arw_files(directory: str, exclude_dirs: Optional[List[str]] = None) -> List[Path]:
+    """Recursively find .ARW files under directory while respecting optional exclusions."""
+    root = Path(directory)
     if not root.exists():
         return []
-    exclude_paths: List[pathlib.Path] = []
-    for ex in exclude_dirs or []:
-        ex_path = pathlib.Path(ex)
-        if not ex_path.is_absolute():
-            ex_path = root / ex_path
-        exclude_paths.append(ex_path.resolve())
+    exclude_paths = _normalize_exclude_dirs(root, exclude_dirs)
 
-    results: List[pathlib.Path] = []
+    results: List[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        current = pathlib.Path(dirpath)
+        current = Path(dirpath)
         dirnames[:] = [
-            d
-            for d in dirnames
-            if not any(_is_under(current / d, ex) for ex in exclude_paths)
+            dirname
+            for dirname in dirnames
+            if not any(_is_under(current / dirname, excluded) for excluded in exclude_paths)
         ]
-        for fname in filenames:
-            if fname.lower().endswith(".arw"):
-                results.append(current / fname)
+        for filename in filenames:
+            if filename.lower().endswith(".arw"):
+                results.append(current / filename)
     return sorted(results)
 
 
-def read_exif(path: pathlib.Path) -> Dict:
-    if not exifread:
+def read_exif(path: Path) -> Dict:
+    """Read EXIF data from the given image path, returning a plain dictionary."""
+    if exifread is None:
         return {}
-    with path.open("rb") as fh:
-        tags = exifread.process_file(fh, details=False)
-    return {str(k): str(v) for k, v in tags.items()}
+    with path.open("rb") as file_handle:
+        tags = exifread.process_file(file_handle, details=False)
+    return {str(key): str(value) for key, value in tags.items()}
 
 
 def capture_date(exif: Dict, fallback: Optional[_dt.datetime] = None) -> _dt.datetime:
+    """
+    Parse the capture datetime from EXIF or fall back to the provided timestamp.
+    """
     dt_raw = exif.get("EXIF DateTimeOriginal") or exif.get("Image DateTime")
     if dt_raw:
         try:
@@ -64,12 +75,12 @@ def capture_date(exif: Dict, fallback: Optional[_dt.datetime] = None) -> _dt.dat
 
 
 def _safe_mtime(exif: Dict) -> float:
+    """Return a stored mtime placeholder when EXIF is missing or incomplete."""
     return exif.get("_stat_mtime", _dt.datetime.now().timestamp())
 
 
-def plan_destination(
-    path: pathlib.Path, exif: Dict, cfg: Dict, output_dir: pathlib.Path
-) -> pathlib.Path:
+def plan_destination(path: Path, exif: Dict, cfg: Dict, output_dir: Path) -> Path:
+    """Return the destination path for a file given EXIF metadata and sort config."""
     mtime = path.stat().st_mtime
     exif["_stat_mtime"] = mtime
     dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(mtime))
@@ -80,24 +91,20 @@ def plan_destination(
 
 
 def exif_orientation(exif: Dict) -> int:
-    """
-    Return EXIF orientation (1 is normal, 3 upside-down, 6 rotate 90 CW, 8 rotate 270).
-    """
+    """Return EXIF orientation (1 normal, 3 flip, 6 rotate 90 CW, 8 rotate 270)."""
     val = exif.get("Image Orientation") or exif.get("EXIF Orientation")
     if not val:
         return 1
-    s = str(val)
-    # Try numeric first
+    value_str = str(val)
     try:
-        return int(s.split()[0])
+        return int(value_str.split()[0])
     except Exception:
         pass
-    s_lower = s.lower()
-    if "90" in s_lower and ("cw" in s_lower or "clockwise" in s_lower):
+    normalized = value_str.lower()
+    if "90" in normalized and ("cw" in normalized or "clockwise" in normalized):
         return 6
-    if "90" in s_lower or "270" in s_lower or "ccw" in s_lower:
-        # assume 270/CCW
+    if "90" in normalized or "270" in normalized or "ccw" in normalized:
         return 8
-    if "180" in s_lower:
+    if "180" in normalized:
         return 3
     return 1

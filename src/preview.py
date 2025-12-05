@@ -1,7 +1,10 @@
+"""Preview generation and loading utilities."""
+
 import io
 import pathlib
 from typing import Dict, Optional
 
+import numpy as np
 
 try:
     import rawpy
@@ -13,24 +16,25 @@ try:
 except ImportError:  # pragma: no cover
     Image = None
 
-import numpy as np
 from .discovery import exif_orientation, read_exif
 
 
 def resize_image(img: Image.Image, long_edge: int) -> Image.Image:
-    w, h = img.size
-    if max(w, h) <= long_edge:
+    """Resize an image while keeping aspect ratio and limiting the longest edge."""
+    width, height = img.size
+    if max(width, height) <= long_edge:
         return img
-    if w >= h:
-        new_w = long_edge
-        new_h = int(h * (long_edge / w))
+    if width >= height:
+        new_width = long_edge
+        new_height = int(height * (long_edge / width))
     else:
-        new_h = long_edge
-        new_w = int(w * (long_edge / h))
-    return img.resize((new_w, new_h), Image.LANCZOS)
+        new_height = long_edge
+        new_width = int(width * (long_edge / height))
+    return img.resize((new_width, new_height), Image.LANCZOS)
 
 
 def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
+    """Rotate the image based on EXIF orientation codes."""
     if orientation == 3:
         return img.rotate(180, expand=True)
     if orientation == 6:
@@ -43,6 +47,7 @@ def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
 def generate_preview(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
 ) -> Optional[pathlib.Path]:
+    """Write a resized preview for a RAW file if missing and return its path."""
     if not rawpy or not Image:
         return None
     preview_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +74,7 @@ def generate_preview(
 def ensure_preview(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
 ) -> Optional[pathlib.Path]:
+    """Guarantee that a preview file exists for the given RAW file."""
     preview = preview_dir / f"{path.stem}.{cfg['format']}"
     if preview.exists():
         return preview
@@ -76,6 +82,7 @@ def ensure_preview(
 
 
 def open_preview_gray(preview_path: pathlib.Path) -> Optional[np.ndarray]:
+    """Open a preview image as a grayscale float array."""
     if not Image:
         return None
     img = Image.open(preview_path).convert("L")
@@ -85,18 +92,20 @@ def open_preview_gray(preview_path: pathlib.Path) -> Optional[np.ndarray]:
 def open_preview_rgb(
     preview_path: pathlib.Path, size: Optional[int] = 256
 ) -> Optional[np.ndarray]:
+    """Open a preview image as RGB and optionally downscale to a target size."""
     if not Image:
         return None
     img = Image.open(preview_path).convert("RGB")
     if size:
-        w, h = img.size
-        scale = size / float(max(w, h))
+        width, height = img.size
+        scale = size / float(max(width, height))
         if scale < 1.0:
-            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
     return np.array(img, dtype=np.float32)
 
 
 def preview_path_for(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: Dict
 ) -> pathlib.Path:
+    """Return the expected preview path for a RAW file and preview config."""
     return preview_dir / f"{path.stem}.{cfg['format']}"

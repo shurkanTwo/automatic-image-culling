@@ -1,11 +1,10 @@
+"""CLI entrypoint for preprocessing, sorting, and analyzing .ARW files."""
+
 import argparse
 import concurrent.futures
 import pathlib
 import shutil
-from typing import Iterable, List, Optional
-
-
-import numpy as np
+from typing import Dict, Iterable, List, Optional
 
 from .analyzer import analyze_files, write_outputs
 from .config import load_config
@@ -18,72 +17,88 @@ except ImportError:  # pragma: no cover
     tqdm = None
 
 
-def _progress_bar(total: int, desc: str):
-    if tqdm:
-        return tqdm.tqdm(total=total, desc=desc, leave=False)
+class _Progress:
+    """Minimal progress interface compatible with tqdm update/close."""
 
-    class _Dummy:
-        def update(self, _n: int = 1) -> None:
-            return
+    def __init__(self, total: int, desc: str):
+        if tqdm:
+            self._impl = tqdm.tqdm(total=total, desc=desc, leave=False)
+        else:
+            self._impl = None
 
-        def close(self) -> None:
-            return
+    def update(self, amount: int = 1) -> None:
+        if self._impl:
+            self._impl.update(amount)
 
-    return _Dummy()
+    def close(self) -> None:
+        if self._impl:
+            self._impl.close()
 
 
-def _exclude_list(cfg: dict) -> List[str]:
+def _progress_bar(total: int, desc: str) -> _Progress:
+    return _Progress(total, desc)
+
+
+def _exclude_list(cfg: Dict) -> List[str]:
     exclude = cfg.get("exclude_dirs", [])
-    exclude = list(
+    return list(
         set(
             exclude
             + [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
         )
     )
-    return exclude
+
+
+def _preview_config(cfg: Dict) -> Dict:
+    """Return a defensive copy of the preview configuration."""
+    preview_cfg = dict(cfg.get("preview", {}))
+    preview_cfg.setdefault("long_edge", 2048)
+    preview_cfg.setdefault("format", "webp")
+    preview_cfg.setdefault("quality", 85)
+    return preview_cfg
 
 
 def scan_command(args: argparse.Namespace) -> None:
+    """List .ARW files with basic metadata."""
     cfg = load_config(args.config)
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     print(f"Found {len(files)} .ARW files in {cfg['input_dir']}")
     bar = _progress_bar(len(files), "Scan")
     if args.json:
         data = []
-        for p in files:
-            exif = read_exif(p)
-            data.append({"path": str(p), "exif": exif})
+        for file_path in files:
+            exif = read_exif(file_path)
+            data.append({"path": str(file_path), "exif": exif})
             bar.update(1)
         import json
 
         print(json.dumps(data, indent=2))
     else:
-        for p in files:
-            exif = read_exif(p)
+        for file_path in files:
+            exif = read_exif(file_path)
             dt = capture_date(exif, fallback=None)
-            print(f"{p} | {dt}")
+            print(f"{file_path} | {dt}")
             bar.update(1)
     bar.close()
 
 
 def previews_command(args: argparse.Namespace) -> None:
+    """Generate preview images for each discovered RAW file."""
     cfg = load_config(args.config)
-    preview_cfg = cfg.get("preview", {})
-    preview_cfg.setdefault("long_edge", 2048)
-    preview_cfg.setdefault("format", "webp")
-    preview_cfg.setdefault("quality", 85)
+    preview_cfg = _preview_config(cfg)
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
         return
     preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
-    jobs = []
     bar = _progress_bar(len(files), "Previews")
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=cfg.get("concurrency", 4)
     ) as pool:
-        for p in files:
-            jobs.append(pool.submit(generate_preview, p, preview_dir, preview_cfg))
+        jobs = [
+            pool.submit(generate_preview, path, preview_dir, preview_cfg)
+            for path in files
+        ]
         for job in concurrent.futures.as_completed(jobs):
             result = job.result()
             if result:
@@ -93,28 +108,28 @@ def previews_command(args: argparse.Namespace) -> None:
 
 
 def sort_command(args: argparse.Namespace) -> None:
+    """Copy or move RAW files into structured destination folders."""
     cfg = load_config(args.config)
     sort_cfg = cfg.get("sort", {})
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
     actions: List[str] = []
     bar = _progress_bar(len(files), "Sort")
-    for p in files:
-        exif = read_exif(p)
-        dest = plan_destination(p, exif, sort_cfg, output_dir)
+    for path in files:
+        exif = read_exif(path)
+        dest = plan_destination(path, exif, sort_cfg, output_dir)
         dest.parent.mkdir(parents=True, exist_ok=True)
         if args.dry_run:
-            actions.append(
-                f"PLAN {'COPY' if sort_cfg.get('copy', True) else 'MOVE'} {p} -> {dest}"
-            )
+            verb = "COPY" if sort_cfg.get("copy", True) else "MOVE"
+            actions.append(f"PLAN {verb} {path} -> {dest}")
             bar.update(1)
             continue
         if sort_cfg.get("copy", True):
-            shutil.copy2(p, dest)
-            actions.append(f"COPIED {p} -> {dest}")
+            shutil.copy2(path, dest)
+            actions.append(f"COPIED {path} -> {dest}")
         else:
-            shutil.move(p, dest)
-            actions.append(f"MOVED {p} -> {dest}")
+            shutil.move(path, dest)
+            actions.append(f"MOVED {path} -> {dest}")
         bar.update(1)
     for line in actions:
         print(line)
@@ -124,20 +139,17 @@ def sort_command(args: argparse.Namespace) -> None:
 
 
 def analyze_command(args: argparse.Namespace) -> None:
+    """Run analysis pipeline and emit JSON and HTML outputs."""
     cfg = load_config(args.config)
-    preview_cfg = cfg.get("preview", {})
-    preview_cfg.setdefault("long_edge", 2048)
-    preview_cfg.setdefault("format", "webp")
-    preview_cfg.setdefault("quality", 85)
+    preview_cfg = _preview_config(cfg)
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
         return
 
     preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
-    # Ensure previews exist; skip generating in parallel here to keep analyze simple
-    for p in files:
-        ensure_preview(p, preview_dir, preview_cfg)
+    for path in files:
+        ensure_preview(path, preview_dir, preview_cfg)
 
     bar = _progress_bar(len(files), "Analyze")
     try:
@@ -155,12 +167,13 @@ def analyze_command(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construct the CLI argument parser."""
     parser = argparse.ArgumentParser(description="Sony .ARW preprocessing and sorting")
     parser.add_argument("--config", help="Path to YAML config file", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    def add_common(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--config", help="Path to YAML config file", default=None)
+    def add_common(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument("--config", help="Path to YAML config file", default=None)
 
     scan = sub.add_parser("scan", help="List .ARW files and basic EXIF info")
     add_common(scan)
@@ -188,12 +201,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
+    """Parse CLI arguments and dispatch the requested command."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.command == "sort" and not args.apply:
-        args.dry_run = True
-    elif args.command == "sort":
-        args.dry_run = False
+    if args.command == "sort":
+        args.dry_run = not args.apply
     args.func(args)
 
 
