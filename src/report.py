@@ -5,6 +5,7 @@ from typing import Dict, List
 
 TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
+JS_FILE = pathlib.Path(__file__).with_name("report.js")
 
 
 def write_html_report(results: List[Dict], path: pathlib.Path, config: Dict = None) -> None:
@@ -21,3 +22,6 @@ def write_html_report(results: List[Dict], path: pathlib.Path, config: Dict = No
     if CSS_FILE.exists():
         target_css = path.with_name(CSS_FILE.name)
         target_css.write_text(CSS_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    if JS_FILE.exists():
+        target_js = path.with_name(JS_FILE.name)
+        target_js.write_text(JS_FILE.read_text(encoding="utf-8"), encoding="utf-8")
