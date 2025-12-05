@@ -1,3 +1,7 @@
+## Hinweis:
+
+- This project was entirely build with vibe coding using OpenAIs GPT-5.1-Codex-Max
+
 ## Enter venv in git bash:
 
 py -3.112 -m venv .venv-3.12

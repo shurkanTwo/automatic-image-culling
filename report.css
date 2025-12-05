@@ -35,7 +35,6 @@ img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-i
   height: 72px;
   border-radius: 50%;
   display: flex;
-  align-items: center;
   justify-content: center;
   opacity: 0.8;
   background: rgba(255,255,255,0.9);
@@ -90,5 +89,5 @@ img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-i
   opacity: 0.85;
 }
 th.sortable { cursor: pointer; user-select: none; }
-th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 0.8rem; }
+th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3rem; }
 .summary { margin: 0.25rem 0 0.75rem 0; font-weight: 600; }
