@@ -102,10 +102,16 @@ def brightness_stats(arr: np.ndarray) -> BrightnessStats:
 def composition_score(arr: np.ndarray) -> float:
     """Score how close the weighted center is to rule-of-thirds intersections."""
     h, w = arr.shape
-    y, x = np.indices(arr.shape)
-    weight = arr + 1e-6
-    cx = (x * weight).sum() / (weight.sum() * w)
-    cy = (y * weight).sum() / (weight.sum() * h)
+    weight = arr.astype(np.float64) + 1e-6
+    total = weight.sum()
+    if total <= 0.0:
+        return 0.0
+    x_weight = weight.sum(axis=0)
+    y_weight = weight.sum(axis=1)
+    x_coords = np.arange(w, dtype=np.float64)
+    y_coords = np.arange(h, dtype=np.float64)
+    cx = float((x_weight * x_coords).sum() / (total * w))
+    cy = float((y_weight * y_coords).sum() / (total * h))
     thirds = np.array([1 / 3, 2 / 3])
     dx = float(np.min(np.abs(thirds - cx)))
     dy = float(np.min(np.abs(thirds - cy)))
