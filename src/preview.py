@@ -54,7 +54,7 @@ def generate_preview(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> Optional[pathlib.Path]:
     """Write a resized preview for a RAW file if missing and return its path."""
-    if not rawpy or not Image:
+    if rawpy is None or Image is None:
         return None
     preview_dir.mkdir(parents=True, exist_ok=True)
     target = preview_path_for(path, preview_dir, cfg)
@@ -92,7 +92,7 @@ def ensure_preview(
 
 def open_preview_gray(preview_path: pathlib.Path) -> Optional[np.ndarray]:
     """Open a preview image as a grayscale float array."""
-    if not Image:
+    if Image is None:
         return None
     img = Image.open(preview_path).convert("L")
     return np.array(img, dtype=np.float32)
@@ -102,7 +102,7 @@ def open_preview_rgb(
     preview_path: pathlib.Path, size: Optional[int] = 256
 ) -> Optional[np.ndarray]:
     """Open a preview image as RGB and optionally downscale to a target size."""
-    if not Image:
+    if Image is None:
         return None
     img = Image.open(preview_path).convert("RGB")
     if size:

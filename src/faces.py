@@ -161,6 +161,8 @@ def _detect_with_insightface(
     detections: List[FaceDetection] = []
     bgr = _ensure_uint8(rgb_full)[:, :, ::-1]
     detector_results = detector.get(bgr)
+    if detector_results is None:
+        return detections
     for face in detector_results:
         box = [float(value) for value in face.bbox.tolist()]
         x1, y1, x2, y2 = map(int, box)
@@ -216,9 +218,11 @@ def detect_faces(
     oriented_gray = _rotate(gray_arr, orientation)
 
     faces: List[FaceDetection]
-    if mp and isinstance(detector, mp.solutions.face_detection.FaceDetection):
+    if mp is not None and isinstance(
+        detector, mp.solutions.face_detection.FaceDetection
+    ):
         faces = _detect_with_mediapipe(detector, oriented_rgb, oriented_gray)
-    elif FaceAnalysis and hasattr(detector, "get"):
+    elif FaceAnalysis is not None and hasattr(detector, "get"):
         faces = _detect_with_insightface(detector, oriented_rgb, oriented_gray)
     else:
         faces = []

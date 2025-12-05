@@ -2,13 +2,20 @@
 
 import argparse
 import concurrent.futures
+import datetime as _dt
 import pathlib
 import shutil
-from typing import Iterable, List, Optional, cast
+from typing import Any, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
 from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
-from .discovery import capture_date, find_arw_files, plan_destination, read_exif
+from .discovery import (
+    ExifData,
+    capture_date,
+    find_arw_files,
+    plan_destination,
+    read_exif,
+)
 from .preview import ensure_preview, generate_preview
 
 try:
@@ -21,17 +28,16 @@ class _Progress:
     """Minimal progress interface compatible with tqdm update/close."""
 
     def __init__(self, total: int, desc: str):
-        if tqdm:
+        self._impl: Optional[Any] = None
+        if tqdm is not None:
             self._impl = tqdm.tqdm(total=total, desc=desc, leave=False)
-        else:
-            self._impl = None
 
     def update(self, amount: int = 1) -> None:
-        if self._impl:
+        if self._impl is not None:
             self._impl.update(amount)
 
     def close(self) -> None:
-        if self._impl:
+        if self._impl is not None:
             self._impl.close()
 
 
@@ -58,7 +64,9 @@ def _preview_config(cfg: AppConfig) -> PreviewConfig:
     return preview_cfg
 
 
-def _prepare_analysis_config(cfg: AppConfig, analysis_dir: pathlib.Path) -> AnalysisConfig:
+def _prepare_analysis_config(
+    cfg: AppConfig, analysis_dir: pathlib.Path
+) -> AnalysisConfig:
     """Return analysis config with resolved output paths."""
     analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
 
@@ -81,22 +89,26 @@ def scan_command(args: argparse.Namespace) -> None:
     files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
     print(f"Found {len(files)} .ARW files in {cfg['input_dir']}")
     bar = _progress_bar(len(files), "Scan")
-    if args.json:
-        data = []
-        for file_path in files:
-            exif = read_exif(file_path)
-            data.append({"path": str(file_path), "exif": exif})
-            bar.update(1)
-        import json
 
-        print(json.dumps(data, indent=2))
-    else:
-        for file_path in files:
-            exif = read_exif(file_path)
-            dt = capture_date(exif, fallback=None)
+    def _exif_with_fallback(path: pathlib.Path) -> Tuple[ExifData, _dt.datetime]:
+        exif = read_exif(path)
+        fallback_dt = _dt.datetime.fromtimestamp(path.stat().st_mtime)
+        return exif, capture_date(exif, fallback=fallback_dt)
+
+    if args.json:
+        import json
+    data: List[Dict[str, Any]] = []
+
+    for file_path in files:
+        exif, dt = _exif_with_fallback(file_path)
+        if args.json:
+            data.append({"path": str(file_path), "exif": exif})
+        else:
             print(f"{file_path} | {dt}")
-            bar.update(1)
+        bar.update(1)
     bar.close()
+    if args.json:
+        print(json.dumps(data, indent=2))
 
 
 def previews_command(args: argparse.Namespace) -> None:
@@ -118,7 +130,7 @@ def previews_command(args: argparse.Namespace) -> None:
         ]
         for job in concurrent.futures.as_completed(jobs):
             result = job.result()
-            if result:
+            if result is not None:
                 print(f"Preview written: {result}")
             bar.update(1)
     bar.close()

@@ -154,7 +154,7 @@ class ScoreBreakdown:
 def _parse_iso(exif: ExifData) -> Optional[float]:
     """Extract ISO value from EXIF dictionary."""
     raw = exif.get("EXIF ISOSpeedRatings") or exif.get("EXIF PhotographicSensitivity")
-    if not raw:
+    if raw is None:
         return None
     try:
         return float(str(raw).split()[0])
@@ -165,7 +165,7 @@ def _parse_iso(exif: ExifData) -> Optional[float]:
 def _parse_shutter_seconds(exif: ExifData) -> Optional[float]:
     """Extract shutter speed in seconds from EXIF dictionary."""
     raw = exif.get("EXIF ExposureTime")
-    if not raw:
+    if raw is None:
         return None
     s = str(raw).strip()
     try:
@@ -286,7 +286,11 @@ def _quality_reasons(
     add_reason(
         scores["sharp_center"] < hard_cfg["sharp_center"]
         or metrics.sharpness_center < thresholds.center_sharpness_min,
-        f"center sharpness {metrics.sharpness_center:.1f} < min {thresholds.center_sharpness_min:.1f}",
+        (
+            "center sharpness "
+            f"{metrics.sharpness_center:.1f} < "
+            f"min {thresholds.center_sharpness_min:.1f}"
+        ),
     )
     add_reason(
         scores["teneng"] < hard_cfg["teneng"]
@@ -482,9 +486,9 @@ def _run_analysis_workers(
         try:
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
-                if result:
+                if result is not None:
                     results.append(result)
-                if progress_cb:
+                if progress_cb is not None:
                     progress_cb(1)
         except KeyboardInterrupt:
             for future in futures:
@@ -608,7 +612,11 @@ def _label_duplicates(
             ):
                 if candidate["motion_ratio"] < keeper_result["motion_ratio"]:
                     reason_parts.append(
-                        f"motion ratio {candidate['motion_ratio']:.2f} < {keeper_result['motion_ratio']:.2f}"
+                        (
+                            "motion ratio "
+                            f"{candidate['motion_ratio']:.2f} < "
+                            f"{keeper_result['motion_ratio']:.2f}"
+                        )
                     )
             if (
                 candidate.get("noise") is not None
@@ -636,7 +644,8 @@ def _to_windows_path(path_value: str) -> str:
     if len(path_value) >= 3 and path_value[1:3] == ":\\":
         return path_value
     parts = path_value.split("/")
-    if len(parts) > 3 and parts[0] == "" and parts[1] == "mnt" and len(parts[2]) == 1:
+    is_wsl_root = len(parts) > 3 and parts[0] == "" and parts[1] == "mnt"
+    if is_wsl_root and len(parts[2]) == 1:
         drive = f"{parts[2].upper()}:"
         rest = [part for part in parts[3:] if part]
         return str(pathlib.PureWindowsPath(drive, *rest))

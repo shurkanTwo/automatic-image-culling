@@ -84,12 +84,9 @@ def capture_date(
             return _dt.datetime.strptime(str(dt_raw), "%Y:%m:%d %H:%M:%S")
         except ValueError:
             pass
-    return fallback or _dt.datetime.fromtimestamp(_safe_mtime(exif))
-
-
-def _safe_mtime(exif: ExifData) -> float:
-    """Return a stored mtime placeholder when EXIF is missing or incomplete."""
-    return float(exif.get("_stat_mtime", _dt.datetime.now().timestamp()))
+    if fallback is not None:
+        return fallback
+    return _dt.datetime.now()
 
 
 def plan_destination(
@@ -97,8 +94,8 @@ def plan_destination(
 ) -> Path:
     """Return the destination path for a file given EXIF metadata and sort config."""
     mtime = path.stat().st_mtime
-    exif["_stat_mtime"] = mtime
-    dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(mtime))
+    capture_dt = _dt.datetime.fromtimestamp(mtime)
+    dt = capture_date(exif, fallback=capture_dt)
     date_str = dt.strftime("%Y-%m-%d")
     pattern = cfg.get("pattern", "{capture_date}/{basename}")
     subpath = pattern.format(capture_date=date_str, basename=path.name, stem=path.stem)
