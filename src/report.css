@@ -1,5 +1,11 @@
 body { background: #f6f7fb; color: #1f2937; }
-img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-in; }
+img.preview {
+  width: 200px;
+  height: 130px;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: zoom-in;
+}
 .table-alt tbody tr:nth-child(odd) td { background-color: #f4f7fb; }
 .table-alt tbody tr:nth-child(even) td { background-color: #ffffff; }
 .table-alt tbody tr:hover td { background-color: #e8f0ff; }
@@ -91,6 +97,19 @@ img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-i
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3rem; }
 .summary { margin: 0.25rem 0 0.75rem 0; font-weight: 600; }
+.duplicate-link { color: #0b5ed7; text-decoration: underline; }
+.duplicate-link:hover { color: #06357a; }
+.row-highlight td { animation: rowFlash 1.2s ease; }
+@keyframes rowFlash {
+  0% { background-color: #fff3bf; }
+  60% { background-color: #ffe8a3; }
+  100% { background-color: inherit; }
+}
+.spacer-row td {
+  padding: 0 !important;
+  border: 0;
+  background: transparent !important;
+}
 .table-alt thead th {
   position: sticky;
   top: 0;

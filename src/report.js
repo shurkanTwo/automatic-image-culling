@@ -8,6 +8,8 @@
     headerRow: document.getElementById("header-row"),
     summary: document.getElementById("summary"),
     loading: document.getElementById("loading"),
+    loadingText: document.getElementById("loading-text"),
+    tableWrap: document.getElementById("table-wrap"),
     exportBtn: document.getElementById("export"),
     lightbox: document.getElementById("lightbox"),
     lightboxImg: document.getElementById("lightbox-img"),
@@ -16,11 +18,21 @@
     lightboxClose: document.getElementById("lightbox-close"),
   };
 
+  const ROW_HEIGHT_ESTIMATE = 64;
+  const BUFFER_ROWS = 20;
+  const DEBUG_RENDER = true;
+  let renderToken = 0;
   const state = {
     sort: { key: "path", dir: "asc" },
     currentOrder: [],
     orderLookup: new Map(),
     lightboxPos: null,
+    rowHeight: ROW_HEIGHT_ESTIMATE,
+    rowHeightLocked: false,
+    pendingHighlight: null,
+    requestRender: null,
+    scrollHandler: null,
+    resizeHandler: null,
   };
 
   const thresholds = {
@@ -262,6 +274,134 @@
     return list.some((i) => i !== excludeIdx && data[i].decision === "keep");
   }
 
+  function updateSummary(stats) {
+    const keepPct = stats.total ? Math.round((stats.keep / stats.total) * 100) : 0;
+    const discardPct = stats.total ? Math.round((stats.discard / stats.total) * 100) : 0;
+    elements.summary.textContent = `Keeps: ${keepPct}% (${stats.keep}/${stats.total}) | Discards: ${discardPct}% (${stats.discard}/${stats.total})`;
+  }
+
+  function updateLoadingProgress(current, total) {
+    if (!elements.loadingText) return;
+    const pct = total ? Math.round((current / total) * 100) : 0;
+    elements.loadingText.textContent = `Loading... ${pct}%`;
+  }
+
+  function scrollToRow(targetIdx) {
+    const container = elements.tableWrap;
+    if (!container) return;
+    const rowHeight = state.rowHeight || ROW_HEIGHT_ESTIMATE;
+    const targetOffset = rowHeight * targetIdx;
+    const targetScroll = Math.max(0, targetOffset - (container.clientHeight / 2 - rowHeight / 2));
+    state.pendingHighlight = targetIdx;
+    container.scrollTo({ top: targetScroll, behavior: "smooth" });
+    if (state.requestRender) state.requestRender();
+  }
+
+  function buildRow(item, idx) {
+    const tr = document.createElement("tr");
+    tr.id = `photo-${idx}`;
+    tr.dataset.row = "true";
+
+    columns.forEach((col) => {
+      const td = document.createElement("td");
+      switch (col.key) {
+        case "preview": {
+          const img = document.createElement("img");
+          img.className = "preview";
+          img.src = (item.preview || "").replace(/\\/g, "/");
+          img.loading = "lazy";
+          img.onclick = () => {
+            const pos = state.orderLookup.get(idx) ?? 0;
+            openLightbox(pos);
+          };
+          td.appendChild(img);
+          break;
+        }
+        case "path": {
+          const filename = (item.path || "").split(/[/\\]/).pop();
+          td.textContent = filename;
+          if (item.duplicate_of) {
+            const badge = document.createElement("div");
+            badge.className = "badge bg-light text-dark border";
+            const dupName = item.duplicate_of.split(/[/\\]/).pop();
+            const targetIdx = Number.isInteger(item.duplicate_group)
+              ? item.duplicate_group
+              : undefined;
+            badge.appendChild(document.createTextNode("Duplicate of: "));
+            if (targetIdx !== undefined) {
+              const link = document.createElement("a");
+              link.href = `#photo-${targetIdx}`;
+              link.className = "duplicate-link";
+              link.textContent = dupName;
+              link.onclick = (e) => {
+                e.preventDefault();
+                scrollToRow(targetIdx);
+              };
+              badge.appendChild(link);
+            } else {
+              badge.appendChild(document.createTextNode(dupName));
+            }
+            td.appendChild(badge);
+          }
+          break;
+        }
+        case "capture": {
+          td.textContent = formatCapture(item);
+          break;
+        }
+        case "decision": {
+          const decisionClass = item.decision === "keep" ? "decision-keep" : "decision-discard";
+          td.className = `decision-cell ${decisionClass}`;
+          const controls = document.createElement("div");
+          controls.className = "controls d-flex gap-2";
+          const btnKeep = document.createElement("button");
+          btnKeep.textContent = "Keep";
+          btnKeep.className = "btn btn-success btn-sm";
+          btnKeep.onclick = () => {
+            item.decision = "keep";
+            render();
+          };
+          const btnDrop = document.createElement("button");
+          btnDrop.textContent = "Discard";
+          btnDrop.className = "btn btn-danger btn-sm";
+          btnDrop.onclick = () => {
+            if (item.duplicate_group !== undefined && !hasOtherKeep(item.duplicate_group, idx)) {
+              alert("At least one photo in a duplicate set must be kept.");
+              return;
+            }
+            item.decision = "discard";
+            render();
+          };
+          controls.appendChild(btnKeep);
+          controls.appendChild(btnDrop);
+          td.appendChild(controls);
+          break;
+        }
+        case "reasons": {
+          if (item.reasons && item.reasons.length) {
+            td.textContent = item.reasons.join(", ");
+          } else {
+            td.textContent = "-";
+          }
+          break;
+        }
+        default: {
+          const value = col.getter ? col.getter(item) : item[col.key];
+          const present = hasValue(value);
+          const display = present ? (col.format ? col.format(value, item) : value) : "n/a";
+          if (col.metric) {
+            td.appendChild(createBadge(display, col.metric, value));
+          } else {
+            td.textContent = display;
+          }
+        }
+      }
+      tr.appendChild(td);
+    });
+
+    return tr;
+  }
+
   function formatCapture(item) {
     const iso = item.capture_time;
     if (!iso) return "n/a";
@@ -321,9 +461,12 @@
   }
 
   function render() {
+    const token = ++renderToken;
+    if (DEBUG_RENDER) {
+      console.time("render:total");
+      console.log("[render] start", { total: data.length, sort: state.sort });
+    }
     buildHeader();
-    const fragment = document.createDocumentFragment();
-    const stats = { total: data.length, keep: 0, discard: 0 };
     const colForSort = columnsByKey[state.sort.key];
 
     const sortedIdx = data
@@ -336,95 +479,8 @@
         return (data[a].path ?? "").localeCompare(data[b].path ?? "");
       });
 
-    state.currentOrder = sortedIdx;
-    state.orderLookup = new Map(sortedIdx.map((id, pos) => [id, pos]));
-    state.lightboxPos = null;
-
-    sortedIdx.forEach((idx) => {
-      const item = data[idx];
-      const tr = document.createElement("tr");
-
-      columns.forEach((col) => {
-        const td = document.createElement("td");
-        switch (col.key) {
-          case "preview": {
-            const img = document.createElement("img");
-            img.className = "preview";
-            img.src = (item.preview || "").replace(/\\/g, "/");
-            img.loading = "lazy";
-            img.onclick = () => {
-              const pos = state.orderLookup.get(idx) ?? 0;
-              openLightbox(pos);
-            };
-            td.appendChild(img);
-            break;
-          }
-          case "path": {
-            const filename = (item.path || "").split(/[/\\]/).pop();
-            td.textContent = filename;
-            if (item.duplicate_of) {
-              const badge = document.createElement("div");
-              badge.className = "badge bg-light text-dark border";
-              const dupName = item.duplicate_of.split(/[/\\]/).pop();
-              badge.textContent = "Duplicate of: " + dupName;
-              td.appendChild(badge);
-            }
-            break;
-          }
-          case "capture": {
-            td.textContent = formatCapture(item);
-            break;
-          }
-          case "decision": {
-            const decisionClass = item.decision === "keep" ? "decision-keep" : "decision-discard";
-            td.className = `decision-cell ${decisionClass}`;
-            const controls = document.createElement("div");
-            controls.className = "controls d-flex gap-2";
-            const btnKeep = document.createElement("button");
-            btnKeep.textContent = "Keep";
-            btnKeep.className = "btn btn-success btn-sm";
-            btnKeep.onclick = () => {
-              item.decision = "keep";
-              render();
-            };
-            const btnDrop = document.createElement("button");
-            btnDrop.textContent = "Discard";
-            btnDrop.className = "btn btn-danger btn-sm";
-            btnDrop.onclick = () => {
-              if (item.duplicate_group !== undefined && !hasOtherKeep(item.duplicate_group, idx)) {
-                alert("At least one photo in a duplicate set must be kept.");
-                return;
-              }
-              item.decision = "discard";
-              render();
-            };
-            controls.appendChild(btnKeep);
-            controls.appendChild(btnDrop);
-            td.appendChild(controls);
-            break;
-          }
-          case "reasons": {
-            if (item.reasons && item.reasons.length) {
-              td.textContent = item.reasons.join(", ");
-            } else {
-              td.textContent = "-";
-            }
-            break;
-          }
-          default: {
-            const value = col.getter ? col.getter(item) : item[col.key];
-            const present = hasValue(value);
-            const display = present ? (col.format ? col.format(value, item) : value) : "n/a";
-            if (col.metric) {
-              td.appendChild(createBadge(display, col.metric, value));
-            } else {
-              td.textContent = display;
-            }
-          }
-        }
-        tr.appendChild(td);
-      });
-      fragment.appendChild(tr);
+    const stats = { total: data.length, keep: 0, discard: 0 };
+    data.forEach((item) => {
       if (item.decision === "keep") {
         stats.keep += 1;
       } else {
@@ -432,15 +488,121 @@
       }
     });
 
-    elements.tbody.replaceChildren(fragment);
+    state.currentOrder = sortedIdx;
+    state.orderLookup = new Map(sortedIdx.map((id, pos) => [id, pos]));
+    state.lightboxPos = null;
+    const container = elements.tableWrap || elements.tbody.parentElement;
+    if (!container) return;
+    const useWindowScroll = container.scrollHeight <= container.clientHeight + 1;
 
-    const keepPct = stats.total ? Math.round((stats.keep / stats.total) * 100) : 0;
-    const discardPct = stats.total ? Math.round((stats.discard / stats.total) * 100) : 0;
-    elements.summary.textContent = `Keeps: ${keepPct}% (${stats.keep}/${stats.total}) | Discards: ${discardPct}% (${stats.discard}/${stats.total})`;
+    let scheduled = false;
+    let initialPaint = false;
+    const requestRender = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        renderVisible();
+      });
+    };
+    state.requestRender = requestRender;
 
-    if (elements.loading && elements.loading.parentNode) {
-      elements.loading.parentNode.removeChild(elements.loading);
+    state.scrollHandler = () => requestRender();
+    if (useWindowScroll) {
+      if (state.scrollHandler) container.removeEventListener("scroll", state.scrollHandler);
+      if (state.scrollHandler) window.removeEventListener("scroll", state.scrollHandler);
+      window.addEventListener("scroll", state.scrollHandler, { passive: true });
+    } else {
+      if (state.scrollHandler) window.removeEventListener("scroll", state.scrollHandler);
+      if (state.scrollHandler) container.removeEventListener("scroll", state.scrollHandler);
+      container.addEventListener("scroll", state.scrollHandler, { passive: true });
     }
+
+    if (state.resizeHandler) window.removeEventListener("resize", state.resizeHandler);
+    state.resizeHandler = () => requestRender();
+    window.addEventListener("resize", state.resizeHandler);
+
+    const spacerRow = (height) => {
+      const tr = document.createElement("tr");
+      tr.className = "spacer-row";
+      const td = document.createElement("td");
+      td.colSpan = columns.length;
+      td.style.height = `${Math.max(0, height)}px`;
+      tr.appendChild(td);
+      return tr;
+    };
+
+    const getScrollMetrics = () => {
+      if (!useWindowScroll) {
+        return {
+          scrollTop: container.scrollTop || 0,
+          viewportHeight: container.clientHeight || 600,
+        };
+      }
+      const containerTop = container.getBoundingClientRect().top + window.scrollY;
+      const scrollTop = Math.max(0, window.scrollY - containerTop);
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 600;
+      return { scrollTop, viewportHeight };
+    };
+
+    const renderVisible = () => {
+      if (token !== renderToken) return;
+      const rowHeight = state.rowHeight || ROW_HEIGHT_ESTIMATE;
+      const metrics = getScrollMetrics();
+      const viewportHeight = Math.max(metrics.viewportHeight, rowHeight);
+      const scrollTop = Math.max(0, metrics.scrollTop);
+      const visibleCount = Math.ceil(viewportHeight / rowHeight);
+      let startIdx = Math.floor(scrollTop / rowHeight) - BUFFER_ROWS;
+      if (startIdx < 0) startIdx = 0;
+      const endIdx = Math.min(sortedIdx.length, startIdx + visibleCount + BUFFER_ROWS * 2);
+
+      const fragment = document.createDocumentFragment();
+      fragment.appendChild(spacerRow(startIdx * rowHeight));
+      for (let i = startIdx; i < endIdx; i += 1) {
+        const idx = sortedIdx[i];
+        fragment.appendChild(buildRow(data[idx], idx));
+      }
+      fragment.appendChild(spacerRow((sortedIdx.length - endIdx) * rowHeight));
+      elements.tbody.replaceChildren(fragment);
+
+      const firstRow = elements.tbody.querySelector("tr[data-row]");
+      if (firstRow) {
+        const measured = Math.round(firstRow.getBoundingClientRect().height);
+        if (!state.rowHeightLocked && measured > 0 && measured !== state.rowHeight) {
+          state.rowHeight = measured;
+          state.rowHeightLocked = true;
+          requestRender();
+          return;
+        }
+      }
+
+      if (state.pendingHighlight !== null) {
+        const row = document.getElementById(`photo-${state.pendingHighlight}`);
+        if (row) {
+          row.classList.remove("row-highlight");
+          requestAnimationFrame(() => {
+            row.classList.add("row-highlight");
+          });
+          state.pendingHighlight = null;
+        }
+      }
+
+      if (!initialPaint) {
+        initialPaint = true;
+        updateSummary(stats);
+        updateLoadingProgress(sortedIdx.length, sortedIdx.length);
+        if (elements.loading && elements.loading.parentNode) {
+          elements.loading.parentNode.removeChild(elements.loading);
+        }
+        if (DEBUG_RENDER) {
+          console.timeEnd("render:total");
+          console.log("[render] done", { keep: stats.keep, discard: stats.discard });
+        }
+      }
+    };
+
+    elements.tbody.replaceChildren();
+    requestRender();
   }
 
   function bindExport() {
