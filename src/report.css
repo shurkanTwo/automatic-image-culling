@@ -105,6 +105,13 @@ th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3
   60% { background-color: #ffe8a3; }
   100% { background-color: inherit; }
 }
+.reasons-col {
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  white-space: normal;
+  word-break: break-word;
+}
 .spacer-row td {
   padding: 0 !important;
   border: 0;

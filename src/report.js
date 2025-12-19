@@ -31,6 +31,8 @@
     rowHeightLocked: false,
     visibleRange: null,
     pendingHighlight: null,
+    highlightRowId: null,
+    highlightUntil: 0,
     requestRender: null,
     scrollHandler: null,
     resizeHandler: null,
@@ -224,6 +226,9 @@
     columns.forEach((col) => {
       const th = document.createElement("th");
       th.textContent = col.label;
+      if (col.key === "reasons") {
+        th.classList.add("reasons-col");
+      }
       if (col.sortable !== false) {
         th.classList.add("sortable");
         const indicator = document.createElement("span");
@@ -293,6 +298,8 @@
     const rowHeight = state.rowHeight || ROW_HEIGHT_ESTIMATE;
     const targetOffset = rowHeight * targetIdx;
     state.pendingHighlight = targetIdx;
+    state.highlightRowId = targetIdx;
+    state.highlightUntil = Date.now() + 1200;
     if (container.scrollHeight <= container.clientHeight + 1) {
       const containerTop = container.getBoundingClientRect().top + window.scrollY;
       const targetScroll = Math.max(
@@ -311,6 +318,9 @@
     const tr = document.createElement("tr");
     tr.id = `photo-${idx}`;
     tr.dataset.row = "true";
+    if (state.highlightRowId === idx && Date.now() < state.highlightUntil) {
+      tr.classList.add("row-highlight");
+    }
 
     columns.forEach((col) => {
       const td = document.createElement("td");
@@ -388,6 +398,7 @@
           break;
         }
         case "reasons": {
+          td.classList.add("reasons-col");
           if (item.reasons && item.reasons.length) {
             td.textContent = item.reasons.join(", ");
           } else {
