@@ -163,7 +163,17 @@
 
   const columns = [
     { key: "path", label: "Filename", sortable: true, type: "string" },
-    { key: "capture", label: "Capture time", sortable: true, type: "string" },
+    {
+      key: "capture",
+      label: "Capture time",
+      sortable: true,
+      type: "number",
+      getter: (item) => {
+        if (Number.isFinite(item.capture_ts)) return item.capture_ts;
+        const parsed = Date.parse(item.capture_time || "");
+        return Number.isFinite(parsed) ? parsed : null;
+      },
+    },
     { key: "preview", label: "Preview", sortable: false },
     { key: "decision", label: "Decision", sortable: true, type: "string" },
     { key: "reasons", label: "Reasons", sortable: false },
@@ -226,6 +236,9 @@
     columns.forEach((col) => {
       const th = document.createElement("th");
       th.textContent = col.label;
+      if (col.key === "path") {
+        th.classList.add("filename-col");
+      }
       if (col.key === "reasons") {
         th.classList.add("reasons-col");
       }
@@ -295,8 +308,10 @@
   function scrollToRow(targetIdx) {
     const container = elements.tableWrap;
     if (!container) return;
+    const targetPos = state.orderLookup.get(targetIdx);
+    if (targetPos === undefined) return;
     const rowHeight = state.rowHeight || ROW_HEIGHT_ESTIMATE;
-    const targetOffset = rowHeight * targetIdx;
+    const targetOffset = rowHeight * targetPos;
     state.pendingHighlight = targetIdx;
     state.highlightRowId = targetIdx;
     state.highlightUntil = Date.now() + 1200;
@@ -338,6 +353,7 @@
           break;
         }
         case "path": {
+          td.classList.add("filename-col");
           const filename = (item.path || "").split(/[/\\]/).pop();
           td.textContent = filename;
           if (item.duplicate_of) {

@@ -24,7 +24,10 @@ def write_html_report(
     """Render the analysis results into an HTML report."""
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
     payload = {"results": results, "config": config or {}}
-    rendered = template.replace("__DATA_JSON__", json.dumps(payload))
+    rendered = template.replace(
+        "__DATA_JSON__",
+        json.dumps(payload, separators=(",", ":")),
+    )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(rendered, encoding="utf-8")

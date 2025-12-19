@@ -112,6 +112,13 @@ th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3
   white-space: normal;
   word-break: break-word;
 }
+.filename-col {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  white-space: normal;
+  word-break: break-word;
+}
 .spacer-row td {
   padding: 0 !important;
   border: 0;
