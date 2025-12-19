@@ -356,6 +356,7 @@
           td.classList.add("filename-col");
           const filename = (item.path || "").split(/[/\\]/).pop();
           td.textContent = filename;
+          td.title = item.path || filename;
           if (item.duplicate_of) {
             const badge = document.createElement("div");
             badge.className = "badge bg-light text-dark border";
@@ -416,7 +417,9 @@
         case "reasons": {
           td.classList.add("reasons-col");
           if (item.reasons && item.reasons.length) {
-            td.textContent = item.reasons.join(", ");
+            const reasonText = item.reasons.join(", ");
+            td.textContent = reasonText;
+            td.title = reasonText;
           } else {
             td.textContent = "-";
           }
