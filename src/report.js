@@ -29,6 +29,7 @@
     lightboxPos: null,
     rowHeight: ROW_HEIGHT_ESTIMATE,
     rowHeightLocked: false,
+    visibleRange: null,
     pendingHighlight: null,
     requestRender: null,
     scrollHandler: null,
@@ -291,9 +292,18 @@
     if (!container) return;
     const rowHeight = state.rowHeight || ROW_HEIGHT_ESTIMATE;
     const targetOffset = rowHeight * targetIdx;
-    const targetScroll = Math.max(0, targetOffset - (container.clientHeight / 2 - rowHeight / 2));
     state.pendingHighlight = targetIdx;
-    container.scrollTo({ top: targetScroll, behavior: "smooth" });
+    if (container.scrollHeight <= container.clientHeight + 1) {
+      const containerTop = container.getBoundingClientRect().top + window.scrollY;
+      const targetScroll = Math.max(
+        0,
+        containerTop + targetOffset - (window.innerHeight / 2 - rowHeight / 2)
+      );
+      window.scrollTo({ top: targetScroll, behavior: "smooth" });
+    } else {
+      const targetScroll = Math.max(0, targetOffset - (container.clientHeight / 2 - rowHeight / 2));
+      container.scrollTo({ top: targetScroll, behavior: "smooth" });
+    }
     if (state.requestRender) state.requestRender();
   }
 
@@ -491,6 +501,7 @@
     state.currentOrder = sortedIdx;
     state.orderLookup = new Map(sortedIdx.map((id, pos) => [id, pos]));
     state.lightboxPos = null;
+    state.visibleRange = null;
     const container = elements.tableWrap || elements.tbody.parentElement;
     if (!container) return;
     const useWindowScroll = container.scrollHeight <= container.clientHeight + 1;
@@ -555,6 +566,25 @@
       let startIdx = Math.floor(scrollTop / rowHeight) - BUFFER_ROWS;
       if (startIdx < 0) startIdx = 0;
       const endIdx = Math.min(sortedIdx.length, startIdx + visibleCount + BUFFER_ROWS * 2);
+      const sameRange =
+        state.visibleRange &&
+        state.visibleRange.start === startIdx &&
+        state.visibleRange.end === endIdx;
+
+      if (sameRange) {
+        if (state.pendingHighlight !== null) {
+          const row = document.getElementById(`photo-${state.pendingHighlight}`);
+          if (row) {
+            row.classList.remove("row-highlight");
+            requestAnimationFrame(() => {
+              row.classList.add("row-highlight");
+            });
+            state.pendingHighlight = null;
+          }
+        }
+        return;
+      }
+      state.visibleRange = { start: startIdx, end: endIdx };
 
       const fragment = document.createDocumentFragment();
       fragment.appendChild(spacerRow(startIdx * rowHeight));
