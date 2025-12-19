@@ -371,7 +371,22 @@ def _suggest_keep(
     hard_fail = any(
         score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
     )
-    keep = score_breakdown.quality_score >= cutoff and not hard_fail
+    threshold_fail = any(
+        [
+            metrics.sharpness < thresholds.sharpness_min,
+            metrics.sharpness_center < thresholds.center_sharpness_min,
+            metrics.tenengrad < thresholds.tenengrad_min,
+            metrics.motion_ratio < thresholds.motion_ratio_min,
+            metrics.noise > thresholds.noise_std_max,
+            metrics.brightness_mean < thresholds.brightness_min,
+            metrics.brightness_mean > thresholds.brightness_max,
+            metrics.shadows < thresholds.shadows_min,
+            metrics.shadows > thresholds.shadows_max,
+            metrics.highlights < thresholds.highlights_min,
+            metrics.highlights > thresholds.highlights_max,
+        ]
+    )
+    keep = score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
     reasons = _quality_reasons(
         metrics,
         thresholds,

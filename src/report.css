@@ -91,3 +91,10 @@ img.preview { max-width: 200px; height: auto; border-radius: 6px; cursor: zoom-i
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3rem; }
 .summary { margin: 0.25rem 0 0.75rem 0; font-weight: 600; }
+.table-alt thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #e9eef7;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
