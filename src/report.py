@@ -22,8 +22,14 @@ def write_html_report(
     config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Render the analysis results into an HTML report."""
+    trimmed_results = []
+    for item in results:
+        trimmed = dict(item)
+        trimmed.pop("exif", None)
+        trimmed_results.append(trimmed)
+
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
-    payload = {"results": results, "config": config or {}}
+    payload = {"results": trimmed_results, "config": config or {}}
     rendered = template.replace(
         "__DATA_JSON__",
         json.dumps(payload, separators=(",", ":")),
