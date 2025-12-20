@@ -25,6 +25,7 @@ else:  # pragma: no cover
 
 from .analyzer import analyze_files, write_outputs
 from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
+from .decisions import apply_decisions
 from .discovery import capture_date, find_arw_files, plan_destination, read_exif
 from .preview import generate_preview
 
@@ -86,6 +87,7 @@ class GuiApp:
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
         self.preview_var = tk.StringVar()
+        self.decisions_var = tk.StringVar()
         self.config_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Idle")
         self.phase_var = tk.StringVar(value="")
@@ -126,18 +128,29 @@ class GuiApp:
             form, 2, "Preview folder", self.preview_var, self._browse_preview
         )
 
+        decisions_label = ttk.Label(form, text="Decisions file")
+        decisions_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.decisions_entry = ttk.Entry(form, textvariable=self.decisions_var)
+        self.decisions_entry.grid(row=3, column=1, sticky="ew", pady=4)
+        self.decisions_browse_btn = ttk.Button(
+            form, text="Browse", command=self._browse_decisions
+        )
+        self.decisions_browse_btn.grid(
+            row=3, column=2, sticky="ew", pady=4, padx=(4, 0)
+        )
+
         config_label = ttk.Label(form, text="Config file (optional)")
-        config_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+        config_label.grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
         self.config_entry = ttk.Entry(form, textvariable=self.config_var)
-        self.config_entry.grid(row=3, column=1, sticky="ew", pady=4)
+        self.config_entry.grid(row=4, column=1, sticky="ew", pady=4)
         self.config_browse_btn = ttk.Button(
             form, text="Browse", command=self._browse_config
         )
-        self.config_browse_btn.grid(row=3, column=2, sticky="ew", pady=4, padx=(4, 0))
+        self.config_browse_btn.grid(row=4, column=2, sticky="ew", pady=4, padx=(4, 0))
         self.config_load_btn = ttk.Button(
             form, text="Load", command=self._load_config
         )
-        self.config_load_btn.grid(row=3, column=3, sticky="ew", pady=4, padx=(4, 0))
+        self.config_load_btn.grid(row=4, column=3, sticky="ew", pady=4, padx=(4, 0))
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, sticky="ew", pady=(10, 6))
@@ -168,6 +181,19 @@ class GuiApp:
             actions, text="Open report", command=self._open_report, state="disabled"
         )
         self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0))
+
+        self.decisions_dry_btn = ttk.Button(
+            actions,
+            text="Apply decisions (dry run)",
+            command=lambda: self._start_decisions(False),
+        )
+        self.decisions_dry_btn.grid(row=2, column=0, sticky="ew", padx=(0, 6), pady=(6, 0))
+        self.decisions_apply_btn = ttk.Button(
+            actions,
+            text="Apply decisions (move)",
+            command=lambda: self._start_decisions(True),
+        )
+        self.decisions_apply_btn.grid(row=2, column=1, sticky="ew", padx=6, pady=(6, 0))
 
         status_frame = ttk.Frame(container)
         status_frame.grid(row=3, column=0, sticky="ew")
@@ -202,7 +228,9 @@ class GuiApp:
             self.input_entry,
             self.output_entry,
             self.preview_entry,
+            self.decisions_entry,
             self.config_entry,
+            self.decisions_browse_btn,
             self.config_browse_btn,
             self.config_load_btn,
             self.scan_btn,
@@ -210,6 +238,8 @@ class GuiApp:
             self.analyze_btn,
             self.sort_dry_btn,
             self.sort_apply_btn,
+            self.decisions_dry_btn,
+            self.decisions_apply_btn,
         ]
 
     def _apply_startup_config(self) -> None:
@@ -224,6 +254,16 @@ class GuiApp:
             self.output_var.set(defaults.get("output_dir", ""))
         if not self.preview_var.get():
             self.preview_var.set(defaults.get("preview_dir", ""))
+        self._maybe_set_decisions_path(defaults)
+
+    def _maybe_set_decisions_path(self, cfg: AppConfig) -> None:
+        """Use output_dir/analysis/decisions.json when it exists."""
+        if self.decisions_var.get():
+            return
+        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
+        candidate = output_dir / "analysis" / "decisions.json"
+        if candidate.exists():
+            self.decisions_var.set(str(candidate))
 
     @staticmethod
     def _entry_by_var(var: "tk.StringVar", parent: "tk.Widget") -> "ttk.Entry":
@@ -257,6 +297,16 @@ class GuiApp:
     def _browse_preview(self) -> None:
         self._browse_directory(self.preview_var, "Select preview folder")
 
+    def _browse_decisions(self) -> None:
+        if filedialog is None:
+            return
+        selected = filedialog.askopenfilename(
+            title="Select decisions.json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if selected:
+            self.decisions_var.set(selected)
+
     def _browse_directory(self, var: "tk.StringVar", title: str) -> None:
         if filedialog is None:
             return
@@ -287,6 +337,7 @@ class GuiApp:
         self.input_var.set(cfg.get("input_dir", ""))
         self.output_var.set(cfg.get("output_dir", ""))
         self.preview_var.set(cfg.get("preview_dir", ""))
+        self._maybe_set_decisions_path(cfg)
         self._append_log(f"Loaded config from {cfg_path}")
 
     def _start_task(
@@ -333,6 +384,17 @@ class GuiApp:
                 return
         label = "sort (apply)" if apply_changes else "sort (dry run)"
         self._start_task(label, self._run_sort, target_args=(apply_changes,))
+
+    def _start_decisions(self, apply_changes: bool) -> None:
+        if apply_changes and messagebox is not None:
+            confirm = messagebox.askyesno(
+                "Automatic Image Culling",
+                "This will move files based on decisions.json. Continue?",
+            )
+            if not confirm:
+                return
+        label = "decisions (apply)" if apply_changes else "decisions (dry run)"
+        self._start_task(label, self._run_decisions, target_args=(apply_changes,))
 
     def _build_config(self) -> AppConfig:
         cfg_path = self.config_var.get().strip()
@@ -490,6 +552,48 @@ class GuiApp:
                     "log",
                     "Dry run complete; use Sort (apply) to perform moves/copies.",
                 )
+            self._send("done", None)
+        except Exception as exc:
+            self._send("error", str(exc))
+
+    def _run_decisions(self, cfg: AppConfig, apply_changes: bool) -> None:
+        try:
+            decisions_path = self.decisions_var.get().strip()
+            if not decisions_path:
+                self._send("error", "Decisions file is required.")
+                return
+            decisions_file = pathlib.Path(_clean_path(decisions_path))
+            if not decisions_file.exists():
+                self._send("error", f"Decisions file not found: {decisions_file}")
+                return
+            self._send(
+                "log",
+                f"Using decisions file: {decisions_file}",
+            )
+
+            def progress_cb(current: int, total: int) -> None:
+                self._send("progress", ("Decisions", current, total))
+
+            summary = apply_decisions(
+                decisions_file,
+                cfg,
+                apply=apply_changes,
+                copy_files=False,
+                progress_cb=progress_cb,
+                log_cb=lambda msg: self._send("log", msg),
+            )
+            if not apply_changes:
+                self._send(
+                    "log",
+                    "Dry run complete; use Apply decisions (move) to move files.",
+                )
+            self._send(
+                "log",
+                "Decisions summary: "
+                f"total={summary.total} keep={summary.keep} discard={summary.discard} "
+                f"moved={summary.moved} copied={summary.copied} "
+                f"missing={summary.missing} skipped={summary.skipped}",
+            )
             self._send("done", None)
         except Exception as exc:
             self._send("error", str(exc))

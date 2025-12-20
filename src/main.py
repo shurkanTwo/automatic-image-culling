@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
 from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
+from .decisions import apply_decisions
 from .discovery import (
     ExifData,
     capture_date,
@@ -209,6 +210,45 @@ def analyze_command(args: argparse.Namespace) -> None:
     print(f"HTML report written to {analysis_cfg['report_path']}")
 
 
+def decisions_command(args: argparse.Namespace) -> None:
+    """Apply decisions.json and move/copy files into keep/discard folders."""
+    cfg = load_config(args.config)
+    decisions_path = pathlib.Path(args.decisions)
+    if not decisions_path.exists():
+        print(f"Decisions file not found: {decisions_path}")
+        return
+    bar: Optional[_Progress] = None
+
+    def _progress(current: int, total: int) -> None:
+        nonlocal bar
+        if total <= 0:
+            return
+        if bar is None:
+            bar = _Progress(total, "Decisions")
+        bar.update(1)
+        if current == total:
+            bar.close()
+
+    summary = apply_decisions(
+        decisions_path,
+        cfg,
+        apply=args.apply,
+        copy_files=args.copy,
+        keep_subdir=args.keep_subdir,
+        discard_subdir=args.discard_subdir,
+        progress_cb=_progress,
+        log_cb=print,
+    )
+    if not args.apply:
+        print("Dry run complete; use --apply to perform moves/copies.")
+    print(
+        "Decisions summary: "
+        f"total={summary.total} keep={summary.keep} discard={summary.discard} "
+        f"moved={summary.moved} copied={summary.copied} "
+        f"missing={summary.missing} skipped={summary.skipped}"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
     parser = argparse.ArgumentParser(description="Sony .ARW preprocessing and sorting")
@@ -232,6 +272,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = sub.add_parser("analyze", help="Score images and emit JSON + HTML report")
     analyze.set_defaults(func=analyze_command)
+
+    decisions = sub.add_parser(
+        "decisions", help="Apply decisions.json to move/copy files"
+    )
+    decisions.add_argument(
+        "--decisions", required=True, help="Path to decisions.json"
+    )
+    decisions.add_argument(
+        "--apply",
+        action="store_true",
+        help="Perform moves/copies (default is dry run)",
+    )
+    decisions.add_argument(
+        "--copy", action="store_true", help="Copy files instead of moving"
+    )
+    decisions.add_argument(
+        "--keep-subdir", default="keep", help="Subfolder for keepers"
+    )
+    decisions.add_argument(
+        "--discard-subdir", default="discard", help="Subfolder for discards"
+    )
+    decisions.set_defaults(func=decisions_command)
 
     return parser
 
