@@ -83,6 +83,14 @@ img.preview {
   transform: scale(1.03);
 }
 .controls { display: flex; gap: 0.4rem; align-items: center; }
+.decision-cell .controls {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+.decision-cell .controls .btn {
+  width: 100%;
+}
 .lightbox-nav {
   position: absolute;
   inset: 0;
@@ -114,10 +122,19 @@ th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 1.3
   word-break: break-word;
 }
 .filename-col {
-  width: 220px;
-  min-width: 220px;
-  max-width: 220px;
+  width: 180px;
+  min-width: 180px;
+  max-width: 180px;
   word-break: break-word;
+}
+.decision-col {
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
+}
+.duplicate-badge {
+  display: block;
+  margin-bottom: 0.35rem;
 }
 .spacer-row td {
   padding: 0 !important;

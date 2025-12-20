@@ -20,7 +20,6 @@
 
   const ROW_HEIGHT_ESTIMATE = 64;
   const BUFFER_ROWS = 20;
-  const DEBUG_RENDER = true;
   let renderToken = 0;
   const state = {
     sort: { key: "path", dir: "asc" },
@@ -239,6 +238,9 @@
       if (col.key === "path") {
         th.classList.add("filename-col");
       }
+      if (col.key === "decision") {
+        th.classList.add("decision-col");
+      }
       if (col.key === "reasons") {
         th.classList.add("reasons-col");
       }
@@ -340,6 +342,31 @@
     if (state.requestRender) state.requestRender();
   }
 
+  function buildDuplicateBadge(item) {
+    if (!item.duplicate_of) return null;
+    const badge = document.createElement("div");
+    badge.className = "badge bg-light text-dark border duplicate-badge";
+    const dupName = item.duplicate_of.split(/[/\\]/).pop();
+    const targetIdx = Number.isInteger(item.duplicate_group)
+      ? item.duplicate_group
+      : undefined;
+    badge.appendChild(document.createTextNode("Duplicate of: "));
+    if (targetIdx !== undefined) {
+      const link = document.createElement("a");
+      link.href = `#photo-${targetIdx}`;
+      link.className = "duplicate-link";
+      link.textContent = dupName;
+      link.onclick = (e) => {
+        e.preventDefault();
+        scrollToRow(targetIdx);
+      };
+      badge.appendChild(link);
+    } else {
+      badge.appendChild(document.createTextNode(dupName));
+    }
+    return badge;
+  }
+
   function buildRow(item, idx) {
     const tr = document.createElement("tr");
     tr.id = `photo-${idx}`;
@@ -368,29 +395,6 @@
           const filename = (item.path || "").split(/[/\\]/).pop();
           td.textContent = filename;
           td.title = item.path || filename;
-          if (item.duplicate_of) {
-            const badge = document.createElement("div");
-            badge.className = "badge bg-light text-dark border";
-            const dupName = item.duplicate_of.split(/[/\\]/).pop();
-            const targetIdx = Number.isInteger(item.duplicate_group)
-              ? item.duplicate_group
-              : undefined;
-            badge.appendChild(document.createTextNode("Duplicate of: "));
-            if (targetIdx !== undefined) {
-              const link = document.createElement("a");
-              link.href = `#photo-${targetIdx}`;
-              link.className = "duplicate-link";
-              link.textContent = dupName;
-              link.onclick = (e) => {
-                e.preventDefault();
-                scrollToRow(targetIdx);
-              };
-              badge.appendChild(link);
-            } else {
-              badge.appendChild(document.createTextNode(dupName));
-            }
-            td.appendChild(badge);
-          }
           break;
         }
         case "capture": {
@@ -399,7 +403,7 @@
         }
         case "decision": {
           const decisionClass = item.decision === "keep" ? "decision-keep" : "decision-discard";
-          td.className = `decision-cell ${decisionClass}`;
+          td.className = `decision-cell decision-col ${decisionClass}`;
           const controls = document.createElement("div");
           controls.className = "controls d-flex gap-2";
           const btnKeep = document.createElement("button");
@@ -427,12 +431,16 @@
         }
         case "reasons": {
           td.classList.add("reasons-col");
-          if (item.reasons && item.reasons.length) {
-            const reasonText = item.reasons.join(", ");
-            td.textContent = reasonText;
+          const duplicateBadge = buildDuplicateBadge(item);
+          if (duplicateBadge) {
+            td.appendChild(duplicateBadge);
+          }
+          const reasonText = item.reasons && item.reasons.length ? item.reasons.join(", ") : "-";
+          const reasonNode = document.createElement("div");
+          reasonNode.textContent = reasonText;
+          td.appendChild(reasonNode);
+          if (reasonText !== "-") {
             td.title = reasonText;
-          } else {
-            td.textContent = "-";
           }
           break;
         }
@@ -513,10 +521,6 @@
 
   function render() {
     const token = ++renderToken;
-    if (DEBUG_RENDER) {
-      console.time("render:total");
-      console.log("[render] start", { total: data.length, sort: state.sort });
-    }
     buildHeader();
     const colForSort = columnsByKey[state.sort.key];
 
@@ -660,10 +664,6 @@
         updateLoadingProgress(sortedIdx.length, sortedIdx.length);
         if (elements.loading && elements.loading.parentNode) {
           elements.loading.parentNode.removeChild(elements.loading);
-        }
-        if (DEBUG_RENDER) {
-          console.timeEnd("render:total");
-          console.log("[render] done", { keep: stats.keep, discard: stats.discard });
         }
       }
     };
