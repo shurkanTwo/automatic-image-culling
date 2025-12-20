@@ -305,6 +305,12 @@
     elements.loadingText.textContent = `Loading... ${pct}%`;
   }
 
+  function triggerRowHighlight(row) {
+    row.classList.remove("row-highlight");
+    void row.offsetWidth;
+    row.classList.add("row-highlight");
+  }
+
   function scrollToRow(targetIdx) {
     const container = elements.tableWrap;
     if (!container) return;
@@ -314,16 +320,21 @@
     const targetOffset = rowHeight * targetPos;
     state.pendingHighlight = targetIdx;
     state.highlightRowId = targetIdx;
-    state.highlightUntil = Date.now() + 1200;
+    state.highlightUntil = 0;
+    const header = elements.headerRow?.parentElement;
+    const headerHeight = header ? header.getBoundingClientRect().height : 0;
     if (container.scrollHeight <= container.clientHeight + 1) {
       const containerTop = container.getBoundingClientRect().top + window.scrollY;
       const targetScroll = Math.max(
         0,
-        containerTop + targetOffset - (window.innerHeight / 2 - rowHeight / 2)
+        containerTop + targetOffset - ((window.innerHeight - headerHeight) / 2 - rowHeight / 2)
       );
       window.scrollTo({ top: targetScroll, behavior: "smooth" });
     } else {
-      const targetScroll = Math.max(0, targetOffset - (container.clientHeight / 2 - rowHeight / 2));
+      const targetScroll = Math.max(
+        0,
+        targetOffset - ((container.clientHeight - headerHeight) / 2 - rowHeight / 2)
+      );
       container.scrollTo({ top: targetScroll, behavior: "smooth" });
     }
     if (state.requestRender) state.requestRender();
@@ -605,10 +616,8 @@
         if (state.pendingHighlight !== null) {
           const row = document.getElementById(`photo-${state.pendingHighlight}`);
           if (row) {
-            row.classList.remove("row-highlight");
-            requestAnimationFrame(() => {
-              row.classList.add("row-highlight");
-            });
+            state.highlightUntil = Date.now() + 1200;
+            triggerRowHighlight(row);
             state.pendingHighlight = null;
           }
         }
@@ -639,10 +648,8 @@
       if (state.pendingHighlight !== null) {
         const row = document.getElementById(`photo-${state.pendingHighlight}`);
         if (row) {
-          row.classList.remove("row-highlight");
-          requestAnimationFrame(() => {
-            row.classList.add("row-highlight");
-          });
+          state.highlightUntil = Date.now() + 1200;
+          triggerRowHighlight(row);
           state.pendingHighlight = null;
         }
       }
