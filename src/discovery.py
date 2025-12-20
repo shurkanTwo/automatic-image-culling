@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .config import SortConfig
-
 try:
     import exifread
 except ImportError:  # pragma: no cover
@@ -97,19 +95,6 @@ def capture_date(
     if fallback is not None:
         return fallback
     return _dt.datetime.now()
-
-
-def plan_destination(
-    path: Path, exif: ExifData, cfg: SortConfig, output_dir: Path
-) -> Path:
-    """Return the destination path for a file given EXIF metadata and sort config."""
-    mtime = path.stat().st_mtime
-    capture_dt = _dt.datetime.fromtimestamp(mtime)
-    dt = capture_date(exif, fallback=capture_dt)
-    date_str = dt.strftime("%Y-%m-%d")
-    pattern = cfg.get("pattern", "{capture_date}/{basename}")
-    subpath = pattern.format(capture_date=date_str, basename=path.name, stem=path.stem)
-    return output_dir / subpath
 
 
 def exif_orientation(exif: ExifData) -> int:

@@ -18,14 +18,6 @@ class PreviewConfig(TypedDict, total=False):
     quality: int
 
 
-class SortConfig(TypedDict, total=False):
-    """Output sorting options."""
-
-    strategy: str
-    copy: bool
-    pattern: str
-
-
 class FaceConfig(TypedDict, total=False):
     """Face detection backend configuration."""
 
@@ -75,7 +67,6 @@ class AppConfig(TypedDict, total=False):
     output_dir: str
     preview_dir: str
     preview: PreviewConfig
-    sort: SortConfig
     analysis: AnalysisConfig
     concurrency: int
     exclude_dirs: List[str]
@@ -86,7 +77,6 @@ DEFAULT_CONFIG: AppConfig = {
     "output_dir": "./output",
     "preview_dir": "./previews",
     "preview": {"long_edge": 2048, "format": "webp", "quality": 85},
-    "sort": {"strategy": "flat", "copy": True, "pattern": "{basename}"},
     "analysis": {
         "sharpness_min": 8.0,
         "brightness_min": 0.08,

@@ -25,17 +25,16 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 ## Commands
 - `python -m src.main scan --config config.yaml` — list discovered `.ARW` files (+EXIF if `--json`).
 - `python -m src.main previews --config config.yaml` — generate and cache previews.
-- `python -m src.main sort --config config.yaml [--apply]` — copy/move files into the configured pattern.
 - `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
 - `python -m src.main decisions --decisions decisions.json --apply` — move files into keep/discard subfolders based on the exported decisions.
 
 ## GUI (optional)
-- `python -m src.gui` — launch a simple desktop UI to run discover, previews, analyze, sort, and decisions steps.
+- `python -m src.gui` — launch a simple desktop UI to run discover, previews, analyze, and decisions steps.
 - Use a config file in the GUI to load advanced settings (thresholds, face detection, etc.).
 
 ## Configuration
 - See `config.example.yaml` for a working template (Windows paths).  
-- `preview` block controls preview size/format; `analysis` block tunes thresholds; `sort` block controls copy/move.
+- `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Under WSL, set `output_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
 
 ## Face detection (optional)

@@ -1,21 +1,19 @@
-"""CLI entrypoint for preprocessing, sorting, and analyzing .ARW files."""
+"""CLI entrypoint for preprocessing and analyzing .ARW files."""
 
 import argparse
 import concurrent.futures
 import datetime as _dt
 import pathlib
-import shutil
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
-from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
+from .config import AnalysisConfig, AppConfig, PreviewConfig, load_config
 from .decisions import apply_decisions
 from .discovery import (
     ExifData,
     capture_date,
     find_arw_files,
-    plan_destination,
     read_exif,
 )
 from .preview import ensure_preview, generate_preview
@@ -145,37 +143,6 @@ def previews_command(args: argparse.Namespace) -> None:
     bar.close()
 
 
-def sort_command(args: argparse.Namespace) -> None:
-    """Copy or move RAW files into structured destination folders."""
-    cfg = load_config(args.config)
-    sort_cfg = cast(SortConfig, cfg.get("sort", {}))
-    files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
-    output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-    actions: List[str] = []
-    bar = _progress_bar(len(files), "Sort")
-    for path in files:
-        exif = read_exif(path)
-        dest = plan_destination(path, exif, sort_cfg, output_dir)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if args.dry_run:
-            verb = "COPY" if sort_cfg.get("copy", True) else "MOVE"
-            actions.append(f"PLAN {verb} {path} -> {dest}")
-            bar.update(1)
-            continue
-        if sort_cfg.get("copy", True):
-            shutil.copy2(path, dest)
-            actions.append(f"COPIED {path} -> {dest}")
-        else:
-            shutil.move(path, dest)
-            actions.append(f"MOVED {path} -> {dest}")
-        bar.update(1)
-    for line in actions:
-        print(line)
-    if args.dry_run:
-        print("Dry run complete; use --apply to perform moves/copies.")
-    bar.close()
-
-
 def analyze_command(args: argparse.Namespace) -> None:
     """Run analysis pipeline and emit JSON and HTML outputs."""
     cfg = load_config(args.config)
@@ -251,7 +218,7 @@ def decisions_command(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
-    parser = argparse.ArgumentParser(description="Sony .ARW preprocessing and sorting")
+    parser = argparse.ArgumentParser(description="Sony .ARW preprocessing and analysis")
     parser.add_argument("--config", help="Path to YAML config file", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -261,14 +228,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     prev = sub.add_parser("previews", help="Generate quick previews")
     prev.set_defaults(func=previews_command)
-
-    sort = sub.add_parser("sort", help="Copy/move files into structured folders")
-    sort.add_argument(
-        "--apply",
-        action="store_true",
-        help="Perform the operations (default is dry run)",
-    )
-    sort.set_defaults(func=sort_command)
 
     analyze = sub.add_parser("analyze", help="Score images and emit JSON + HTML report")
     analyze.set_defaults(func=analyze_command)
@@ -302,8 +261,6 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     """Parse CLI arguments and dispatch the requested command."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.command == "sort":
-        args.dry_run = not args.apply
     start = time.perf_counter()
     try:
         args.func(args)

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import pathlib
 import queue
-import shutil
 import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,9 +24,9 @@ else:  # pragma: no cover
     _TK_IMPORT_ERROR = None
 
 from .analyzer import analyze_files, write_outputs
-from .config import AnalysisConfig, AppConfig, PreviewConfig, SortConfig, load_config
+from .config import AnalysisConfig, AppConfig, PreviewConfig, load_config
 from .decisions import apply_decisions
-from .discovery import capture_date, find_arw_files, plan_destination, read_exif
+from .discovery import capture_date, find_arw_files, read_exif
 from .preview import generate_preview
 
 QueueItem = Tuple[str, object]
@@ -91,9 +91,12 @@ class GuiApp:
         self.config_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Idle")
         self.phase_var = tk.StringVar(value="")
+        self._refresh_job: Optional[str] = None
 
         self._build_ui()
         self._apply_startup_config()
+        self._bind_state_refresh()
+        self._refresh_action_states()
         self.root.after(120, self._poll_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -169,31 +172,26 @@ class GuiApp:
         )
         self.analyze_btn.grid(row=0, column=2, sticky="ew", padx=(6, 0), pady=(0, 6))
 
-        self.sort_dry_btn = ttk.Button(
-            actions, text="Sort (dry run)", command=lambda: self._start_sort(False)
-        )
-        self.sort_dry_btn.grid(row=1, column=0, sticky="ew", padx=(0, 6))
-        self.sort_apply_btn = ttk.Button(
-            actions, text="Sort (apply)", command=lambda: self._start_sort(True)
-        )
-        self.sort_apply_btn.grid(row=1, column=1, sticky="ew", padx=6)
-        self.open_btn = ttk.Button(
-            actions, text="Open report", command=self._open_report, state="disabled"
-        )
-        self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0))
-
         self.decisions_dry_btn = ttk.Button(
             actions,
             text="Apply decisions (dry run)",
             command=lambda: self._start_decisions(False),
         )
-        self.decisions_dry_btn.grid(row=2, column=0, sticky="ew", padx=(0, 6), pady=(6, 0))
+        self.decisions_dry_btn.grid(
+            row=1, column=0, sticky="ew", padx=(0, 6), pady=(6, 0)
+        )
         self.decisions_apply_btn = ttk.Button(
             actions,
             text="Apply decisions (move)",
             command=lambda: self._start_decisions(True),
         )
-        self.decisions_apply_btn.grid(row=2, column=1, sticky="ew", padx=6, pady=(6, 0))
+        self.decisions_apply_btn.grid(
+            row=1, column=1, sticky="ew", padx=6, pady=(6, 0)
+        )
+        self.open_btn = ttk.Button(
+            actions, text="Open report", command=self._open_report, state="disabled"
+        )
+        self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0), pady=(6, 0))
 
         status_frame = ttk.Frame(container)
         status_frame.grid(row=3, column=0, sticky="ew")
@@ -236,10 +234,17 @@ class GuiApp:
             self.scan_btn,
             self.previews_btn,
             self.analyze_btn,
-            self.sort_dry_btn,
-            self.sort_apply_btn,
             self.decisions_dry_btn,
             self.decisions_apply_btn,
+            self.open_btn,
+        ]
+        self._action_buttons = [
+            self.scan_btn,
+            self.previews_btn,
+            self.analyze_btn,
+            self.decisions_dry_btn,
+            self.decisions_apply_btn,
+            self.open_btn,
         ]
 
     def _apply_startup_config(self) -> None:
@@ -255,6 +260,21 @@ class GuiApp:
         if not self.preview_var.get():
             self.preview_var.set(defaults.get("preview_dir", ""))
         self._maybe_set_decisions_path(defaults)
+
+    def _bind_state_refresh(self) -> None:
+        for var in (
+            self.input_var,
+            self.output_var,
+            self.preview_var,
+            self.decisions_var,
+            self.config_var,
+        ):
+            var.trace_add("write", lambda *_: self._schedule_state_refresh())
+
+    def _schedule_state_refresh(self) -> None:
+        if self._refresh_job is not None:
+            return
+        self._refresh_job = self.root.after(250, self._refresh_action_states)
 
     def _maybe_set_decisions_path(self, cfg: AppConfig) -> None:
         """Use output_dir/analysis/decisions.json when it exists."""
@@ -374,17 +394,6 @@ class GuiApp:
     def _start_analyze(self) -> None:
         self._start_task("analysis", self._run_analysis, clear_report=True)
 
-    def _start_sort(self, apply_changes: bool) -> None:
-        if apply_changes and messagebox is not None:
-            confirm = messagebox.askyesno(
-                "Automatic Image Culling",
-                "This will copy/move files. Continue?",
-            )
-            if not confirm:
-                return
-        label = "sort (apply)" if apply_changes else "sort (dry run)"
-        self._start_task(label, self._run_sort, target_args=(apply_changes,))
-
     def _start_decisions(self, apply_changes: bool) -> None:
         if apply_changes and messagebox is not None:
             confirm = messagebox.askyesno(
@@ -418,6 +427,104 @@ class GuiApp:
             raise ValueError(f"Input folder not found: {input_value}")
         return cfg
 
+    def _read_config_for_state(self) -> AppConfig:
+        cfg_path = self.config_var.get().strip()
+        cfg = load_config(cfg_path or None)
+
+        input_dir = self.input_var.get().strip()
+        output_dir = self.output_var.get().strip()
+        preview_dir = self.preview_var.get().strip()
+
+        if input_dir:
+            cfg["input_dir"] = _clean_path(input_dir)
+        if output_dir:
+            cfg["output_dir"] = _clean_path(output_dir)
+        if preview_dir:
+            cfg["preview_dir"] = _clean_path(preview_dir)
+
+        return cfg
+
+    @staticmethod
+    def _resolve_analysis_paths(cfg: AppConfig) -> Tuple[pathlib.Path, pathlib.Path]:
+        analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
+        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
+        analysis_dir = output_dir / "analysis"
+
+        report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+        if not report_path.is_absolute():
+            report_path = analysis_dir / report_path
+
+        results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+        if not results_path.is_absolute():
+            results_path = analysis_dir / results_path
+
+        return report_path, results_path
+
+    def _resolve_decisions_path(self, cfg: AppConfig) -> pathlib.Path:
+        raw = self.decisions_var.get().strip()
+        if raw:
+            return pathlib.Path(_clean_path(raw))
+        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
+        return output_dir / "analysis" / "decisions.json"
+
+    @staticmethod
+    def _has_arw_files(directory: pathlib.Path) -> bool:
+        if not directory.exists():
+            return False
+        for _, __, filenames in os.walk(directory):
+            for name in filenames:
+                if name.lower().endswith(".arw"):
+                    return True
+        return False
+
+    @staticmethod
+    def _has_preview_files(directory: pathlib.Path, fmt: str) -> bool:
+        if not directory.exists():
+            return False
+        suffix = f".{fmt.lower().lstrip('.')}" if fmt else ""
+        for entry in directory.iterdir():
+            if not entry.is_file():
+                continue
+            if not suffix or entry.suffix.lower() == suffix:
+                return True
+        return False
+
+    def _refresh_action_states(self) -> None:
+        self._refresh_job = None
+        if self.running:
+            for button in self._action_buttons:
+                button.configure(state="disabled")
+            return
+
+        cfg = self._read_config_for_state()
+        input_dir = pathlib.Path(cfg.get("input_dir", ""))
+        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
+        preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
+        preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
+        preview_fmt = str(preview_cfg.get("format", "webp"))
+
+        input_exists = input_dir.exists()
+        arw_exists = input_exists and self._has_arw_files(input_dir)
+        previews_exist = self._has_preview_files(preview_dir, preview_fmt)
+
+        report_path, results_path = self._resolve_analysis_paths(cfg)
+        analysis_done = report_path.exists() or results_path.exists()
+
+        decisions_path = self._resolve_decisions_path(cfg)
+        if decisions_path.exists() and not self.decisions_var.get():
+            self.decisions_var.set(str(decisions_path))
+        decisions_exist = decisions_path.exists()
+
+        self.scan_btn.configure(state="normal" if input_exists else "disabled")
+        self.previews_btn.configure(state="normal" if arw_exists else "disabled")
+        self.analyze_btn.configure(state="normal" if previews_exist else "disabled")
+
+        decisions_state = "normal" if analysis_done and decisions_exist else "disabled"
+        self.decisions_dry_btn.configure(state=decisions_state)
+        self.decisions_apply_btn.configure(state=decisions_state)
+
+        self.open_btn.configure(state="normal" if analysis_done else "disabled")
+
     def _run_scan(self, cfg: AppConfig) -> None:
         try:
             input_dir = cfg.get("input_dir", "./input")
@@ -425,6 +532,7 @@ class GuiApp:
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
+                self._send("log", "Done with discover")
                 return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
@@ -442,6 +550,7 @@ class GuiApp:
             if total > max_log:
                 self._send("log", f"... ({total - max_log} more files)")
             self._send("done", None)
+            self._send("log", "Done with discover")
         except Exception as exc:
             self._send("error", str(exc))
 
@@ -482,6 +591,7 @@ class GuiApp:
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
+                self._send("log", "Done with previews")
                 return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
@@ -500,59 +610,7 @@ class GuiApp:
                 )
             self._send("log", f"Previews processed: {total}")
             self._send("done", None)
-        except Exception as exc:
-            self._send("error", str(exc))
-
-    def _run_sort(self, cfg: AppConfig, apply_changes: bool) -> None:
-        try:
-            sort_cfg = cast(SortConfig, cfg.get("sort", {}))
-            input_dir = cfg.get("input_dir", "./input")
-            files = find_arw_files(input_dir, exclude_dirs=_exclude_list(cfg))
-            if not files:
-                self._send("log", "No .ARW files found.")
-                self._send("done", None)
-                return
-            total = len(files)
-            output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-            verb = "COPY" if sort_cfg.get("copy", True) else "MOVE"
-            self._send("progress", ("Sort", 0, total))
-            if apply_changes:
-                self._send("log", f"Applying {verb} operations...")
-            else:
-                self._send("log", f"Dry run: planning {verb} operations.")
-
-            copied = 0
-            moved = 0
-            max_log = 25
-            for idx, path in enumerate(files, 1):
-                exif = read_exif(path)
-                dest = plan_destination(path, exif, sort_cfg, output_dir)
-                if apply_changes:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    if sort_cfg.get("copy", True):
-                        shutil.copy2(path, dest)
-                        copied += 1
-                        action = "COPIED"
-                    else:
-                        shutil.move(path, dest)
-                        moved += 1
-                        action = "MOVED"
-                    if idx <= max_log:
-                        self._send("log", f"{action} {path} -> {dest}")
-                else:
-                    if idx <= max_log:
-                        self._send("log", f"PLAN {verb} {path} -> {dest}")
-                if idx % 10 == 0 or idx == total:
-                    self._send("progress", ("Sort", idx, total))
-
-            if apply_changes:
-                self._send("log", f"Sort complete: {copied} copied, {moved} moved.")
-            else:
-                self._send(
-                    "log",
-                    "Dry run complete; use Sort (apply) to perform moves/copies.",
-                )
-            self._send("done", None)
+            self._send("log", "Done with previews")
         except Exception as exc:
             self._send("error", str(exc))
 
@@ -595,6 +653,8 @@ class GuiApp:
                 f"missing={summary.missing} skipped={summary.skipped}",
             )
             self._send("done", None)
+            label = "decisions (apply)" if apply_changes else "decisions (dry run)"
+            self._send("log", f"Done with {label}")
         except Exception as exc:
             self._send("error", str(exc))
 
@@ -605,6 +665,7 @@ class GuiApp:
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
+                self._send("log", "Done with analysis")
                 return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
@@ -643,6 +704,7 @@ class GuiApp:
             self._send("log", f"Analysis written to {analysis_cfg['results_path']}")
             self._send("log", f"HTML report written to {analysis_cfg['report_path']}")
             self._send("done", report_path)
+            self._send("log", "Done with analysis")
         except Exception as exc:
             self._send("error", str(exc))
 
@@ -698,9 +760,9 @@ class GuiApp:
             self.status_var.set("Idle")
         if not running:
             self.phase_var.set("")
-            if self.progress["value"] == self.progress["maximum"]:
-                return
-            self.progress.configure(value=0)
+            if self.progress["value"] != self.progress["maximum"]:
+                self.progress.configure(value=0)
+        self._schedule_state_refresh()
 
     def _open_report(self) -> None:
         if not self.last_report_path:

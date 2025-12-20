@@ -1,4 +1,4 @@
-# Example configuration for ARW preprocessing and sorting
+# Example configuration for ARW preprocessing and analysis
 input_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi
 output_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi/output
 preview_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi/previews
@@ -9,10 +9,6 @@ preview:
 exclude_dirs:
   - ./output
   - ./previews
-sort:
-  strategy: flat # options: flat
-  copy: true # if false, moves files
-  pattern: "{basename}"
 concurrency: 4
 analysis:
   sharpness_min: 40.0
