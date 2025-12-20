@@ -6,6 +6,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 
 TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
 CSS_FILE = pathlib.Path(__file__).with_name("report.css")
+BOOTSTRAP_CSS_FILE = pathlib.Path(__file__).with_name("bootstrap_5_3_8.min.css")
 JS_FILE = pathlib.Path(__file__).with_name("report.js")
 
 
@@ -39,4 +40,5 @@ def write_html_report(
     path.write_text(rendered, encoding="utf-8")
 
     _write_sidecar(CSS_FILE, path.with_name(CSS_FILE.name))
+    _write_sidecar(BOOTSTRAP_CSS_FILE, path.with_name(BOOTSTRAP_CSS_FILE.name))
     _write_sidecar(JS_FILE, path.with_name(JS_FILE.name))
