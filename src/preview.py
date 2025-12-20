@@ -90,14 +90,6 @@ def ensure_preview(
     return generate_preview(path, preview_dir, cfg)
 
 
-def open_preview_gray(preview_path: pathlib.Path) -> Optional[np.ndarray]:
-    """Open a preview image as a grayscale float array."""
-    if Image is None:
-        return None
-    img = Image.open(preview_path).convert("L")
-    return np.array(img, dtype=np.float32)
-
-
 def open_preview_rgb(
     preview_path: pathlib.Path, size: Optional[int] = 256
 ) -> Optional[np.ndarray]:

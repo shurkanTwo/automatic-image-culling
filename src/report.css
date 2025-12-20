@@ -91,19 +91,6 @@ img.preview {
 .decision-cell .controls .btn {
   width: 100%;
 }
-.lightbox-nav {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  pointer-events: none;
-  padding: 0 1rem;
-}
-.lightbox-nav button {
-  pointer-events: auto;
-  opacity: 0.85;
-}
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 0.7rem; }
 .summary { margin: 0.25rem 0 0.75rem 0; font-weight: 600; }
