@@ -4,6 +4,7 @@ import concurrent.futures
 import datetime as _dt
 import json
 import pathlib
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast
@@ -484,6 +485,7 @@ def analyze_files(
     preview_dir: pathlib.Path,
     preview_cfg: PreviewConfig,
     progress_cb: ProgressCallback = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> List[AnalysisResult]:
     """Analyze a collection of RAW files and return structured metrics."""
     analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
@@ -496,6 +498,7 @@ def analyze_files(
         analysis_cfg,
         concurrency=concurrency,
         progress_cb=progress_cb,
+        cancel_event=cancel_event,
     )
     duplicate_indexes = _label_duplicates(results, analysis_cfg, use_similarity)
     _apply_quality_decisions(results, analysis_cfg, duplicate_indexes)
@@ -509,29 +512,38 @@ def _run_analysis_workers(
     analysis_cfg: AnalysisConfig,
     concurrency: int,
     progress_cb: ProgressCallback,
+    cancel_event: Optional[threading.Event],
 ) -> List[AnalysisResult]:
     """Analyze files concurrently and return sorted results."""
     results: List[AnalysisResult] = []
     worker_count = max(1, concurrency)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
-        futures = [
-            pool.submit(
-                _analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg
-            )
-            for path in files
-        ]
-        try:
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    results.append(result)
-                if progress_cb is not None:
-                    progress_cb(1)
-        except KeyboardInterrupt:
-            for future in futures:
-                future.cancel()
-            pool.shutdown(wait=False, cancel_futures=True)
-            raise
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+    futures = [
+        pool.submit(_analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg)
+        for path in files
+    ]
+    cancelled = False
+    try:
+        for future in concurrent.futures.as_completed(futures):
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                for job in futures:
+                    job.cancel()
+                pool.shutdown(wait=False, cancel_futures=True)
+                break
+            result = future.result()
+            if result is not None:
+                results.append(result)
+            if progress_cb is not None:
+                progress_cb(1)
+    except KeyboardInterrupt:
+        for future in futures:
+            future.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        if not cancelled:
+            pool.shutdown(wait=True)
     results.sort(key=lambda res: res["path"])
     return results
 

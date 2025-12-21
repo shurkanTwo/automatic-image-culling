@@ -39,6 +39,10 @@ from .preview import generate_preview
 QueueItem = Tuple[str, object]
 
 
+class _CancelError(Exception):
+    pass
+
+
 def _exclude_list(cfg: AppConfig) -> list[str]:
     """Return a de-duplicated list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
@@ -136,6 +140,7 @@ class GuiApp:
         self.status_var = tk.StringVar(value="Idle")
         self.phase_var = tk.StringVar(value="")
         self._refresh_job: Optional[str] = None
+        self._cancel_event = threading.Event()
 
         self._build_ui()
         self._apply_startup_config()
@@ -240,6 +245,12 @@ class GuiApp:
             actions, text="Open report", command=self._open_report, state="disabled"
         )
         self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0), pady=(6, 0))
+        self.stop_btn = ttk.Button(
+            actions, text="Stop", command=self._request_stop, state="disabled"
+        )
+        self.stop_btn.grid(
+            row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0)
+        )
 
         status_frame = ttk.Frame(run_tab)
         status_frame.grid(row=2, column=0, sticky="ew")
@@ -1145,6 +1156,7 @@ class GuiApp:
     ) -> None:
         if self.running:
             return
+        self._cancel_event.clear()
         try:
             cfg = self._build_config()
             self._persist_config(cfg)
@@ -1183,6 +1195,14 @@ class GuiApp:
                 return
         label = "decisions (apply)" if apply_changes else "decisions (dry run)"
         self._start_task(label, self._run_decisions, target_args=(apply_changes,))
+
+    def _request_stop(self) -> None:
+        if not self.running or self._cancel_event.is_set():
+            return
+        self._cancel_event.set()
+        self.status_var.set("Stopping...")
+        self.stop_btn.configure(state="disabled")
+        self._append_log("Cancellation requested.")
 
     def _build_config(self) -> AppConfig:
         cfg = self._collect_config()
@@ -1312,6 +1332,10 @@ class GuiApp:
 
             max_log = 25
             for idx, path in enumerate(files, 1):
+                if self._cancel_event.is_set():
+                    self._send("log", "Discover cancelled.")
+                    self._send("done", None)
+                    return
                 if idx <= max_log:
                     exif = read_exif(path)
                     fallback_dt = _dt.datetime.fromtimestamp(path.stat().st_mtime)
@@ -1337,13 +1361,21 @@ class GuiApp:
         missing_dep = False
         total = len(files)
         self._send("progress", (label, 0, total))
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            future_map = {
-                pool.submit(generate_preview, path, preview_dir, preview_cfg): path
-                for path in files
-            }
+        pool = ThreadPoolExecutor(max_workers=concurrency)
+        future_map = {
+            pool.submit(generate_preview, path, preview_dir, preview_cfg): path
+            for path in files
+        }
+        cancelled = False
+        try:
             done = 0
             for future in as_completed(future_map):
+                if self._cancel_event.is_set():
+                    cancelled = True
+                    for job in future_map:
+                        job.cancel()
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    break
                 path = future_map[future]
                 try:
                     result = future.result()
@@ -1354,6 +1386,9 @@ class GuiApp:
                 done += 1
                 if done % 10 == 0 or done == total:
                     self._send("progress", (label, done, total))
+        finally:
+            if not cancelled:
+                pool.shutdown(wait=True)
         return missing_dep
 
     def _run_previews(self, cfg: AppConfig) -> None:
@@ -1365,6 +1400,10 @@ class GuiApp:
                 self._send("done", None)
                 self._send("log", "Done with previews")
                 return
+            if self._cancel_event.is_set():
+                self._send("log", "Preview generation cancelled.")
+                self._send("done", None)
+                return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
 
@@ -1375,6 +1414,10 @@ class GuiApp:
             missing_dep = self._generate_previews(
                 files, preview_dir, preview_cfg, workers, "Previews"
             )
+            if self._cancel_event.is_set():
+                self._send("log", "Preview generation cancelled.")
+                self._send("done", None)
+                return
             if missing_dep:
                 self._send(
                     "log",
@@ -1392,6 +1435,10 @@ class GuiApp:
             if not decisions_path:
                 self._send("error", "Decisions file is required.")
                 return
+            if self._cancel_event.is_set():
+                self._send("log", "Decisions cancelled.")
+                self._send("done", None)
+                return
             decisions_file = pathlib.Path(_clean_path(decisions_path))
             if not decisions_file.exists():
                 self._send("error", f"Decisions file not found: {decisions_file}")
@@ -1402,6 +1449,8 @@ class GuiApp:
             )
 
             def progress_cb(current: int, total: int) -> None:
+                if self._cancel_event.is_set():
+                    raise _CancelError()
                 self._send("progress", ("Decisions", current, total))
 
             summary = apply_decisions(
@@ -1412,6 +1461,10 @@ class GuiApp:
                 progress_cb=progress_cb,
                 log_cb=lambda msg: self._send("log", msg),
             )
+            if self._cancel_event.is_set():
+                self._send("log", "Decisions cancelled.")
+                self._send("done", None)
+                return
             if not apply_changes:
                 self._send(
                     "log",
@@ -1427,6 +1480,9 @@ class GuiApp:
             self._send("done", None)
             label = "decisions (apply)" if apply_changes else "decisions (dry run)"
             self._send("log", f"Done with {label}")
+        except _CancelError:
+            self._send("log", "Decisions cancelled.")
+            self._send("done", None)
         except Exception as exc:
             self._send("error", str(exc))
 
@@ -1439,6 +1495,10 @@ class GuiApp:
                 self._send("done", None)
                 self._send("log", "Done with analysis")
                 return
+            if self._cancel_event.is_set():
+                self._send("log", "Analysis cancelled.")
+                self._send("done", None)
+                return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
 
@@ -1449,6 +1509,10 @@ class GuiApp:
             missing_dep = self._generate_previews(
                 files, preview_dir, preview_cfg, workers, "Previews"
             )
+            if self._cancel_event.is_set():
+                self._send("log", "Analysis cancelled.")
+                self._send("done", None)
+                return
             if missing_dep:
                 self._send(
                     "log",
@@ -1469,8 +1533,17 @@ class GuiApp:
                 self._send("progress", ("Analyze", analyzed, total))
 
             results = analyze_files(
-                cfg, files, preview_dir, preview_cfg, progress_cb=progress_cb
+                cfg,
+                files,
+                preview_dir,
+                preview_cfg,
+                progress_cb=progress_cb,
+                cancel_event=self._cancel_event,
             )
+            if self._cancel_event.is_set():
+                self._send("log", "Analysis cancelled.")
+                self._send("done", None)
+                return
             write_outputs(results, analysis_cfg)
             report_path = pathlib.Path(analysis_cfg["report_path"])
             self._send("log", f"Analysis written to {analysis_cfg['results_path']}")
@@ -1525,6 +1598,7 @@ class GuiApp:
         state = "disabled" if running else "normal"
         for widget in self._controls:
             widget.configure(state=state)
+        self.stop_btn.configure(state="normal" if running else "disabled")
         if running:
             label = f"Running: {action}" if action else "Running"
             self.status_var.set(label)
