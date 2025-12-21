@@ -9,7 +9,7 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 2) `.\\.venv-3.12\\Scripts\\Activate.ps1`
 3) Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 4) `uv pip install -r requirements.txt`
-5) Edit `config.yaml` (set `input_dir`/`output_dir`/`preview_dir` to Windows paths)
+5) Run `python -m src.gui`, open the Configuration tab, set `input_dir`/`output_dir`/`preview_dir`, and Save (writes `config.yaml`)
 6) `python -m src.main analyze --config config.yaml`
    - Outputs land in `output_dir\\analysis` (`analysis.json`, `report.html`, `report.css`, `report.js`), with Windows paths for opening from the host.
 
@@ -18,7 +18,7 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 2) `python3.12 -m venv .venv-3.12 && source .venv-3.12/bin/activate`
 3) Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` then `source ~/.profile`
 4) `uv pip install -r requirements.txt`
-5) Edit `config.yaml` (use `/mnt/c/...` paths if targeting Windows storage)
+5) Run `python -m src.gui`, open the Configuration tab, set paths (use `/mnt/c/...` for Windows storage), and Save (writes `config.yaml`)
 6) `python -m src.main analyze --config config.yaml`
    - Outputs land in `output_dir/analysis`; paths in the report are converted to Windows form for host opening.
 
@@ -30,10 +30,10 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 
 ## GUI (optional)
 - `python -m src.gui` — launch a simple desktop UI to run discover, previews, analyze, and decisions steps.
-- Use a config file in the GUI to load advanced settings (thresholds, face detection, etc.).
+- Use the Configuration tab to edit settings (thresholds, face detection, etc.) and Save to `config.yaml`.
 
 ## Configuration
-- See `config.example.yaml` for a working template (Windows paths).  
+- See `config.example.yaml` for a minimal override template; defaults live in the app/GUI.  
 - `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Under WSL, set `output_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
 

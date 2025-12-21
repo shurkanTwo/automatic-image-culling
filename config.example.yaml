@@ -1,43 +1,4 @@
-# Example configuration for ARW preprocessing and analysis
-input_dir: C:\Users\lucas\Desktop\03_Varanasi
-output_dir: C:\Users\lucas\Desktop\03_Varanasi\output
-preview_dir: C:\Users\lucas\Desktop\03_Varanasi\previews
-preview:
-  long_edge: 2048
-  format: webp
-  quality: 85
-exclude_dirs:
-  - ./output
-  - ./previews
-concurrency: 4
-analysis:
-  sharpness_min: 8.0
-  tenengrad_min: 200.0
-  motion_ratio_min: 0.02
-  noise_std_max: 25.0
-  brightness_min: 0.08
-  brightness_max: 0.92
-  quality_score_min: 0.75
-  shadows_min: 0.01
-  shadows_max: 0.5
-  highlights_min: 0.01
-  highlights_max: 0.98
-  hard_fail_sharp_ratio: 0.55
-  hard_fail_teneng_ratio: 0.55
-  hard_fail_motion_ratio: 0.55
-  hard_fail_brightness_ratio: 0.5
-  hard_fail_noise_ratio: 0.45
-  hard_fail_shadows_ratio: 0.5
-  hard_fail_highlights_ratio: 0.5
-  hard_fail_sharp_center_ratio: 0.55
-  center_sharpness_min: 9.6
-  hard_fail_composition_ratio: 0.4
-  duplicate_hamming: 6
-  duplicate_window_seconds: 8
-  face:
-    enabled: false
-    backend: mediapipe
-    det_size: 640
-    ctx_id: 0
-  report_path: ./report.html
-  results_path: ./analysis.json
+# Example configuration. Defaults live in the app/GUI; set overrides as needed.
+input_dir: /path/to/input
+output_dir: /path/to/output
+preview_dir: /path/to/previews
