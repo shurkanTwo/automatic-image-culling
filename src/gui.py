@@ -23,11 +23,6 @@ except Exception as exc:  # pragma: no cover
 else:  # pragma: no cover
     _TK_IMPORT_ERROR = None
 
-try:
-    from ttkthemes import ThemedStyle
-except Exception:  # pragma: no cover
-    ThemedStyle = None
-
 from .analyzer import analyze_files, write_outputs
 from .config import (
     AnalysisConfig,
@@ -1024,21 +1019,10 @@ class GuiApp:
         return scale
 
     def _apply_theme(self) -> None:
-        desired = ("breeze", "Breeze")
-        if ThemedStyle is not None:
-            try:
-                themed = ThemedStyle(self.root)
-                available = {name.lower(): name for name in themed.theme_names()}
-                for name in desired:
-                    key = name.lower()
-                    if key in available:
-                        themed.theme_use(available[key])
-                        return
-            except Exception:
-                pass
         style = ttk.Style(self.root)
+        preferred = ("vista", "xpnative", "aqua", "default")
         available = {name.lower(): name for name in style.theme_names()}
-        for name in desired:
+        for name in preferred:
             key = name.lower()
             if key in available:
                 style.theme_use(available[key])
