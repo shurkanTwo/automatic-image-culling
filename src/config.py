@@ -129,3 +129,12 @@ def load_config(path: Optional[str]) -> AppConfig:
     with cfg_path.open("r", encoding="utf-8") as file_handle:
         loaded = yaml.safe_load(file_handle) or {}
         return _deep_update(cfg, loaded)
+
+
+def save_config(path: str, cfg: AppConfig) -> None:
+    """Persist configuration to a YAML file."""
+    if yaml is None:  # pragma: no cover
+        raise RuntimeError("PyYAML is required to save configuration.")
+    cfg_path = pathlib.Path(path)
+    with cfg_path.open("w", encoding="utf-8") as file_handle:
+        yaml.safe_dump(cfg, file_handle, sort_keys=False)

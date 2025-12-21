@@ -23,8 +23,20 @@ except Exception as exc:  # pragma: no cover
 else:  # pragma: no cover
     _TK_IMPORT_ERROR = None
 
+try:
+    from ttkthemes import ThemedStyle
+except Exception:  # pragma: no cover
+    ThemedStyle = None
+
 from .analyzer import analyze_files, write_outputs
-from .config import AnalysisConfig, AppConfig, PreviewConfig, load_config
+from .config import (
+    AnalysisConfig,
+    AppConfig,
+    FaceConfig,
+    PreviewConfig,
+    load_config,
+    save_config,
+)
 from .decisions import apply_decisions
 from .discovery import capture_date, find_arw_files, read_exif
 from .preview import generate_preview
@@ -89,6 +101,43 @@ class GuiApp:
         self.preview_var = tk.StringVar()
         self.decisions_var = tk.StringVar()
         self.config_var = tk.StringVar()
+        self.preview_long_edge_var = tk.StringVar()
+        self.preview_format_var = tk.StringVar()
+        self.preview_quality_var = tk.StringVar()
+        self.exclude_dirs_var = tk.StringVar()
+        self.concurrency_var = tk.StringVar()
+        self.analysis_sharpness_min_var = tk.StringVar()
+        self.analysis_center_sharpness_min_var = tk.StringVar()
+        self.analysis_tenengrad_min_var = tk.StringVar()
+        self.analysis_motion_ratio_min_var = tk.StringVar()
+        self.analysis_noise_std_max_var = tk.StringVar()
+        self.analysis_brightness_min_var = tk.StringVar()
+        self.analysis_brightness_max_var = tk.StringVar()
+        self.analysis_shadows_min_var = tk.StringVar()
+        self.analysis_shadows_max_var = tk.StringVar()
+        self.analysis_highlights_min_var = tk.StringVar()
+        self.analysis_highlights_max_var = tk.StringVar()
+        self.analysis_quality_score_min_var = tk.StringVar()
+        self.analysis_hard_fail_sharp_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_sharp_center_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_teneng_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_motion_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_brightness_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_noise_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_shadows_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_highlights_ratio_var = tk.StringVar()
+        self.analysis_hard_fail_composition_ratio_var = tk.StringVar()
+        self.analysis_duplicate_hamming_var = tk.StringVar()
+        self.analysis_duplicate_window_seconds_var = tk.StringVar()
+        self.analysis_duplicate_bucket_bits_var = tk.StringVar()
+        self.analysis_report_path_var = tk.StringVar()
+        self.analysis_results_path_var = tk.StringVar()
+        self.analysis_face_enabled_var = tk.BooleanVar()
+        self.analysis_face_backend_var = tk.StringVar()
+        self.analysis_face_det_size_var = tk.StringVar()
+        self.analysis_face_ctx_id_var = tk.StringVar()
+        self.analysis_face_allowed_modules_var = tk.StringVar()
+        self.analysis_face_providers_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Idle")
         self.phase_var = tk.StringVar(value="")
         self._refresh_job: Optional[str] = None
@@ -101,24 +150,41 @@ class GuiApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
+        scale = self._apply_scaling()
         self.root.title("Automatic Image Culling")
-        self.root.geometry("860x620")
-        self.root.minsize(760, 540)
+        self._apply_theme()
+        base_width, base_height = 860, 620
+        min_width, min_height = 760, 540
+        width = int(base_width * scale)
+        height = int(base_height * scale)
+        self.root.geometry(f"{width}x{height}")
+        self.root.minsize(int(min_width * scale), int(min_height * scale))
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
         container = ttk.Frame(self.root, padding=12)
         container.grid(row=0, column=0, sticky="nsew")
         container.grid_columnconfigure(0, weight=1)
-        container.grid_rowconfigure(4, weight=1)
+        container.grid_rowconfigure(1, weight=1)
 
         title = ttk.Label(
             container, text="Automatic Image Culling", font=("TkDefaultFont", 15, "bold")
         )
         title.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        form = ttk.Frame(container)
-        form.grid(row=1, column=0, sticky="ew")
+        notebook = ttk.Notebook(container)
+        notebook.grid(row=1, column=0, sticky="nsew")
+
+        run_tab = ttk.Frame(notebook, padding=12)
+        config_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(run_tab, text="Run")
+        notebook.add(config_tab, text="Configuration")
+
+        run_tab.grid_rowconfigure(4, weight=1)
+        run_tab.grid_columnconfigure(0, weight=1)
+
+        form = ttk.Frame(run_tab)
+        form.grid(row=0, column=0, sticky="ew")
         form.grid_columnconfigure(1, weight=1)
 
         self._add_path_row(
@@ -142,21 +208,8 @@ class GuiApp:
             row=3, column=2, sticky="ew", pady=4, padx=(4, 0)
         )
 
-        config_label = ttk.Label(form, text="Config file (optional)")
-        config_label.grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
-        self.config_entry = ttk.Entry(form, textvariable=self.config_var)
-        self.config_entry.grid(row=4, column=1, sticky="ew", pady=4)
-        self.config_browse_btn = ttk.Button(
-            form, text="Browse", command=self._browse_config
-        )
-        self.config_browse_btn.grid(row=4, column=2, sticky="ew", pady=4, padx=(4, 0))
-        self.config_load_btn = ttk.Button(
-            form, text="Load", command=self._load_config
-        )
-        self.config_load_btn.grid(row=4, column=3, sticky="ew", pady=4, padx=(4, 0))
-
-        actions = ttk.Frame(container)
-        actions.grid(row=2, column=0, sticky="ew", pady=(10, 6))
+        actions = ttk.Frame(run_tab)
+        actions.grid(row=1, column=0, sticky="ew", pady=(10, 6))
         actions.grid_columnconfigure(0, weight=1)
         actions.grid_columnconfigure(1, weight=1)
         actions.grid_columnconfigure(2, weight=1)
@@ -193,8 +246,8 @@ class GuiApp:
         )
         self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0), pady=(6, 0))
 
-        status_frame = ttk.Frame(container)
-        status_frame.grid(row=3, column=0, sticky="ew")
+        status_frame = ttk.Frame(run_tab)
+        status_frame.grid(row=2, column=0, sticky="ew")
         status_frame.grid_columnconfigure(1, weight=1)
         ttk.Label(status_frame, textvariable=self.status_var).grid(
             row=0, column=0, sticky="w"
@@ -204,12 +257,12 @@ class GuiApp:
         )
 
         self.progress = ttk.Progressbar(
-            container, mode="determinate", maximum=1, value=0
+            run_tab, mode="determinate", maximum=1, value=0
         )
-        self.progress.grid(row=4, column=0, sticky="ew", pady=(4, 8))
+        self.progress.grid(row=3, column=0, sticky="ew", pady=(4, 8))
 
-        log_frame = ttk.Frame(container)
-        log_frame.grid(row=5, column=0, sticky="nsew")
+        log_frame = ttk.Frame(run_tab)
+        log_frame.grid(row=4, column=0, sticky="nsew")
         log_frame.grid_rowconfigure(0, weight=1)
         log_frame.grid_columnconfigure(0, weight=1)
 
@@ -219,6 +272,300 @@ class GuiApp:
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log.configure(yscrollcommand=scrollbar.set)
 
+        config_tab.grid_columnconfigure(0, weight=1)
+        config_tab.grid_rowconfigure(1, weight=1)
+
+        config_controls: list["tk.Widget"] = []
+
+        config_file_frame = ttk.Frame(config_tab)
+        config_file_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        config_file_frame.grid_columnconfigure(1, weight=1)
+
+        config_label = ttk.Label(config_file_frame, text="Config file")
+        config_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.config_entry = ttk.Entry(config_file_frame, textvariable=self.config_var)
+        self.config_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        self.config_browse_btn = ttk.Button(
+            config_file_frame, text="Browse", command=self._browse_config
+        )
+        self.config_browse_btn.grid(
+            row=0, column=2, sticky="ew", pady=4, padx=(4, 0)
+        )
+        self.config_load_btn = ttk.Button(
+            config_file_frame, text="Reload", command=self._load_config
+        )
+        self.config_load_btn.grid(
+            row=0, column=3, sticky="ew", pady=4, padx=(4, 0)
+        )
+        self.config_save_btn = ttk.Button(
+            config_file_frame, text="Save", command=self._save_config
+        )
+        self.config_save_btn.grid(
+            row=0, column=4, sticky="ew", pady=4, padx=(4, 0)
+        )
+        config_controls.extend(
+            [
+                self.config_entry,
+                self.config_browse_btn,
+                self.config_load_btn,
+                self.config_save_btn,
+            ]
+        )
+
+        config_canvas = tk.Canvas(config_tab, highlightthickness=0)
+        config_scrollbar = ttk.Scrollbar(
+            config_tab, orient="vertical", command=config_canvas.yview
+        )
+        config_canvas.grid(row=1, column=0, sticky="nsew")
+        config_scrollbar.grid(row=1, column=1, sticky="ns")
+        config_canvas.configure(yscrollcommand=config_scrollbar.set)
+
+        config_body = ttk.Frame(config_canvas)
+        config_body_id = config_canvas.create_window(
+            (0, 0), window=config_body, anchor="nw"
+        )
+        config_body.grid_columnconfigure(0, weight=1)
+
+        def _on_config_frame(event: "tk.Event") -> None:
+            config_canvas.configure(scrollregion=config_canvas.bbox("all"))
+
+        def _on_config_canvas(event: "tk.Event") -> None:
+            config_canvas.itemconfigure(config_body_id, width=event.width)
+
+        config_body.bind("<Configure>", _on_config_frame)
+        config_canvas.bind("<Configure>", _on_config_canvas)
+
+        runtime_frame = ttk.LabelFrame(config_body, text="Runtime")
+        runtime_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        runtime_frame.grid_columnconfigure(1, weight=1)
+        entry = self._add_config_entry(
+            runtime_frame, 0, "Concurrency", self.concurrency_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            runtime_frame,
+            1,
+            "Exclude dirs (comma-separated)",
+            self.exclude_dirs_var,
+        )
+        config_controls.append(entry)
+
+        preview_frame = ttk.LabelFrame(config_body, text="Preview")
+        preview_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        preview_frame.grid_columnconfigure(1, weight=1)
+        entry = self._add_config_entry(
+            preview_frame, 0, "Long edge (px)", self.preview_long_edge_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            preview_frame, 1, "Format", self.preview_format_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            preview_frame, 2, "Quality", self.preview_quality_var
+        )
+        config_controls.append(entry)
+
+        analysis_frame = ttk.LabelFrame(config_body, text="Analysis thresholds")
+        analysis_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        analysis_frame.grid_columnconfigure(1, weight=1)
+        entry = self._add_config_entry(
+            analysis_frame, 0, "Sharpness min", self.analysis_sharpness_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame,
+            1,
+            "Center sharpness min (optional)",
+            self.analysis_center_sharpness_min_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 2, "Tenengrad min", self.analysis_tenengrad_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 3, "Motion ratio min", self.analysis_motion_ratio_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 4, "Noise std max", self.analysis_noise_std_max_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 5, "Brightness min", self.analysis_brightness_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 6, "Brightness max", self.analysis_brightness_max_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 7, "Shadows min", self.analysis_shadows_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 8, "Shadows max", self.analysis_shadows_max_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 9, "Highlights min", self.analysis_highlights_min_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 10, "Highlights max", self.analysis_highlights_max_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            analysis_frame, 11, "Quality score min", self.analysis_quality_score_min_var
+        )
+        config_controls.append(entry)
+
+        hard_fail_frame = ttk.LabelFrame(config_body, text="Hard-fail ratios")
+        hard_fail_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        hard_fail_frame.grid_columnconfigure(1, weight=1)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            0,
+            "Sharpness ratio",
+            self.analysis_hard_fail_sharp_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            1,
+            "Center sharpness ratio",
+            self.analysis_hard_fail_sharp_center_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            2,
+            "Tenengrad ratio",
+            self.analysis_hard_fail_teneng_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            3,
+            "Motion ratio",
+            self.analysis_hard_fail_motion_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            4,
+            "Brightness ratio",
+            self.analysis_hard_fail_brightness_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            5,
+            "Noise ratio",
+            self.analysis_hard_fail_noise_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            6,
+            "Shadows ratio",
+            self.analysis_hard_fail_shadows_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            7,
+            "Highlights ratio",
+            self.analysis_hard_fail_highlights_ratio_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            hard_fail_frame,
+            8,
+            "Composition ratio",
+            self.analysis_hard_fail_composition_ratio_var,
+        )
+        config_controls.append(entry)
+
+        duplicates_frame = ttk.LabelFrame(config_body, text="Duplicates & outputs")
+        duplicates_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        duplicates_frame.grid_columnconfigure(1, weight=1)
+        entry = self._add_config_entry(
+            duplicates_frame,
+            0,
+            "Duplicate hamming",
+            self.analysis_duplicate_hamming_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            duplicates_frame,
+            1,
+            "Duplicate window seconds",
+            self.analysis_duplicate_window_seconds_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            duplicates_frame,
+            2,
+            "Duplicate bucket bits",
+            self.analysis_duplicate_bucket_bits_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            duplicates_frame, 3, "Report path", self.analysis_report_path_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            duplicates_frame, 4, "Results path", self.analysis_results_path_var
+        )
+        config_controls.append(entry)
+
+        face_frame = ttk.LabelFrame(config_body, text="Face detection")
+        face_frame.grid(row=5, column=0, sticky="ew")
+        face_frame.grid_columnconfigure(1, weight=1)
+        ttk.Label(face_frame, text="Enabled").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        face_enabled = ttk.Checkbutton(
+            face_frame, variable=self.analysis_face_enabled_var
+        )
+        face_enabled.grid(row=0, column=1, sticky="w", pady=4)
+        config_controls.append(face_enabled)
+        ttk.Label(face_frame, text="Backend").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        face_backend = ttk.Combobox(
+            face_frame,
+            textvariable=self.analysis_face_backend_var,
+            values=("mediapipe", "insightface"),
+            state="readonly",
+        )
+        face_backend.grid(row=1, column=1, sticky="ew", pady=4)
+        config_controls.append(face_backend)
+        entry = self._add_config_entry(
+            face_frame, 2, "Detection size", self.analysis_face_det_size_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            face_frame, 3, "Context id", self.analysis_face_ctx_id_var
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            face_frame,
+            4,
+            "Allowed modules (comma-separated)",
+            self.analysis_face_allowed_modules_var,
+        )
+        config_controls.append(entry)
+        entry = self._add_config_entry(
+            face_frame,
+            5,
+            "Providers (comma-separated, optional)",
+            self.analysis_face_providers_var,
+        )
+        config_controls.append(entry)
+
         self.input_entry = self._entry_by_var(self.input_var, form)
         self.output_entry = self._entry_by_var(self.output_var, form)
         self.preview_entry = self._entry_by_var(self.preview_var, form)
@@ -227,10 +574,7 @@ class GuiApp:
             self.output_entry,
             self.preview_entry,
             self.decisions_entry,
-            self.config_entry,
             self.decisions_browse_btn,
-            self.config_browse_btn,
-            self.config_load_btn,
             self.scan_btn,
             self.previews_btn,
             self.analyze_btn,
@@ -238,6 +582,7 @@ class GuiApp:
             self.decisions_apply_btn,
             self.open_btn,
         ]
+        self._controls.extend(config_controls)
         self._action_buttons = [
             self.scan_btn,
             self.previews_btn,
@@ -247,25 +592,397 @@ class GuiApp:
             self.open_btn,
         ]
 
+    @staticmethod
+    def _format_number(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, float):
+            return f"{value:g}"
+        return str(value)
+
+    @staticmethod
+    def _format_list(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return ", ".join(str(item) for item in value)
+
+    @staticmethod
+    def _parse_optional_int(value: str, label: str) -> Optional[int]:
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be an integer.") from exc
+
+    @staticmethod
+    def _parse_optional_float(value: str, label: str) -> Optional[float]:
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise ValueError(f"{label} must be a number.") from exc
+
+    @staticmethod
+    def _parse_list(value: str) -> list[str]:
+        if not value.strip():
+            return []
+        items: list[str] = []
+        for line in value.splitlines():
+            for part in line.split(","):
+                part = part.strip()
+                if part:
+                    items.append(part)
+        return items
+
+    def _apply_config_to_vars(self, cfg: AppConfig) -> None:
+        self.input_var.set(cfg.get("input_dir", ""))
+        self.output_var.set(cfg.get("output_dir", ""))
+        self.preview_var.set(cfg.get("preview_dir", ""))
+        self.exclude_dirs_var.set(
+            self._format_list(cfg.get("exclude_dirs", []))
+        )
+        self.concurrency_var.set(self._format_number(cfg.get("concurrency", 4)))
+
+        preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
+        self.preview_long_edge_var.set(
+            self._format_number(preview_cfg.get("long_edge", 2048))
+        )
+        self.preview_format_var.set(str(preview_cfg.get("format", "webp")))
+        self.preview_quality_var.set(
+            self._format_number(preview_cfg.get("quality", 85))
+        )
+
+        analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
+        self.analysis_sharpness_min_var.set(
+            self._format_number(analysis_cfg.get("sharpness_min", 8.0))
+        )
+        center_value = analysis_cfg.get("center_sharpness_min")
+        self.analysis_center_sharpness_min_var.set(
+            self._format_number(center_value) if center_value is not None else ""
+        )
+        self.analysis_tenengrad_min_var.set(
+            self._format_number(analysis_cfg.get("tenengrad_min", 200.0))
+        )
+        self.analysis_motion_ratio_min_var.set(
+            self._format_number(analysis_cfg.get("motion_ratio_min", 0.02))
+        )
+        self.analysis_noise_std_max_var.set(
+            self._format_number(analysis_cfg.get("noise_std_max", 25.0))
+        )
+        self.analysis_brightness_min_var.set(
+            self._format_number(analysis_cfg.get("brightness_min", 0.08))
+        )
+        self.analysis_brightness_max_var.set(
+            self._format_number(analysis_cfg.get("brightness_max", 0.92))
+        )
+        self.analysis_shadows_min_var.set(
+            self._format_number(analysis_cfg.get("shadows_min", 0.0))
+        )
+        self.analysis_shadows_max_var.set(
+            self._format_number(analysis_cfg.get("shadows_max", 0.5))
+        )
+        self.analysis_highlights_min_var.set(
+            self._format_number(analysis_cfg.get("highlights_min", 0.0))
+        )
+        self.analysis_highlights_max_var.set(
+            self._format_number(analysis_cfg.get("highlights_max", 0.1))
+        )
+        self.analysis_quality_score_min_var.set(
+            self._format_number(analysis_cfg.get("quality_score_min", 0.75))
+        )
+        self.analysis_hard_fail_sharp_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_sharp_ratio", 0.55))
+        )
+        self.analysis_hard_fail_sharp_center_ratio_var.set(
+            self._format_number(
+                analysis_cfg.get("hard_fail_sharp_center_ratio", 0.55)
+            )
+        )
+        self.analysis_hard_fail_teneng_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_teneng_ratio", 0.55))
+        )
+        self.analysis_hard_fail_motion_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_motion_ratio", 0.55))
+        )
+        self.analysis_hard_fail_brightness_ratio_var.set(
+            self._format_number(
+                analysis_cfg.get("hard_fail_brightness_ratio", 0.5)
+            )
+        )
+        self.analysis_hard_fail_noise_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_noise_ratio", 0.45))
+        )
+        self.analysis_hard_fail_shadows_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_shadows_ratio", 0.5))
+        )
+        self.analysis_hard_fail_highlights_ratio_var.set(
+            self._format_number(
+                analysis_cfg.get("hard_fail_highlights_ratio", 0.5)
+            )
+        )
+        self.analysis_hard_fail_composition_ratio_var.set(
+            self._format_number(analysis_cfg.get("hard_fail_composition_ratio", 0.4))
+        )
+        self.analysis_duplicate_hamming_var.set(
+            self._format_number(analysis_cfg.get("duplicate_hamming", 6))
+        )
+        self.analysis_duplicate_window_seconds_var.set(
+            self._format_number(analysis_cfg.get("duplicate_window_seconds", 8))
+        )
+        self.analysis_duplicate_bucket_bits_var.set(
+            self._format_number(analysis_cfg.get("duplicate_bucket_bits", 8))
+        )
+        self.analysis_report_path_var.set(
+            str(analysis_cfg.get("report_path", "./report.html"))
+        )
+        self.analysis_results_path_var.set(
+            str(analysis_cfg.get("results_path", "./analysis.json"))
+        )
+
+        face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
+        self.analysis_face_enabled_var.set(bool(face_cfg.get("enabled", True)))
+        self.analysis_face_backend_var.set(str(face_cfg.get("backend", "mediapipe")))
+        self.analysis_face_det_size_var.set(
+            self._format_number(face_cfg.get("det_size", 640))
+        )
+        self.analysis_face_ctx_id_var.set(
+            self._format_number(face_cfg.get("ctx_id", 0))
+        )
+        allowed_modules = face_cfg.get("allowed_modules", ["detection", "recognition"])
+        self.analysis_face_allowed_modules_var.set(
+            self._format_list(allowed_modules)
+        )
+        providers = face_cfg.get("providers")
+        self.analysis_face_providers_var.set(
+            self._format_list(providers) if providers is not None else ""
+        )
+
+    def _collect_config(self) -> AppConfig:
+        cfg_path = self.config_var.get().strip()
+        cfg = load_config(cfg_path or None)
+
+        input_dir = self.input_var.get().strip()
+        output_dir = self.output_var.get().strip()
+        preview_dir = self.preview_var.get().strip()
+        if input_dir:
+            cfg["input_dir"] = _clean_path(input_dir)
+        if output_dir:
+            cfg["output_dir"] = _clean_path(output_dir)
+        if preview_dir:
+            cfg["preview_dir"] = _clean_path(preview_dir)
+
+        exclude_dirs = self._parse_list(self.exclude_dirs_var.get())
+        if exclude_dirs:
+            cfg["exclude_dirs"] = exclude_dirs
+        else:
+            cfg.pop("exclude_dirs", None)
+
+        concurrency = self._parse_optional_int(self.concurrency_var.get(), "Concurrency")
+        if concurrency is not None:
+            cfg["concurrency"] = concurrency
+
+        preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
+        long_edge = self._parse_optional_int(
+            self.preview_long_edge_var.get(), "Preview long edge"
+        )
+        if long_edge is not None:
+            preview_cfg["long_edge"] = long_edge
+        fmt = self.preview_format_var.get().strip()
+        if fmt:
+            preview_cfg["format"] = fmt
+        quality = self._parse_optional_int(
+            self.preview_quality_var.get(), "Preview quality"
+        )
+        if quality is not None:
+            preview_cfg["quality"] = quality
+        cfg["preview"] = preview_cfg
+
+        analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
+        sharpness = self._parse_optional_float(
+            self.analysis_sharpness_min_var.get(), "Sharpness min"
+        )
+        if sharpness is not None:
+            analysis_cfg["sharpness_min"] = sharpness
+        center = self._parse_optional_float(
+            self.analysis_center_sharpness_min_var.get(),
+            "Center sharpness min",
+        )
+        if center is None:
+            analysis_cfg.pop("center_sharpness_min", None)
+        else:
+            analysis_cfg["center_sharpness_min"] = center
+        tenengrad = self._parse_optional_float(
+            self.analysis_tenengrad_min_var.get(), "Tenengrad min"
+        )
+        if tenengrad is not None:
+            analysis_cfg["tenengrad_min"] = tenengrad
+        motion_ratio = self._parse_optional_float(
+            self.analysis_motion_ratio_min_var.get(), "Motion ratio min"
+        )
+        if motion_ratio is not None:
+            analysis_cfg["motion_ratio_min"] = motion_ratio
+        noise_std = self._parse_optional_float(
+            self.analysis_noise_std_max_var.get(), "Noise std max"
+        )
+        if noise_std is not None:
+            analysis_cfg["noise_std_max"] = noise_std
+        brightness_min = self._parse_optional_float(
+            self.analysis_brightness_min_var.get(), "Brightness min"
+        )
+        if brightness_min is not None:
+            analysis_cfg["brightness_min"] = brightness_min
+        brightness_max = self._parse_optional_float(
+            self.analysis_brightness_max_var.get(), "Brightness max"
+        )
+        if brightness_max is not None:
+            analysis_cfg["brightness_max"] = brightness_max
+        shadows_min = self._parse_optional_float(
+            self.analysis_shadows_min_var.get(), "Shadows min"
+        )
+        if shadows_min is not None:
+            analysis_cfg["shadows_min"] = shadows_min
+        shadows_max = self._parse_optional_float(
+            self.analysis_shadows_max_var.get(), "Shadows max"
+        )
+        if shadows_max is not None:
+            analysis_cfg["shadows_max"] = shadows_max
+        highlights_min = self._parse_optional_float(
+            self.analysis_highlights_min_var.get(), "Highlights min"
+        )
+        if highlights_min is not None:
+            analysis_cfg["highlights_min"] = highlights_min
+        highlights_max = self._parse_optional_float(
+            self.analysis_highlights_max_var.get(), "Highlights max"
+        )
+        if highlights_max is not None:
+            analysis_cfg["highlights_max"] = highlights_max
+        quality_min = self._parse_optional_float(
+            self.analysis_quality_score_min_var.get(), "Quality score min"
+        )
+        if quality_min is not None:
+            analysis_cfg["quality_score_min"] = quality_min
+        hard_fail_sharp = self._parse_optional_float(
+            self.analysis_hard_fail_sharp_ratio_var.get(), "Sharpness ratio"
+        )
+        if hard_fail_sharp is not None:
+            analysis_cfg["hard_fail_sharp_ratio"] = hard_fail_sharp
+        hard_fail_center = self._parse_optional_float(
+            self.analysis_hard_fail_sharp_center_ratio_var.get(),
+            "Center sharpness ratio",
+        )
+        if hard_fail_center is not None:
+            analysis_cfg["hard_fail_sharp_center_ratio"] = hard_fail_center
+        hard_fail_teneng = self._parse_optional_float(
+            self.analysis_hard_fail_teneng_ratio_var.get(), "Tenengrad ratio"
+        )
+        if hard_fail_teneng is not None:
+            analysis_cfg["hard_fail_teneng_ratio"] = hard_fail_teneng
+        hard_fail_motion = self._parse_optional_float(
+            self.analysis_hard_fail_motion_ratio_var.get(), "Motion ratio"
+        )
+        if hard_fail_motion is not None:
+            analysis_cfg["hard_fail_motion_ratio"] = hard_fail_motion
+        hard_fail_brightness = self._parse_optional_float(
+            self.analysis_hard_fail_brightness_ratio_var.get(), "Brightness ratio"
+        )
+        if hard_fail_brightness is not None:
+            analysis_cfg["hard_fail_brightness_ratio"] = hard_fail_brightness
+        hard_fail_noise = self._parse_optional_float(
+            self.analysis_hard_fail_noise_ratio_var.get(), "Noise ratio"
+        )
+        if hard_fail_noise is not None:
+            analysis_cfg["hard_fail_noise_ratio"] = hard_fail_noise
+        hard_fail_shadows = self._parse_optional_float(
+            self.analysis_hard_fail_shadows_ratio_var.get(), "Shadows ratio"
+        )
+        if hard_fail_shadows is not None:
+            analysis_cfg["hard_fail_shadows_ratio"] = hard_fail_shadows
+        hard_fail_highlights = self._parse_optional_float(
+            self.analysis_hard_fail_highlights_ratio_var.get(), "Highlights ratio"
+        )
+        if hard_fail_highlights is not None:
+            analysis_cfg["hard_fail_highlights_ratio"] = hard_fail_highlights
+        hard_fail_composition = self._parse_optional_float(
+            self.analysis_hard_fail_composition_ratio_var.get(), "Composition ratio"
+        )
+        if hard_fail_composition is not None:
+            analysis_cfg["hard_fail_composition_ratio"] = hard_fail_composition
+        duplicate_hamming = self._parse_optional_int(
+            self.analysis_duplicate_hamming_var.get(), "Duplicate hamming"
+        )
+        if duplicate_hamming is not None:
+            analysis_cfg["duplicate_hamming"] = duplicate_hamming
+        duplicate_window = self._parse_optional_float(
+            self.analysis_duplicate_window_seconds_var.get(),
+            "Duplicate window seconds",
+        )
+        if duplicate_window is not None:
+            analysis_cfg["duplicate_window_seconds"] = duplicate_window
+        duplicate_bucket = self._parse_optional_int(
+            self.analysis_duplicate_bucket_bits_var.get(), "Duplicate bucket bits"
+        )
+        if duplicate_bucket is not None:
+            analysis_cfg["duplicate_bucket_bits"] = duplicate_bucket
+        report_path = self.analysis_report_path_var.get().strip()
+        if report_path:
+            analysis_cfg["report_path"] = report_path
+        results_path = self.analysis_results_path_var.get().strip()
+        if results_path:
+            analysis_cfg["results_path"] = results_path
+
+        face_cfg = cast(FaceConfig, dict(analysis_cfg.get("face") or {}))
+        face_cfg["enabled"] = bool(self.analysis_face_enabled_var.get())
+        backend = self.analysis_face_backend_var.get().strip()
+        if backend:
+            face_cfg["backend"] = backend
+        det_size = self._parse_optional_int(
+            self.analysis_face_det_size_var.get(), "Detection size"
+        )
+        if det_size is not None:
+            face_cfg["det_size"] = det_size
+        ctx_id = self._parse_optional_int(
+            self.analysis_face_ctx_id_var.get(), "Context id"
+        )
+        if ctx_id is not None:
+            face_cfg["ctx_id"] = ctx_id
+        allowed_modules = self._parse_list(
+            self.analysis_face_allowed_modules_var.get()
+        )
+        if allowed_modules:
+            face_cfg["allowed_modules"] = allowed_modules
+        else:
+            face_cfg.pop("allowed_modules", None)
+        providers = self._parse_list(self.analysis_face_providers_var.get())
+        if providers:
+            face_cfg["providers"] = providers
+        else:
+            face_cfg.pop("providers", None)
+        analysis_cfg["face"] = face_cfg
+        cfg["analysis"] = analysis_cfg
+
+        return cfg
+
     def _apply_startup_config(self) -> None:
         """Populate fields from config.yaml when available; otherwise defaults."""
-        defaults = load_config(None)
-        cfg_path = pathlib.Path("config.yaml")
-        if cfg_path.exists() and not self.config_var.get():
-            self.config_var.set(str(cfg_path))
-        if not self.input_var.get():
-            self.input_var.set(defaults.get("input_dir", ""))
-        if not self.output_var.get():
-            self.output_var.set(defaults.get("output_dir", ""))
-        if not self.preview_var.get():
-            self.preview_var.set(defaults.get("preview_dir", ""))
-        self._maybe_set_decisions_path(defaults)
+        if not self.config_var.get():
+            self.config_var.set("config.yaml")
+        cfg_path = self.config_var.get().strip()
+        cfg = load_config(cfg_path or None)
+        self._apply_config_to_vars(cfg)
+        self._maybe_set_decisions_path(cfg)
 
     def _bind_state_refresh(self) -> None:
         for var in (
             self.input_var,
             self.output_var,
             self.preview_var,
+            self.preview_format_var,
             self.decisions_var,
             self.config_var,
         ):
@@ -292,6 +1009,41 @@ class GuiApp:
                 return child
         raise RuntimeError("Entry widget not found")
 
+    def _apply_scaling(self) -> float:
+        """Scale the UI for high-DPI displays."""
+        width = self.root.winfo_screenwidth()
+        height = self.root.winfo_screenheight()
+        scale = min(width / 1920.0, height / 1080.0)
+        scale = max(1.0, min(2.0, scale))
+        try:
+            current = float(self.root.tk.call("tk", "scaling"))
+            scale = max(current, scale)
+            self.root.tk.call("tk", "scaling", scale)
+        except Exception:
+            pass
+        return scale
+
+    def _apply_theme(self) -> None:
+        desired = ("breeze", "Breeze")
+        if ThemedStyle is not None:
+            try:
+                themed = ThemedStyle(self.root)
+                available = {name.lower(): name for name in themed.theme_names()}
+                for name in desired:
+                    key = name.lower()
+                    if key in available:
+                        themed.theme_use(available[key])
+                        return
+            except Exception:
+                pass
+        style = ttk.Style(self.root)
+        available = {name.lower(): name for name in style.theme_names()}
+        for name in desired:
+            key = name.lower()
+            if key in available:
+                style.theme_use(available[key])
+                return
+
     def _add_path_row(
         self,
         parent: "tk.Widget",
@@ -307,6 +1059,20 @@ class GuiApp:
         entry.grid(row=row, column=1, sticky="ew", pady=4)
         button = ttk.Button(parent, text="Browse", command=browse_cmd)
         button.grid(row=row, column=2, sticky="ew", pady=4, padx=(4, 0))
+
+    def _add_config_entry(
+        self,
+        parent: "tk.Widget",
+        row: int,
+        label: str,
+        variable: "tk.StringVar",
+    ) -> "ttk.Entry":
+        ttk.Label(parent, text=label).grid(
+            row=row, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", pady=4)
+        return entry
 
     def _browse_input(self) -> None:
         self._browse_directory(self.input_var, "Select input folder")
@@ -354,11 +1120,36 @@ class GuiApp:
             self._show_message(f"Config not found: {cfg_path}")
             return
         cfg = load_config(str(cfg_path))
-        self.input_var.set(cfg.get("input_dir", ""))
-        self.output_var.set(cfg.get("output_dir", ""))
-        self.preview_var.set(cfg.get("preview_dir", ""))
+        self._apply_config_to_vars(cfg)
         self._maybe_set_decisions_path(cfg)
         self._append_log(f"Loaded config from {cfg_path}")
+
+    def _save_config(self) -> None:
+        path = self.config_var.get().strip()
+        if not path:
+            path = "config.yaml"
+            self.config_var.set(path)
+        try:
+            cfg = self._collect_config()
+        except ValueError as exc:
+            self._show_message(str(exc))
+            return
+        try:
+            self._persist_config(cfg, log=True)
+        except RuntimeError as exc:
+            self._show_message(str(exc))
+            return
+
+    def _persist_config(self, cfg: AppConfig, *, log: bool = False) -> None:
+        path = self.config_var.get().strip()
+        if not path:
+            path = "config.yaml"
+            self.config_var.set(path)
+        cfg_path = pathlib.Path(_clean_path(path))
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        save_config(str(cfg_path), cfg)
+        if log:
+            self._append_log(f"Saved config to {cfg_path}")
 
     def _start_task(
         self,
@@ -372,7 +1163,11 @@ class GuiApp:
             return
         try:
             cfg = self._build_config()
+            self._persist_config(cfg)
         except ValueError as exc:
+            self._show_message(str(exc))
+            return
+        except RuntimeError as exc:
             self._show_message(str(exc))
             return
         self._append_log(f"Starting {action_label}")
@@ -406,20 +1201,7 @@ class GuiApp:
         self._start_task(label, self._run_decisions, target_args=(apply_changes,))
 
     def _build_config(self) -> AppConfig:
-        cfg_path = self.config_var.get().strip()
-        cfg = load_config(cfg_path or None)
-
-        input_dir = self.input_var.get().strip()
-        output_dir = self.output_var.get().strip()
-        preview_dir = self.preview_var.get().strip()
-
-        if input_dir:
-            cfg["input_dir"] = _clean_path(input_dir)
-        if output_dir:
-            cfg["output_dir"] = _clean_path(output_dir)
-        if preview_dir:
-            cfg["preview_dir"] = _clean_path(preview_dir)
-
+        cfg = self._collect_config()
         input_value = cfg.get("input_dir")
         if not input_value:
             raise ValueError("Input folder is required.")
@@ -441,6 +1223,12 @@ class GuiApp:
             cfg["output_dir"] = _clean_path(output_dir)
         if preview_dir:
             cfg["preview_dir"] = _clean_path(preview_dir)
+
+        preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
+        preview_format = self.preview_format_var.get().strip()
+        if preview_format:
+            preview_cfg["format"] = preview_format
+        cfg["preview"] = preview_cfg
 
         return cfg
 
