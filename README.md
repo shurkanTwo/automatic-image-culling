@@ -1,10 +1,10 @@
 # Automatic Image Culling
 
-Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
+Small toolchain to scan input directory for Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
 
 ## What it does
 
-- Discovers `.ARW` files under your `input_dir`, excluding output folders.
+- Scans the input directory for `.ARW` files, excluding output folders.
 - Builds lightweight previews (configurable size/format) for fast analysis.
 - Computes quality metrics (sharpness, motion, noise, brightness, composition).
 - Groups likely duplicates using perceptual hashes and time windows.
@@ -13,7 +13,7 @@ Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and
 
 ## How it works
 
-1. **Scan**: walks `input_dir` and reads EXIF timestamps to order frames.
+1. **Scan input directory**: walks `input_dir` and reads EXIF timestamps to order frames.
 2. **Preview**: uses `rawpy` + `Pillow` to extract or demosaic a thumbnail.
 3. **Analyze**: computes metrics, scores each frame, and labels duplicates.
 4. **Report**: writes `analysis.json` + `report.html` (with CSS/JS sidecars).
@@ -47,7 +47,7 @@ open directly in a browser.
 
 ## Commands
 
-- `python -m src.main scan --config config.yaml` — list discovered `.ARW` files (+EXIF if `--json`).
+- `python -m src.main scan --config config.yaml` — scan input directory for `.ARW` files (+EXIF if `--json`).
 - `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
 - `python -m src.main decisions --apply` — move files into keep/discard subfolders based on `analysis/decisions.json`.
 
@@ -64,7 +64,7 @@ By default, outputs are stored under `input_dir`:
 
 ## GUI (optional)
 
-- `python -m src.gui` — launch a simple desktop UI to run discover, analyze, and decisions steps (analysis generates previews automatically).
+- `python -m src.gui` — launch a simple desktop UI to run scan input directory, analyze, and decisions steps (analysis generates previews automatically).
 - Use the Configuration tab to edit settings (thresholds, face detection, etc.) and Save to `config.yaml`.
 
 ## Configuration
@@ -73,23 +73,6 @@ By default, outputs are stored under `input_dir`:
 - `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
 - Under WSL, set `input_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
-
-Example (minimal):
-
-```
-input_dir: ./input
-preview:
-  long_edge: 2048
-  format: webp
-  quality: 85
-analysis:
-  sharpness_min: 8.0
-  tenengrad_min: 200.0
-  duplicate_hamming: 6
-  duplicate_window_seconds: 8
-  report_path: ./report.html
-  results_path: ./analysis.json
-```
 
 ## Face detection (optional)
 

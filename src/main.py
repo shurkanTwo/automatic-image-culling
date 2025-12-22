@@ -69,7 +69,7 @@ def scan_command(args: argparse.Namespace) -> None:
     input_dir = input_dir_from_cfg(cfg)
     files = find_arw_files(str(input_dir), exclude_dirs=exclude_list(cfg))
     print(f"Found {len(files)} .ARW files in {input_dir}")
-    bar = _Progress(len(files), "Scan")
+    bar = _Progress(len(files), "Scan input directory")
 
     def _exif_with_fallback(path: pathlib.Path) -> Tuple[ExifData, _dt.datetime]:
         exif = read_exif(path)
@@ -188,7 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Path to YAML config file", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="List .ARW files and basic EXIF info")
+    scan = sub.add_parser(
+        "scan", help="Scan input directory for .ARW files and basic EXIF info"
+    )
     scan.add_argument("--json", action="store_true", help="Output JSON metadata")
     scan.set_defaults(func=scan_command)
 

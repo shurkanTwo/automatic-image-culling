@@ -548,7 +548,7 @@ class GuiApp:
                 "Default: 4. Range: >=1."
             ),
             "exclude_dirs": (
-                "Comma-separated folders to skip during discovery/analysis. "
+                "Comma-separated folders to skip during scan input directory/analysis. "
                 "Analysis/output/previews are always skipped.\n"
                 "Default: analysis, output, previews."
             ),
@@ -712,7 +712,10 @@ class GuiApp:
 
         button_width = 26
         self.scan_btn = ttk.Button(
-            actions, text="Discover", command=self._start_scan, width=button_width
+            actions,
+            text="Scan input directory",
+            command=self._start_scan,
+            width=button_width,
         )
         self.scan_btn.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         self.analyze_btn = ttk.Button(
@@ -1544,7 +1547,7 @@ class GuiApp:
         self.worker.start()
 
     def _start_scan(self) -> None:
-        self._start_task("discover", self._run_scan)
+        self._start_task("scan input directory", self._run_scan)
 
     def _start_analyze(self) -> None:
         self._start_task("analysis", self._run_analysis, clear_report=True)
@@ -1664,16 +1667,16 @@ class GuiApp:
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
-                self._send("log", "Done with discover")
+                self._send("log", "Done with scan input directory")
                 return
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
-            self._send("progress", ("Discover", 0, total))
+            self._send("progress", ("Scan input directory", 0, total))
 
             max_log = 25
             for idx, path in enumerate(files, 1):
                 if self._cancel_event.is_set():
-                    self._send("log", "Discover cancelled.")
+                    self._send("log", "Scan input directory cancelled.")
                     self._send("done", None)
                     return
                 if idx <= max_log:
@@ -1682,11 +1685,11 @@ class GuiApp:
                     capture = capture_date(exif, fallback=fallback_dt)
                     self._send("log", f"{path} | {capture}")
                 if idx % 25 == 0 or idx == total:
-                    self._send("progress", ("Discover", idx, total))
+                    self._send("progress", ("Scan input directory", idx, total))
             if total > max_log:
                 self._send("log", f"... ({total - max_log} more files)")
             self._send("done", None)
-            self._send("log", "Done with discover")
+            self._send("log", "Done with scan input directory")
         except Exception as exc:
             self._send("error", str(exc))
 
