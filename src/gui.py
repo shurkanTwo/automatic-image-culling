@@ -1451,6 +1451,7 @@ class GuiApp:
 
     def _browse_input(self) -> None:
         self._browse_directory(self.input_var, "Select input folder")
+        self._persist_input_dir()
 
     def _browse_directory(self, var: "tk.StringVar", title: str) -> None:
         if filedialog is None:
@@ -1515,6 +1516,24 @@ class GuiApp:
         save_config(str(cfg_path), cfg)
         if log:
             self._append_log(f"Saved config to {cfg_path}")
+
+    def _persist_input_dir(self) -> None:
+        path = self.config_var.get().strip()
+        if not path:
+            path = "config.yaml"
+            self.config_var.set(path)
+        input_dir = self.input_var.get().strip()
+        if not input_dir:
+            return
+        cfg = load_config(path)
+        drop_path_config(cfg)
+        cfg["input_dir"] = _clean_path(input_dir)
+        cfg_path = pathlib.Path(_clean_path(path))
+        try:
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            save_config(str(cfg_path), cfg)
+        except (OSError, RuntimeError):
+            pass
 
     def _start_task(
         self,
@@ -1943,6 +1962,7 @@ class GuiApp:
             )
             if not confirm:
                 return
+        self._persist_input_dir()
         self.root.destroy()
 
 
