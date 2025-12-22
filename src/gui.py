@@ -24,6 +24,7 @@ else:  # pragma: no cover
     _TK_IMPORT_ERROR = None
 
 from .analyzer import analyze_files, write_outputs
+from .app_config import exclude_list, prepare_analysis_config, preview_config
 from .config import (
     DEFAULT_CONFIG,
     AnalysisConfig,
@@ -39,7 +40,6 @@ from .paths import (
     decisions_path_for_input,
     drop_path_config,
     input_dir_from_cfg,
-    output_dir_for_input,
     preview_dir_for_input,
 )
 from .decisions import apply_decisions
@@ -135,50 +135,6 @@ class _Tooltip:
         if self._tip_window is not None:
             self._tip_window.destroy()
             self._tip_window = None
-
-
-def _exclude_list(cfg: AppConfig) -> list[str]:
-    """Return a de-duplicated list of directories to ignore."""
-    exclude_dirs = list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
-    input_dir = input_dir_from_cfg(cfg)
-    exclude_dirs.extend(
-        [
-            str(analysis_dir_for_input(input_dir)),
-            str(output_dir_for_input(input_dir)),
-            str(preview_dir_for_input(input_dir)),
-        ]
-    )
-    return list(dict.fromkeys(exclude_dirs))
-
-
-def _preview_config(cfg: AppConfig) -> PreviewConfig:
-    """Return a defensive copy of the preview configuration."""
-    preview_cfg = dict(DEFAULT_CONFIG["preview"])
-    preview_cfg.update(cfg.get("preview") or {})
-    return cast(PreviewConfig, preview_cfg)
-
-
-def _prepare_analysis_config(
-    cfg: AppConfig, analysis_dir: pathlib.Path
-) -> AnalysisConfig:
-    """Return analysis config with resolved output paths."""
-    analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
-
-    results_path = pathlib.Path(
-        analysis_cfg.get("results_path", DEFAULT_CONFIG["analysis"]["results_path"])
-    )
-    if not results_path.is_absolute():
-        results_path = analysis_dir / results_path
-    analysis_cfg["results_path"] = str(results_path)
-
-    report_path = pathlib.Path(
-        analysis_cfg.get("report_path", DEFAULT_CONFIG["analysis"]["report_path"])
-    )
-    if not report_path.is_absolute():
-        report_path = analysis_dir / report_path
-    analysis_cfg["report_path"] = str(report_path)
-
-    return analysis_cfg
 
 
 def _clean_path(value: str) -> str:
@@ -1766,7 +1722,7 @@ class GuiApp:
     def _run_scan(self, cfg: AppConfig) -> None:
         try:
             input_dir = input_dir_from_cfg(cfg)
-            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
+            files = find_arw_files(str(input_dir), exclude_dirs=exclude_list(cfg))
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
@@ -1894,7 +1850,7 @@ class GuiApp:
     def _run_analysis(self, cfg: AppConfig) -> None:
         try:
             input_dir = input_dir_from_cfg(cfg)
-            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
+            files = find_arw_files(str(input_dir), exclude_dirs=exclude_list(cfg))
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
@@ -1907,7 +1863,7 @@ class GuiApp:
             total = len(files)
             self._send("log", f"Found {total} .ARW files.")
 
-            preview_cfg = _preview_config(cfg)
+            preview_cfg = preview_config(cfg)
             preview_dir = preview_dir_for_input(input_dir)
             preview_dir.mkdir(parents=True, exist_ok=True)
             workers = max(
@@ -1932,7 +1888,7 @@ class GuiApp:
 
             analysis_dir = analysis_dir_for_input(input_dir)
             analysis_dir.mkdir(parents=True, exist_ok=True)
-            analysis_cfg = _prepare_analysis_config(cfg, analysis_dir)
+            analysis_cfg = prepare_analysis_config(cfg, analysis_dir)
             cfg["analysis"] = analysis_cfg
 
             self._send("progress", ("Analyze", 0, total))
