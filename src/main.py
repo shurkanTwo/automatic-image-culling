@@ -72,8 +72,7 @@ def _exclude_list(cfg: AppConfig) -> List[str]:
 
 def _preview_config(cfg: AppConfig) -> PreviewConfig:
     """Return a defensive copy of the preview configuration."""
-    defaults = DEFAULT_CONFIG["preview"]
-    preview_cfg = dict(defaults)
+    preview_cfg = dict(DEFAULT_CONFIG["preview"])
     preview_cfg.update(cfg.get("preview") or {})
     return cast(PreviewConfig, preview_cfg)
 
@@ -91,14 +90,16 @@ def _prepare_analysis_config(
     """Return analysis config with resolved output paths."""
     analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
 
-    default_results = DEFAULT_CONFIG["analysis"]["results_path"]
-    results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
+    results_path = pathlib.Path(
+        analysis_cfg.get("results_path", DEFAULT_CONFIG["analysis"]["results_path"])
+    )
     if not results_path.is_absolute():
         results_path = analysis_dir / results_path
     analysis_cfg["results_path"] = str(results_path)
 
-    default_report = DEFAULT_CONFIG["analysis"]["report_path"]
-    report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
+    report_path = pathlib.Path(
+        analysis_cfg.get("report_path", DEFAULT_CONFIG["analysis"]["report_path"])
+    )
     if not report_path.is_absolute():
         report_path = analysis_dir / report_path
     analysis_cfg["report_path"] = str(report_path)

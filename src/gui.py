@@ -153,8 +153,7 @@ def _exclude_list(cfg: AppConfig) -> list[str]:
 
 def _preview_config(cfg: AppConfig) -> PreviewConfig:
     """Return a defensive copy of the preview configuration."""
-    defaults = DEFAULT_CONFIG["preview"]
-    preview_cfg = dict(defaults)
+    preview_cfg = dict(DEFAULT_CONFIG["preview"])
     preview_cfg.update(cfg.get("preview") or {})
     return cast(PreviewConfig, preview_cfg)
 
@@ -165,14 +164,16 @@ def _prepare_analysis_config(
     """Return analysis config with resolved output paths."""
     analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
 
-    default_results = DEFAULT_CONFIG["analysis"]["results_path"]
-    results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
+    results_path = pathlib.Path(
+        analysis_cfg.get("results_path", DEFAULT_CONFIG["analysis"]["results_path"])
+    )
     if not results_path.is_absolute():
         results_path = analysis_dir / results_path
     analysis_cfg["results_path"] = str(results_path)
 
-    default_report = DEFAULT_CONFIG["analysis"]["report_path"]
-    report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
+    report_path = pathlib.Path(
+        analysis_cfg.get("report_path", DEFAULT_CONFIG["analysis"]["report_path"])
+    )
     if not report_path.is_absolute():
         report_path = analysis_dir / report_path
     analysis_cfg["report_path"] = str(report_path)
@@ -994,38 +995,37 @@ class GuiApp:
         return items
 
     def _apply_config_to_vars(self, cfg: AppConfig) -> None:
-        app_defaults = DEFAULT_CONFIG
-        preview_defaults = app_defaults["preview"]
-        analysis_defaults = app_defaults["analysis"]
-        face_defaults = analysis_defaults["face"]
-
-        self.input_var.set(cfg.get("input_dir", app_defaults["input_dir"]))
+        self.input_var.set(cfg.get("input_dir", DEFAULT_CONFIG["input_dir"]))
         self.exclude_dirs_var.set(
-            self._format_list(cfg.get("exclude_dirs", app_defaults["exclude_dirs"]))
+            self._format_list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
         )
         self.concurrency_var.set(
-            self._format_number(cfg.get("concurrency", app_defaults["concurrency"]))
+            self._format_number(
+                cfg.get("concurrency", DEFAULT_CONFIG["concurrency"])
+            )
         )
 
         preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
         self.preview_long_edge_var.set(
             self._format_number(
-                preview_cfg.get("long_edge", preview_defaults["long_edge"])
+                preview_cfg.get("long_edge", DEFAULT_CONFIG["preview"]["long_edge"])
             )
         )
         self.preview_format_var.set(
-            str(preview_cfg.get("format", preview_defaults["format"]))
+            str(preview_cfg.get("format", DEFAULT_CONFIG["preview"]["format"]))
         )
         self.preview_quality_var.set(
             self._format_number(
-                preview_cfg.get("quality", preview_defaults["quality"])
+                preview_cfg.get("quality", DEFAULT_CONFIG["preview"]["quality"])
             )
         )
 
         analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
         self.analysis_sharpness_min_var.set(
             self._format_number(
-                analysis_cfg.get("sharpness_min", analysis_defaults["sharpness_min"])
+                analysis_cfg.get(
+                    "sharpness_min", DEFAULT_CONFIG["analysis"]["sharpness_min"]
+                )
             )
         )
         center_value = analysis_cfg.get("center_sharpness_min")
@@ -1034,59 +1034,73 @@ class GuiApp:
         )
         self.analysis_tenengrad_min_var.set(
             self._format_number(
-                analysis_cfg.get("tenengrad_min", analysis_defaults["tenengrad_min"])
+                analysis_cfg.get(
+                    "tenengrad_min", DEFAULT_CONFIG["analysis"]["tenengrad_min"]
+                )
             )
         )
         self.analysis_motion_ratio_min_var.set(
             self._format_number(
                 analysis_cfg.get(
-                    "motion_ratio_min", analysis_defaults["motion_ratio_min"]
+                    "motion_ratio_min",
+                    DEFAULT_CONFIG["analysis"]["motion_ratio_min"],
                 )
             )
         )
         self.analysis_noise_std_max_var.set(
             self._format_number(
-                analysis_cfg.get("noise_std_max", analysis_defaults["noise_std_max"])
+                analysis_cfg.get(
+                    "noise_std_max", DEFAULT_CONFIG["analysis"]["noise_std_max"]
+                )
             )
         )
         self.analysis_brightness_min_var.set(
             self._format_number(
-                analysis_cfg.get("brightness_min", analysis_defaults["brightness_min"])
+                analysis_cfg.get(
+                    "brightness_min", DEFAULT_CONFIG["analysis"]["brightness_min"]
+                )
             )
         )
         self.analysis_brightness_max_var.set(
             self._format_number(
-                analysis_cfg.get("brightness_max", analysis_defaults["brightness_max"])
+                analysis_cfg.get(
+                    "brightness_max", DEFAULT_CONFIG["analysis"]["brightness_max"]
+                )
             )
         )
         self.analysis_shadows_min_var.set(
             self._format_number(
-                analysis_cfg.get("shadows_min", analysis_defaults["shadows_min"])
+                analysis_cfg.get(
+                    "shadows_min", DEFAULT_CONFIG["analysis"]["shadows_min"]
+                )
             )
         )
         self.analysis_shadows_max_var.set(
             self._format_number(
-                analysis_cfg.get("shadows_max", analysis_defaults["shadows_max"])
+                analysis_cfg.get(
+                    "shadows_max", DEFAULT_CONFIG["analysis"]["shadows_max"]
+                )
             )
         )
         self.analysis_highlights_min_var.set(
             self._format_number(
                 analysis_cfg.get(
-                    "highlights_min", analysis_defaults["highlights_min"]
+                    "highlights_min", DEFAULT_CONFIG["analysis"]["highlights_min"]
                 )
             )
         )
         self.analysis_highlights_max_var.set(
             self._format_number(
                 analysis_cfg.get(
-                    "highlights_max", analysis_defaults["highlights_max"]
+                    "highlights_max", DEFAULT_CONFIG["analysis"]["highlights_max"]
                 )
             )
         )
         self.analysis_quality_score_min_var.set(
             self._format_number(
                 analysis_cfg.get(
-                    "quality_score_min", analysis_defaults["quality_score_min"]
+                    "quality_score_min",
+                    DEFAULT_CONFIG["analysis"]["quality_score_min"],
                 )
             )
         )
@@ -1094,7 +1108,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_sharp_ratio",
-                    analysis_defaults["hard_fail_sharp_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_sharp_ratio"],
                 )
             )
         )
@@ -1102,7 +1116,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_sharp_center_ratio",
-                    analysis_defaults["hard_fail_sharp_center_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_sharp_center_ratio"],
                 )
             )
         )
@@ -1110,7 +1124,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_teneng_ratio",
-                    analysis_defaults["hard_fail_teneng_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_teneng_ratio"],
                 )
             )
         )
@@ -1118,7 +1132,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_motion_ratio",
-                    analysis_defaults["hard_fail_motion_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_motion_ratio"],
                 )
             )
         )
@@ -1126,7 +1140,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_brightness_ratio",
-                    analysis_defaults["hard_fail_brightness_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_brightness_ratio"],
                 )
             )
         )
@@ -1134,7 +1148,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_noise_ratio",
-                    analysis_defaults["hard_fail_noise_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_noise_ratio"],
                 )
             )
         )
@@ -1142,7 +1156,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_shadows_ratio",
-                    analysis_defaults["hard_fail_shadows_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_shadows_ratio"],
                 )
             )
         )
@@ -1150,7 +1164,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_highlights_ratio",
-                    analysis_defaults["hard_fail_highlights_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_highlights_ratio"],
                 )
             )
         )
@@ -1158,14 +1172,15 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "hard_fail_composition_ratio",
-                    analysis_defaults["hard_fail_composition_ratio"],
+                    DEFAULT_CONFIG["analysis"]["hard_fail_composition_ratio"],
                 )
             )
         )
         self.analysis_duplicate_hamming_var.set(
             self._format_number(
                 analysis_cfg.get(
-                    "duplicate_hamming", analysis_defaults["duplicate_hamming"]
+                    "duplicate_hamming",
+                    DEFAULT_CONFIG["analysis"]["duplicate_hamming"],
                 )
             )
         )
@@ -1173,7 +1188,7 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "duplicate_window_seconds",
-                    analysis_defaults["duplicate_window_seconds"],
+                    DEFAULT_CONFIG["analysis"]["duplicate_window_seconds"],
                 )
             )
         )
@@ -1181,32 +1196,52 @@ class GuiApp:
             self._format_number(
                 analysis_cfg.get(
                     "duplicate_bucket_bits",
-                    analysis_defaults["duplicate_bucket_bits"],
+                    DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
                 )
             )
         )
         self.analysis_report_path_var.set(
-            str(analysis_cfg.get("report_path", analysis_defaults["report_path"]))
+            str(
+                analysis_cfg.get(
+                    "report_path", DEFAULT_CONFIG["analysis"]["report_path"]
+                )
+            )
         )
         self.analysis_results_path_var.set(
-            str(analysis_cfg.get("results_path", analysis_defaults["results_path"]))
+            str(
+                analysis_cfg.get(
+                    "results_path", DEFAULT_CONFIG["analysis"]["results_path"]
+                )
+            )
         )
 
         face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
         self.analysis_face_enabled_var.set(
-            bool(face_cfg.get("enabled", face_defaults["enabled"]))
+            bool(
+                face_cfg.get(
+                    "enabled", DEFAULT_CONFIG["analysis"]["face"]["enabled"]
+                )
+            )
         )
         self.analysis_face_backend_var.set(
-            str(face_cfg.get("backend", face_defaults["backend"]))
+            str(
+                face_cfg.get(
+                    "backend", DEFAULT_CONFIG["analysis"]["face"]["backend"]
+                )
+            )
         )
         self.analysis_face_det_size_var.set(
-            self._format_number(face_cfg.get("det_size", face_defaults["det_size"]))
+            self._format_number(
+                face_cfg.get("det_size", DEFAULT_CONFIG["analysis"]["face"]["det_size"])
+            )
         )
         self.analysis_face_ctx_id_var.set(
-            self._format_number(face_cfg.get("ctx_id", face_defaults["ctx_id"]))
+            self._format_number(
+                face_cfg.get("ctx_id", DEFAULT_CONFIG["analysis"]["face"]["ctx_id"])
+            )
         )
         allowed_modules = face_cfg.get(
-            "allowed_modules", face_defaults["allowed_modules"]
+            "allowed_modules", DEFAULT_CONFIG["analysis"]["face"]["allowed_modules"]
         )
         self.analysis_face_allowed_modules_var.set(
             self._format_list(allowed_modules)
@@ -1697,13 +1732,15 @@ class GuiApp:
         input_dir = input_dir_from_cfg(cfg)
         analysis_dir = analysis_dir_for_input(input_dir)
 
-        default_report = DEFAULT_CONFIG["analysis"]["report_path"]
-        report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
+        report_path = pathlib.Path(
+            analysis_cfg.get("report_path", DEFAULT_CONFIG["analysis"]["report_path"])
+        )
         if not report_path.is_absolute():
             report_path = analysis_dir / report_path
 
-        default_results = DEFAULT_CONFIG["analysis"]["results_path"]
-        results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
+        results_path = pathlib.Path(
+            analysis_cfg.get("results_path", DEFAULT_CONFIG["analysis"]["results_path"])
+        )
         if not results_path.is_absolute():
             results_path = analysis_dir / results_path
 

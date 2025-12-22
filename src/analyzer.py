@@ -42,7 +42,6 @@ except Exception:  # pragma: no cover
     skimage_psnr = None
 
 ProgressCallback = Optional[Callable[[int], None]]
-ANALYSIS_DEFAULTS = DEFAULT_CONFIG["analysis"]
 
 
 class AnalysisResult(TypedDict, total=False):
@@ -107,12 +106,16 @@ class Thresholds:
         iso = _parse_iso(exif) or 0.0
         shutter = _parse_shutter_seconds(exif) or 0.0
 
-        sharp_min = float(cfg.get("sharpness_min", ANALYSIS_DEFAULTS["sharpness_min"]))
+        sharp_min = float(
+            cfg.get("sharpness_min", DEFAULT_CONFIG["analysis"]["sharpness_min"])
+        )
         teneng_min = float(
-            cfg.get("tenengrad_min", ANALYSIS_DEFAULTS["tenengrad_min"])
+            cfg.get("tenengrad_min", DEFAULT_CONFIG["analysis"]["tenengrad_min"])
         )
         motion_min = float(
-            cfg.get("motion_ratio_min", ANALYSIS_DEFAULTS["motion_ratio_min"])
+            cfg.get(
+                "motion_ratio_min", DEFAULT_CONFIG["analysis"]["motion_ratio_min"]
+            )
         )
 
         sharp_factor = 1.0
@@ -141,25 +144,25 @@ class Thresholds:
             tenengrad_min=teneng_min * teneng_factor,
             motion_ratio_min=motion_min * motion_factor,
             noise_std_max=float(
-                cfg.get("noise_std_max", ANALYSIS_DEFAULTS["noise_std_max"])
+                cfg.get("noise_std_max", DEFAULT_CONFIG["analysis"]["noise_std_max"])
             ),
             brightness_min=float(
-                cfg.get("brightness_min", ANALYSIS_DEFAULTS["brightness_min"])
+                cfg.get("brightness_min", DEFAULT_CONFIG["analysis"]["brightness_min"])
             ),
             brightness_max=float(
-                cfg.get("brightness_max", ANALYSIS_DEFAULTS["brightness_max"])
+                cfg.get("brightness_max", DEFAULT_CONFIG["analysis"]["brightness_max"])
             ),
             shadows_min=float(
-                cfg.get("shadows_min", ANALYSIS_DEFAULTS["shadows_min"])
+                cfg.get("shadows_min", DEFAULT_CONFIG["analysis"]["shadows_min"])
             ),
             shadows_max=float(
-                cfg.get("shadows_max", ANALYSIS_DEFAULTS["shadows_max"])
+                cfg.get("shadows_max", DEFAULT_CONFIG["analysis"]["shadows_max"])
             ),
             highlights_min=float(
-                cfg.get("highlights_min", ANALYSIS_DEFAULTS["highlights_min"])
+                cfg.get("highlights_min", DEFAULT_CONFIG["analysis"]["highlights_min"])
             ),
             highlights_max=float(
-                cfg.get("highlights_max", ANALYSIS_DEFAULTS["highlights_max"])
+                cfg.get("highlights_max", DEFAULT_CONFIG["analysis"]["highlights_max"])
             ),
         )
 
@@ -207,54 +210,57 @@ def _hard_fail_thresholds(cfg: AnalysisConfig) -> Dict[str, float]:
     """Return configured hard-fail ratios for each metric."""
     return {
         "sharp": float(
-            cfg.get("hard_fail_sharp_ratio", ANALYSIS_DEFAULTS["hard_fail_sharp_ratio"])
+            cfg.get(
+                "hard_fail_sharp_ratio",
+                DEFAULT_CONFIG["analysis"]["hard_fail_sharp_ratio"],
+            )
         ),
         "sharp_center": float(
             cfg.get(
                 "hard_fail_sharp_center_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_sharp_center_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_sharp_center_ratio"],
             )
         ),
         "teneng": float(
             cfg.get(
                 "hard_fail_teneng_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_teneng_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_teneng_ratio"],
             )
         ),
         "motion": float(
             cfg.get(
                 "hard_fail_motion_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_motion_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_motion_ratio"],
             )
         ),
         "brightness": float(
             cfg.get(
                 "hard_fail_brightness_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_brightness_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_brightness_ratio"],
             )
         ),
         "noise": float(
             cfg.get(
                 "hard_fail_noise_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_noise_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_noise_ratio"],
             )
         ),
         "shadows": float(
             cfg.get(
                 "hard_fail_shadows_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_shadows_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_shadows_ratio"],
             )
         ),
         "highlights": float(
             cfg.get(
                 "hard_fail_highlights_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_highlights_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_highlights_ratio"],
             )
         ),
         "composition": float(
             cfg.get(
                 "hard_fail_composition_ratio",
-                ANALYSIS_DEFAULTS["hard_fail_composition_ratio"],
+                DEFAULT_CONFIG["analysis"]["hard_fail_composition_ratio"],
             )
         ),
     }
@@ -428,7 +434,11 @@ def _suggest_keep(
     """Return keep/discard suggestion, reasons, and quality score for a frame."""
     thresholds = Thresholds.from_config(cfg, exif)
     hard_cfg = _hard_fail_thresholds(cfg)
-    cutoff = float(cfg.get("quality_score_min", ANALYSIS_DEFAULTS["quality_score_min"]))
+    cutoff = float(
+        cfg.get(
+            "quality_score_min", DEFAULT_CONFIG["analysis"]["quality_score_min"]
+        )
+    )
     score_breakdown = _score_metrics(metrics, thresholds)
     hard_fail = any(
         score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
@@ -510,7 +520,7 @@ def _analyze_single_file(
     ]
     face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
     face_info: Optional[FaceSummary] = None
-    if face_cfg.get("enabled", ANALYSIS_DEFAULTS["face"]["enabled"]):
+    if face_cfg.get("enabled", DEFAULT_CONFIG["analysis"]["face"]["enabled"]):
         face_info = detect_faces(
             preview_path,
             gray_arr,
@@ -619,18 +629,22 @@ def _label_duplicates(
 ) -> Set[int]:
     """Detect duplicate frames and annotate results with grouping metadata."""
     dup_threshold = int(
-        analysis_cfg.get("duplicate_hamming", ANALYSIS_DEFAULTS["duplicate_hamming"])
+        analysis_cfg.get(
+            "duplicate_hamming", DEFAULT_CONFIG["analysis"]["duplicate_hamming"]
+        )
     )
     window_sec = float(
         analysis_cfg.get(
-            "duplicate_window_seconds", ANALYSIS_DEFAULTS["duplicate_window_seconds"]
+            "duplicate_window_seconds",
+            DEFAULT_CONFIG["analysis"]["duplicate_window_seconds"],
         )
     )
     bucket_bits = max(
         0,
         int(
             analysis_cfg.get(
-                "duplicate_bucket_bits", ANALYSIS_DEFAULTS["duplicate_bucket_bits"]
+                "duplicate_bucket_bits",
+                DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
             )
         ),
     )
@@ -866,10 +880,10 @@ def write_outputs(results: List[AnalysisResult], analysis_cfg: AnalysisConfig) -
     """Persist analysis results to JSON and render the HTML report."""
     results_for_host = _convert_paths_for_host(results)
     output_json = pathlib.Path(
-        analysis_cfg.get("results_path", ANALYSIS_DEFAULTS["results_path"])
+        analysis_cfg.get("results_path", DEFAULT_CONFIG["analysis"]["results_path"])
     )
     output_json.write_text(json.dumps(results_for_host, indent=2), encoding="utf-8")
     report_path = pathlib.Path(
-        analysis_cfg.get("report_path", ANALYSIS_DEFAULTS["report_path"])
+        analysis_cfg.get("report_path", DEFAULT_CONFIG["analysis"]["report_path"])
     )
     write_html_report(results_for_host, report_path, {"analysis": analysis_cfg})

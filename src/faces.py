@@ -23,7 +23,6 @@ except Exception:  # pragma: no cover
 
 _FACE_APP: Optional[Any] = None
 _THREAD_LOCAL = threading.local()
-DEFAULT_FACE_CONFIG = DEFAULT_CONFIG["analysis"]["face"]
 
 
 class FaceDetection(TypedDict, total=False):
@@ -69,7 +68,7 @@ def _get_insightface(face_cfg: FaceConfig) -> Optional[Any]:
         providers = ["CPUExecutionProvider"]
 
     allowed_modules = face_cfg.get(
-        "allowed_modules", DEFAULT_FACE_CONFIG["allowed_modules"]
+        "allowed_modules", DEFAULT_CONFIG["analysis"]["face"]["allowed_modules"]
     )
 
     def prepare_detector(provider_list: List[str]) -> Optional[Any]:
@@ -80,10 +79,16 @@ def _get_insightface(face_cfg: FaceConfig) -> Optional[Any]:
                 allowed_modules=allowed_modules,
             )
             app.prepare(
-                ctx_id=face_cfg.get("ctx_id", DEFAULT_FACE_CONFIG["ctx_id"]),
+                ctx_id=face_cfg.get(
+                    "ctx_id", DEFAULT_CONFIG["analysis"]["face"]["ctx_id"]
+                ),
                 det_size=(
-                    face_cfg.get("det_size", DEFAULT_FACE_CONFIG["det_size"]),
-                    face_cfg.get("det_size", DEFAULT_FACE_CONFIG["det_size"]),
+                    face_cfg.get(
+                        "det_size", DEFAULT_CONFIG["analysis"]["face"]["det_size"]
+                    ),
+                    face_cfg.get(
+                        "det_size", DEFAULT_CONFIG["analysis"]["face"]["det_size"]
+                    ),
                 ),
             )
             return app
