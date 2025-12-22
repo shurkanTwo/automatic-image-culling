@@ -1352,9 +1352,12 @@ class GuiApp:
 
     @staticmethod
     def _entry_by_var(var: "tk.StringVar", parent: "tk.Widget") -> "ttk.Entry":
-        for child in parent.winfo_children():
+        queue = list(parent.winfo_children())
+        while queue:
+            child = queue.pop(0)
             if isinstance(child, ttk.Entry) and child.cget("textvariable") == str(var):
                 return child
+            queue.extend(child.winfo_children())
         raise RuntimeError("Entry widget not found")
 
     def _apply_scaling(self) -> float:
