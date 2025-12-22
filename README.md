@@ -2,6 +2,26 @@
 
 Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
 
+## What it does
+
+- Discovers `.ARW` files under your `input_dir`, excluding output folders.
+- Builds lightweight previews (configurable size/format) for fast analysis.
+- Computes quality metrics (sharpness, motion, noise, brightness, composition).
+- Groups likely duplicates using perceptual hashes and time windows.
+- Produces a JSON results file and a standalone HTML report for browsing.
+- Optionally detects faces to include in the analysis results.
+
+## How it works
+
+1. **Scan**: walks `input_dir` and reads EXIF timestamps to order frames.
+2. **Preview**: uses `rawpy` + `Pillow` to extract or demosaic a thumbnail.
+3. **Analyze**: computes metrics, scores each frame, and labels duplicates.
+4. **Report**: writes `analysis.json` + `report.html` (with CSS/JS sidecars).
+5. **Decisions**: applies `analysis/decisions.json` to move or copy files.
+
+The HTML report is static and self-contained with local assets. It is safe to
+open directly in a browser.
+
 ## Quick start
 
 ### Windows (PowerShell)
@@ -31,6 +51,17 @@ Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and
 - `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
 - `python -m src.main decisions --apply` — move files into keep/discard subfolders based on `analysis/decisions.json`.
 
+## Outputs
+
+By default, outputs are stored under `input_dir`:
+
+- `analysis/analysis.json` — full analysis data per frame.
+- `analysis/report.html` — static report with sortable tables and previews.
+- `analysis/report.css`, `analysis/report.js` — report assets.
+- `analysis/decisions.json` — editable decisions file used by the `decisions` command.
+- `previews/` — generated preview images.
+- `output/keep` and `output/discard` — results of applying decisions.
+
 ## GUI (optional)
 
 - `python -m src.gui` — launch a simple desktop UI to run discover, analyze, and decisions steps (analysis generates previews automatically).
@@ -43,10 +74,34 @@ Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and
 - Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
 - Under WSL, set `input_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
 
+Example (minimal):
+
+```
+input_dir: ./input
+preview:
+  long_edge: 2048
+  format: webp
+  quality: 85
+analysis:
+  sharpness_min: 8.0
+  tenengrad_min: 200.0
+  duplicate_hamming: 6
+  duplicate_window_seconds: 8
+  report_path: ./report.html
+  results_path: ./analysis.json
+```
+
 ## Face detection (optional)
 
 - Mediapipe (default) and InsightFace are installed via `requirements.txt`; enable with `analysis.face.enabled: true`.
 - GPU users on Windows may need CUDA/CUDNN on `PATH` (e.g., `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin` and CUDNN `bin`).
+
+## Dependencies and optional features
+
+- `rawpy`, `Pillow` — preview generation (required for analysis).
+- `exifread` — EXIF parsing for timestamps and orientation.
+- `scikit-image` — optional SSIM/PSNR similarity details in duplicate reasons.
+- `mediapipe` or `insightface` — optional face detection backend.
 
 ## Style and testing
 
