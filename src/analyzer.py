@@ -589,33 +589,28 @@ def _run_analysis_workers(
     """Analyze files concurrently and return sorted results."""
     results: List[AnalysisResult] = []
     worker_count = max(1, concurrency)
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
-    futures = [
-        pool.submit(_analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg)
-        for path in files
-    ]
-    cancelled = False
-    try:
-        for future in concurrent.futures.as_completed(futures):
-            if cancel_event is not None and cancel_event.is_set():
-                cancelled = True
-                for job in futures:
-                    job.cancel()
-                pool.shutdown(wait=False, cancel_futures=True)
-                break
-            result = future.result()
-            if result is not None:
-                results.append(result)
-            if progress_cb is not None:
-                progress_cb(1)
-    except KeyboardInterrupt:
-        for future in futures:
-            future.cancel()
-        pool.shutdown(wait=False, cancel_futures=True)
-        raise
-    finally:
-        if not cancelled:
-            pool.shutdown(wait=True)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = [
+            pool.submit(
+                _analyze_single_file, path, preview_dir, preview_cfg, analysis_cfg
+            )
+            for path in files
+        ]
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if cancel_event is not None and cancel_event.is_set():
+                    for job in futures:
+                        job.cancel()
+                    break
+                result = future.result()
+                if result is not None:
+                    results.append(result)
+                if progress_cb is not None:
+                    progress_cb(1)
+        except KeyboardInterrupt:
+            for future in futures:
+                future.cancel()
+            raise
     results.sort(key=lambda res: res["path"])
     return results
 
