@@ -360,6 +360,13 @@ ANALYSIS_FIELDS = [
         label="Composition ratio",
     ),
     _FieldSpec(
+        "analysis_duplicate_enabled_var",
+        "duplicate_enabled",
+        DEFAULT_CONFIG["analysis"]["duplicate_enabled"],
+        "bool",
+        label="Duplicate detection enabled",
+    ),
+    _FieldSpec(
         "analysis_duplicate_hamming_var",
         "duplicate_hamming",
         DEFAULT_CONFIG["analysis"]["duplicate_hamming"],
@@ -476,6 +483,7 @@ class GuiApp:
         self.analysis_hard_fail_shadows_ratio_var = tk.StringVar()
         self.analysis_hard_fail_highlights_ratio_var = tk.StringVar()
         self.analysis_hard_fail_composition_ratio_var = tk.StringVar()
+        self.analysis_duplicate_enabled_var = tk.BooleanVar()
         self.analysis_duplicate_hamming_var = tk.StringVar()
         self.analysis_duplicate_window_seconds_var = tk.StringVar()
         self.analysis_duplicate_bucket_bits_var = tk.StringVar()
@@ -564,89 +572,113 @@ class GuiApp:
                 "Compression quality for previews.\n" "Default: 85. Range: 0-100."
             ),
             "sharpness_min": (
-                "Minimum focus score (variance of Laplacian) to avoid rejection.\n"
+                "Minimum focus score (variance of Laplacian).\n"
+                "Used to normalize sharpness and to threshold-fail if below.\n"
                 "Default: 8.0. Range: >=0."
             ),
             "center_sharpness_min": (
                 "Minimum focus score in the center crop.\n"
-                "Leave blank to use 1.2x sharpness min.\n"
+                "Leave blank to use 1.2x sharpness min for normalization/fails.\n"
                 "Default: 1.2x sharpness min. Range: >=0."
             ),
             "tenengrad_min": (
                 "Minimum edge contrast score (Tenengrad).\n"
+                "Used to normalize contrast and to threshold-fail if below.\n"
                 "Default: 200.0. Range: >=0."
             ),
             "motion_ratio_min": (
                 "Minimum structure-tensor ratio; lower values indicate motion blur.\n"
+                "Used to normalize motion and to threshold-fail if below.\n"
                 "Default: 0.02. Range: 0-1."
             ),
             "noise_std_max": (
                 "Maximum noise estimate (pixel intensity std dev).\n"
+                "Used to normalize noise and to threshold-fail if above.\n"
                 "Default: 25.0. Range: >=0."
             ),
             "brightness_min": (
                 "Minimum average brightness (0=black, 1=white).\n"
+                "Used to normalize exposure and to threshold-fail if below.\n"
                 "Default: 0.08. Range: 0-1."
             ),
             "brightness_max": (
                 "Maximum average brightness (0=black, 1=white).\n"
+                "Used to normalize exposure and to threshold-fail if above.\n"
                 "Default: 0.92. Range: 0-1."
             ),
             "shadows_min": (
                 "Minimum fraction of shadow pixels (<20% brightness).\n"
+                "Used to normalize shadows and to threshold-fail if below.\n"
                 "Default: 0.0. Range: 0-1."
             ),
             "shadows_max": (
                 "Maximum fraction of shadow pixels (<20% brightness).\n"
+                "Used to normalize shadows and to threshold-fail if above.\n"
                 "Default: 0.5. Range: 0-1."
             ),
             "highlights_min": (
                 "Minimum fraction of highlight pixels (>70% brightness).\n"
+                "Used to normalize highlights and to threshold-fail if below.\n"
                 "Default: 0.0. Range: 0-1."
             ),
             "highlights_max": (
                 "Maximum fraction of highlight pixels (>70% brightness).\n"
+                "Used to normalize highlights and to threshold-fail if above.\n"
                 "Default: 0.1. Range: 0-1."
             ),
             "quality_score_min": (
                 "Minimum overall quality score to keep a frame.\n"
+                "Must pass thresholds and hard-fail checks too.\n"
                 "Default: 0.75. Range: 0-1."
             ),
             "hard_fail_sharp_ratio": (
                 "Minimum normalized sharpness score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.55. Range: 0-1."
             ),
             "hard_fail_sharp_center_ratio": (
                 "Minimum normalized center sharpness score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.55. Range: 0-1."
             ),
             "hard_fail_teneng_ratio": (
                 "Minimum normalized Tenengrad score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.55. Range: 0-1."
             ),
             "hard_fail_motion_ratio": (
                 "Minimum normalized motion score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.55. Range: 0-1."
             ),
             "hard_fail_brightness_ratio": (
                 "Minimum normalized brightness score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.5. Range: 0-1."
             ),
             "hard_fail_noise_ratio": (
                 "Minimum normalized noise score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.45. Range: 0-1."
             ),
             "hard_fail_shadows_ratio": (
                 "Minimum normalized shadows score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.5. Range: 0-1."
             ),
             "hard_fail_highlights_ratio": (
                 "Minimum normalized highlights score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.5. Range: 0-1."
             ),
             "hard_fail_composition_ratio": (
                 "Minimum normalized composition score before hard fail.\n"
+                "If below, frame is rejected even if quality score is high.\n"
                 "Default: 0.4. Range: 0-1."
+            ),
+            "duplicate_enabled": (
+                "Toggle duplicate detection (pHash + time window).\n"
+                "Default: true."
             ),
             "duplicate_hamming": (
                 "Maximum pHash Hamming distance to group duplicates.\n"
@@ -851,9 +883,16 @@ class GuiApp:
         runtime_frame = ttk.LabelFrame(config_body, text="Runtime")
         runtime_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         runtime_frame.grid_columnconfigure(1, weight=1)
+        runtime_note = ttk.Label(
+            runtime_frame,
+            text="Runtime settings control performance and excluded folders.",
+            wraplength=640,
+            justify="left",
+        )
+        runtime_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         entry = self._add_config_entry(
             runtime_frame,
-            0,
+            1,
             "Concurrency",
             self.concurrency_var,
             tooltip=tooltips["concurrency"],
@@ -861,7 +900,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             runtime_frame,
-            1,
+            2,
             "Exclude dirs (comma-separated)",
             self.exclude_dirs_var,
             tooltip=tooltips["exclude_dirs"],
@@ -871,9 +910,16 @@ class GuiApp:
         preview_frame = ttk.LabelFrame(config_body, text="Preview")
         preview_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         preview_frame.grid_columnconfigure(1, weight=1)
+        preview_note = ttk.Label(
+            preview_frame,
+            text="Previews are resized images used for analysis and reports.",
+            wraplength=640,
+            justify="left",
+        )
+        preview_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         entry = self._add_config_entry(
             preview_frame,
-            0,
+            1,
             "Long edge (px)",
             self.preview_long_edge_var,
             tooltip=tooltips["preview_long_edge"],
@@ -881,7 +927,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             preview_frame,
-            1,
+            2,
             "Format",
             self.preview_format_var,
             tooltip=tooltips["preview_format"],
@@ -889,7 +935,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             preview_frame,
-            2,
+            3,
             "Quality",
             self.preview_quality_var,
             tooltip=tooltips["preview_quality"],
@@ -899,9 +945,16 @@ class GuiApp:
         analysis_frame = ttk.LabelFrame(config_body, text="Analysis thresholds")
         analysis_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         analysis_frame.grid_columnconfigure(1, weight=1)
+        analysis_note = ttk.Label(
+            analysis_frame,
+            text="Thresholds set the baseline values used for scoring and fails.",
+            wraplength=640,
+            justify="left",
+        )
+        analysis_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         entry = self._add_config_entry(
             analysis_frame,
-            0,
+            1,
             "Sharpness min",
             self.analysis_sharpness_min_var,
             tooltip=tooltips["sharpness_min"],
@@ -909,7 +962,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            1,
+            2,
             "Center sharpness min (optional)",
             self.analysis_center_sharpness_min_var,
             tooltip=tooltips["center_sharpness_min"],
@@ -917,7 +970,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            2,
+            3,
             "Tenengrad min",
             self.analysis_tenengrad_min_var,
             tooltip=tooltips["tenengrad_min"],
@@ -925,7 +978,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            3,
+            4,
             "Motion ratio min",
             self.analysis_motion_ratio_min_var,
             tooltip=tooltips["motion_ratio_min"],
@@ -933,7 +986,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            4,
+            5,
             "Noise std max",
             self.analysis_noise_std_max_var,
             tooltip=tooltips["noise_std_max"],
@@ -941,7 +994,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            5,
+            6,
             "Brightness min",
             self.analysis_brightness_min_var,
             tooltip=tooltips["brightness_min"],
@@ -949,7 +1002,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            6,
+            7,
             "Brightness max",
             self.analysis_brightness_max_var,
             tooltip=tooltips["brightness_max"],
@@ -957,7 +1010,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            7,
+            8,
             "Shadows min",
             self.analysis_shadows_min_var,
             tooltip=tooltips["shadows_min"],
@@ -965,7 +1018,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            8,
+            9,
             "Shadows max",
             self.analysis_shadows_max_var,
             tooltip=tooltips["shadows_max"],
@@ -973,7 +1026,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            9,
+            10,
             "Highlights min",
             self.analysis_highlights_min_var,
             tooltip=tooltips["highlights_min"],
@@ -981,7 +1034,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            10,
+            11,
             "Highlights max",
             self.analysis_highlights_max_var,
             tooltip=tooltips["highlights_max"],
@@ -989,7 +1042,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            11,
+            12,
             "Quality score min",
             self.analysis_quality_score_min_var,
             tooltip=tooltips["quality_score_min"],
@@ -999,9 +1052,16 @@ class GuiApp:
         hard_fail_frame = ttk.LabelFrame(config_body, text="Hard-fail ratios")
         hard_fail_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         hard_fail_frame.grid_columnconfigure(1, weight=1)
+        hard_fail_note = ttk.Label(
+            hard_fail_frame,
+            text="Hard-fail ratios reject frames even if the quality score is high.",
+            wraplength=640,
+            justify="left",
+        )
+        hard_fail_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         entry = self._add_config_entry(
             hard_fail_frame,
-            0,
+            1,
             "Sharpness ratio",
             self.analysis_hard_fail_sharp_ratio_var,
             tooltip=tooltips["hard_fail_sharp_ratio"],
@@ -1009,7 +1069,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            1,
+            2,
             "Center sharpness ratio",
             self.analysis_hard_fail_sharp_center_ratio_var,
             tooltip=tooltips["hard_fail_sharp_center_ratio"],
@@ -1017,7 +1077,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            2,
+            3,
             "Tenengrad ratio",
             self.analysis_hard_fail_teneng_ratio_var,
             tooltip=tooltips["hard_fail_teneng_ratio"],
@@ -1025,7 +1085,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            3,
+            4,
             "Motion ratio",
             self.analysis_hard_fail_motion_ratio_var,
             tooltip=tooltips["hard_fail_motion_ratio"],
@@ -1033,7 +1093,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            4,
+            5,
             "Brightness ratio",
             self.analysis_hard_fail_brightness_ratio_var,
             tooltip=tooltips["hard_fail_brightness_ratio"],
@@ -1041,7 +1101,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            5,
+            6,
             "Noise ratio",
             self.analysis_hard_fail_noise_ratio_var,
             tooltip=tooltips["hard_fail_noise_ratio"],
@@ -1049,7 +1109,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            6,
+            7,
             "Shadows ratio",
             self.analysis_hard_fail_shadows_ratio_var,
             tooltip=tooltips["hard_fail_shadows_ratio"],
@@ -1057,7 +1117,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            7,
+            8,
             "Highlights ratio",
             self.analysis_hard_fail_highlights_ratio_var,
             tooltip=tooltips["hard_fail_highlights_ratio"],
@@ -1065,7 +1125,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            8,
+            9,
             "Composition ratio",
             self.analysis_hard_fail_composition_ratio_var,
             tooltip=tooltips["hard_fail_composition_ratio"],
@@ -1075,9 +1135,25 @@ class GuiApp:
         duplicates_frame = ttk.LabelFrame(config_body, text="Duplicates & outputs")
         duplicates_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
         duplicates_frame.grid_columnconfigure(1, weight=1)
+        duplicates_note = ttk.Label(
+            duplicates_frame,
+            text="Duplicate grouping and output paths for analysis results.",
+            wraplength=640,
+            justify="left",
+        )
+        duplicates_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        dup_enabled_label = ttk.Label(duplicates_frame, text="Duplicate detection")
+        dup_enabled_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        dup_enabled = ttk.Checkbutton(
+            duplicates_frame, variable=self.analysis_duplicate_enabled_var
+        )
+        dup_enabled.grid(row=1, column=1, sticky="w", pady=4)
+        self._add_tooltip(dup_enabled_label, tooltips["duplicate_enabled"])
+        self._add_tooltip(dup_enabled, tooltips["duplicate_enabled"])
+        config_controls.append(dup_enabled)
         entry = self._add_config_entry(
             duplicates_frame,
-            0,
+            2,
             "Duplicate hamming",
             self.analysis_duplicate_hamming_var,
             tooltip=tooltips["duplicate_hamming"],
@@ -1085,7 +1161,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            1,
+            3,
             "Duplicate window seconds",
             self.analysis_duplicate_window_seconds_var,
             tooltip=tooltips["duplicate_window_seconds"],
@@ -1093,7 +1169,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            2,
+            4,
             "Duplicate bucket bits",
             self.analysis_duplicate_bucket_bits_var,
             tooltip=tooltips["duplicate_bucket_bits"],
@@ -1101,7 +1177,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            3,
+            5,
             "Report path",
             self.analysis_report_path_var,
             tooltip=tooltips["report_path"],
@@ -1109,7 +1185,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            4,
+            6,
             "Results path",
             self.analysis_results_path_var,
             tooltip=tooltips["results_path"],
@@ -1119,30 +1195,37 @@ class GuiApp:
         face_frame = ttk.LabelFrame(config_body, text="Face detection")
         face_frame.grid(row=5, column=0, sticky="ew")
         face_frame.grid_columnconfigure(1, weight=1)
+        face_note = ttk.Label(
+            face_frame,
+            text="Optional face detection settings used during analysis.",
+            wraplength=640,
+            justify="left",
+        )
+        face_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         face_enabled_label = ttk.Label(face_frame, text="Enabled")
-        face_enabled_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        face_enabled_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
         face_enabled = ttk.Checkbutton(
             face_frame, variable=self.analysis_face_enabled_var
         )
-        face_enabled.grid(row=0, column=1, sticky="w", pady=4)
+        face_enabled.grid(row=1, column=1, sticky="w", pady=4)
         self._add_tooltip(face_enabled_label, tooltips["face_enabled"])
         self._add_tooltip(face_enabled, tooltips["face_enabled"])
         config_controls.append(face_enabled)
         face_backend_label = ttk.Label(face_frame, text="Backend")
-        face_backend_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        face_backend_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
         face_backend = ttk.Combobox(
             face_frame,
             textvariable=self.analysis_face_backend_var,
             values=("mediapipe", "insightface"),
             state="readonly",
         )
-        face_backend.grid(row=1, column=1, sticky="ew", pady=4)
+        face_backend.grid(row=2, column=1, sticky="ew", pady=4)
         self._add_tooltip(face_backend_label, tooltips["face_backend"])
         self._add_tooltip(face_backend, tooltips["face_backend"])
         config_controls.append(face_backend)
         entry = self._add_config_entry(
             face_frame,
-            2,
+            3,
             "Detection size",
             self.analysis_face_det_size_var,
             tooltip=tooltips["face_det_size"],
@@ -1150,7 +1233,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            3,
+            4,
             "Context id",
             self.analysis_face_ctx_id_var,
             tooltip=tooltips["face_ctx_id"],
@@ -1158,7 +1241,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            4,
+            5,
             "Allowed modules (comma-separated)",
             self.analysis_face_allowed_modules_var,
             tooltip=tooltips["face_allowed_modules"],
@@ -1166,7 +1249,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            5,
+            6,
             "Providers (comma-separated, optional)",
             self.analysis_face_providers_var,
             tooltip=tooltips["face_providers"],

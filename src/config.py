@@ -43,6 +43,7 @@ class AnalysisConfig(TypedDict, total=False):
     shadows_max: float
     highlights_min: float
     highlights_max: float
+    duplicate_enabled: bool
     duplicate_hamming: int
     duplicate_window_seconds: int
     duplicate_bucket_bits: int
@@ -81,8 +82,9 @@ DEFAULT_CONFIG: AppConfig = {
         "brightness_max": 0.92,
         "shadows_min": 0.0,
         "shadows_max": 0.5,
-        "highlights_min": 0.0,
-        "highlights_max": 0.1,
+        "highlights_min": 0.01,
+        "highlights_max": 0.95,
+        "duplicate_enabled": True,
         "duplicate_hamming": 6,
         "duplicate_window_seconds": 8,
         "duplicate_bucket_bits": 8,

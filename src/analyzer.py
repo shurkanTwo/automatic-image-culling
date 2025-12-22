@@ -610,6 +610,8 @@ def _suggest_keep(
 
 def _load_preview_arrays(
     preview_path: pathlib.Path,
+    *,
+    compute_phash: bool = True,
 ) -> Optional[Tuple[np.ndarray, np.ndarray, Optional[int]]]:
     """Load preview once and return RGB uint8 array, grayscale float32 array, and pHash."""
     if Image is None:
@@ -624,7 +626,9 @@ def _load_preview_arrays(
                 + 0.587 * rgb_arr[:, :, 1]
                 + 0.114 * rgb_arr[:, :, 2]
             ).astype(np.float32)
-            hash_val = phash(preview_path, gray_array=gray_arr)
+            hash_val = (
+                phash(preview_path, gray_array=gray_arr) if compute_phash else None
+            )
     except Exception:
         return None
     return rgb_arr, gray_arr, hash_val
@@ -643,7 +647,13 @@ def _analyze_single_file(
 
     exif = read_exif(path)
     dt = capture_date(exif, fallback=_dt.datetime.fromtimestamp(path.stat().st_mtime))
-    preview_data = _load_preview_arrays(preview_path)
+    duplicate_enabled = bool(
+        analysis_cfg.get(
+            "duplicate_enabled",
+            DEFAULT_CONFIG["analysis"].get("duplicate_enabled", True),
+        )
+    )
+    preview_data = _load_preview_arrays(preview_path, compute_phash=duplicate_enabled)
     if preview_data is None:
         return None
     rgb_full, gray_arr, hash_val = preview_data
@@ -709,7 +719,17 @@ def analyze_files(
         progress_cb=progress_cb,
         cancel_event=cancel_event,
     )
-    duplicate_indexes = _label_duplicates(results, analysis_cfg, use_similarity)
+    duplicate_enabled = bool(
+        analysis_cfg.get(
+            "duplicate_enabled",
+            DEFAULT_CONFIG["analysis"].get("duplicate_enabled", True),
+        )
+    )
+    duplicate_indexes = (
+        _label_duplicates(results, analysis_cfg, use_similarity)
+        if duplicate_enabled
+        else set()
+    )
     _apply_quality_decisions(results, analysis_cfg, duplicate_indexes)
     return results
 
