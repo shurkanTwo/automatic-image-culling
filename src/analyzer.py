@@ -264,150 +264,283 @@ def _hard_fail_thresholds(cfg: AnalysisConfig) -> Dict[str, float]:
     }
 
 
-def _score_metrics(metrics: FrameMetrics, thresholds: Thresholds) -> ScoreBreakdown:
-    """Normalize each metric and compute the combined quality score."""
-    sharp_score = _clamp01(metrics.sharpness / max(thresholds.sharpness_min, 1e-6))
-    sharp_center_score = _clamp01(
-        metrics.sharpness_center / max(thresholds.center_sharpness_min, 1e-6)
-    )
-    teneng_score = _clamp01(metrics.tenengrad / max(thresholds.tenengrad_min, 1e-6))
-    motion_score = _clamp01(
-        metrics.motion_ratio / max(thresholds.motion_ratio_min, 1e-6)
-    )
-    noise_score = _clamp01(
-        thresholds.noise_std_max / (thresholds.noise_std_max + max(metrics.noise, 1e-6))
-    )
+@dataclass(frozen=True)
+class MetricRule:
+    key: str
+    weight: float
+    hard_key: str
+    score_fn: Callable[[FrameMetrics, Thresholds], float]
+    threshold_fail_fn: Callable[[FrameMetrics, Thresholds], bool]
+    reason_fn: Callable[[FrameMetrics, Thresholds, Dict[str, float]], Optional[str]]
+    reason_on_threshold_fail: bool = True
+    reason_on_hard_fail: bool = True
+
+
+def _ratio_score(value: float, minimum: float) -> float:
+    return _clamp01(value / max(minimum, 1e-6))
+
+
+def _range_score(value: float, low: float, high: float) -> float:
+    if value < low:
+        return _clamp01(1 - (low - value) / max(low, 1e-6))
+    if value > high:
+        return _clamp01(1 - (value - high) / max(1 - high, 1e-6))
+    return 1.0
+
+
+def _brightness_score(metrics: FrameMetrics, thresholds: Thresholds) -> float:
     brightness_mid = (thresholds.brightness_min + thresholds.brightness_max) / 2
     brightness_half = (thresholds.brightness_max - thresholds.brightness_min) / 2
-    brightness_score = _clamp01(
-        1 - abs(metrics.brightness_mean - brightness_mid) / max(brightness_half, 1e-6)
+    return _clamp01(
+        1
+        - abs(metrics.brightness_mean - brightness_mid)
+        / max(brightness_half, 1e-6)
     )
 
-    def range_score(val: float, lo: float, hi: float) -> float:
-        if val < lo:
-            return _clamp01(1 - (lo - val) / max(lo, 1e-6))
-        if val > hi:
-            return _clamp01(1 - (val - hi) / max(1 - hi, 1e-6))
-        return 1.0
 
-    shadows_score = range_score(
-        metrics.shadows, thresholds.shadows_min, thresholds.shadows_max
+def _noise_score(metrics: FrameMetrics, thresholds: Thresholds) -> float:
+    return _clamp01(
+        thresholds.noise_std_max
+        / (thresholds.noise_std_max + max(metrics.noise, 1e-6))
     )
-    highlights_score = range_score(
-        metrics.highlights, thresholds.highlights_min, thresholds.highlights_max
+
+
+def _reason_sharpness(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    return f"sharpness {metrics.sharpness:.1f} < min {thresholds.sharpness_min:.1f}"
+
+
+def _reason_center_sharpness(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    return (
+        "center sharpness "
+        f"{metrics.sharpness_center:.1f} < "
+        f"min {thresholds.center_sharpness_min:.1f}"
     )
-    comp_score = _clamp01(metrics.composition)
-
-    weights = {
-        "sharp": 1.5,
-        "sharp_center": 1.0,
-        "teneng": 1.0,
-        "motion": 1.0,
-        "noise": 0.7,
-        "brightness": 0.8,
-        "shadows": 0.5,
-        "highlights": 0.5,
-        "composition": 0.4,
-    }
-
-    scores = {
-        "sharp": sharp_score,
-        "sharp_center": sharp_center_score,
-        "teneng": teneng_score,
-        "motion": motion_score,
-        "brightness": brightness_score,
-        "noise": noise_score,
-        "shadows": shadows_score,
-        "highlights": highlights_score,
-        "composition": comp_score,
-    }
-
-    weighted_sum = sum(scores[key] * weights[key] for key in scores)
-    total_weights = sum(weights.values())
-    quality_score = weighted_sum / total_weights if total_weights else 0.0
-    return ScoreBreakdown(scores=scores, quality_score=quality_score)
 
 
-def _quality_reasons(
+def _reason_tenengrad(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    return f"contrast {metrics.tenengrad:.0f} < min {thresholds.tenengrad_min:.0f}"
+
+
+def _reason_motion(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    return (
+        "motion ratio "
+        f"{metrics.motion_ratio:.2f} < min {thresholds.motion_ratio_min:.2f}"
+    )
+
+
+def _reason_noise(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    return f"noise {metrics.noise:.1f} > max {thresholds.noise_std_max:.1f}"
+
+
+def _reason_brightness(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> str:
+    if metrics.brightness_mean < thresholds.brightness_min:
+        return (
+            f"brightness {metrics.brightness_mean:.2f} < "
+            f"min {thresholds.brightness_min:.2f}"
+        )
+    if metrics.brightness_mean > thresholds.brightness_max:
+        return (
+            f"brightness {metrics.brightness_mean:.2f} > "
+            f"max {thresholds.brightness_max:.2f}"
+        )
+    return "poor exposure"
+
+
+def _reason_shadows(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> Optional[str]:
+    if metrics.shadows > thresholds.shadows_max:
+        return f"shadows {metrics.shadows:.2f} > max {thresholds.shadows_max:.2f}"
+    if metrics.shadows < thresholds.shadows_min:
+        return f"shadows {metrics.shadows:.2f} < min {thresholds.shadows_min:.2f}"
+    return None
+
+
+def _reason_highlights(
+    metrics: FrameMetrics, thresholds: Thresholds, __: Dict[str, float]
+) -> Optional[str]:
+    if metrics.highlights > thresholds.highlights_max:
+        return (
+            f"highlights {metrics.highlights:.2f} > "
+            f"max {thresholds.highlights_max:.2f}"
+        )
+    if metrics.highlights < thresholds.highlights_min:
+        return (
+            f"highlights {metrics.highlights:.2f} < "
+            f"min {thresholds.highlights_min:.2f}"
+        )
+    return None
+
+
+def _reason_composition(
+    metrics: FrameMetrics, __: Thresholds, hard_cfg: Dict[str, float]
+) -> str:
+    return f"composition {metrics.composition:.2f} < min {hard_cfg['composition']:.2f}"
+
+
+METRIC_RULES = (
+    MetricRule(
+        key="sharp",
+        weight=1.5,
+        hard_key="sharp",
+        score_fn=lambda metrics, thresholds: _ratio_score(
+            metrics.sharpness, thresholds.sharpness_min
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.sharpness < thresholds.sharpness_min
+        ),
+        reason_fn=_reason_sharpness,
+    ),
+    MetricRule(
+        key="sharp_center",
+        weight=1.0,
+        hard_key="sharp_center",
+        score_fn=lambda metrics, thresholds: _ratio_score(
+            metrics.sharpness_center, thresholds.center_sharpness_min
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.sharpness_center < thresholds.center_sharpness_min
+        ),
+        reason_fn=_reason_center_sharpness,
+    ),
+    MetricRule(
+        key="teneng",
+        weight=1.0,
+        hard_key="teneng",
+        score_fn=lambda metrics, thresholds: _ratio_score(
+            metrics.tenengrad, thresholds.tenengrad_min
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.tenengrad < thresholds.tenengrad_min
+        ),
+        reason_fn=_reason_tenengrad,
+    ),
+    MetricRule(
+        key="motion",
+        weight=1.0,
+        hard_key="motion",
+        score_fn=lambda metrics, thresholds: _ratio_score(
+            metrics.motion_ratio, thresholds.motion_ratio_min
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.motion_ratio < thresholds.motion_ratio_min
+        ),
+        reason_fn=_reason_motion,
+    ),
+    MetricRule(
+        key="noise",
+        weight=0.7,
+        hard_key="noise",
+        score_fn=_noise_score,
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.noise > thresholds.noise_std_max
+        ),
+        reason_fn=_reason_noise,
+    ),
+    MetricRule(
+        key="brightness",
+        weight=0.8,
+        hard_key="brightness",
+        score_fn=_brightness_score,
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.brightness_mean < thresholds.brightness_min
+            or metrics.brightness_mean > thresholds.brightness_max
+        ),
+        reason_fn=_reason_brightness,
+        reason_on_threshold_fail=False,
+    ),
+    MetricRule(
+        key="shadows",
+        weight=0.5,
+        hard_key="shadows",
+        score_fn=lambda metrics, thresholds: _range_score(
+            metrics.shadows, thresholds.shadows_min, thresholds.shadows_max
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.shadows < thresholds.shadows_min
+            or metrics.shadows > thresholds.shadows_max
+        ),
+        reason_fn=_reason_shadows,
+        reason_on_threshold_fail=False,
+    ),
+    MetricRule(
+        key="highlights",
+        weight=0.5,
+        hard_key="highlights",
+        score_fn=lambda metrics, thresholds: _range_score(
+            metrics.highlights, thresholds.highlights_min, thresholds.highlights_max
+        ),
+        threshold_fail_fn=lambda metrics, thresholds: (
+            metrics.highlights < thresholds.highlights_min
+            or metrics.highlights > thresholds.highlights_max
+        ),
+        reason_fn=_reason_highlights,
+        reason_on_threshold_fail=False,
+    ),
+    MetricRule(
+        key="composition",
+        weight=0.4,
+        hard_key="composition",
+        score_fn=lambda metrics, __: _clamp01(metrics.composition),
+        threshold_fail_fn=lambda metrics, __: False,
+        reason_fn=_reason_composition,
+        reason_on_threshold_fail=False,
+    ),
+)
+
+
+def _evaluate_metrics(
     metrics: FrameMetrics,
     thresholds: Thresholds,
-    scores: Dict[str, float],
     hard_cfg: Dict[str, float],
-    quality_score: float,
     cutoff: float,
-) -> List[str]:
-    """Compile human-readable reasons for discarding a frame."""
+) -> Tuple[ScoreBreakdown, List[str], bool, bool]:
+    scores: Dict[str, float] = {}
+    weighted_sum = 0.0
+    total_weights = 0.0
+    evaluations: List[Tuple[MetricRule, bool, bool]] = []
+
+    for rule in METRIC_RULES:
+        score = rule.score_fn(metrics, thresholds)
+        scores[rule.key] = score
+        weighted_sum += score * rule.weight
+        total_weights += rule.weight
+        hard_fail = score < hard_cfg[rule.hard_key]
+        threshold_fail = rule.threshold_fail_fn(metrics, thresholds)
+        evaluations.append((rule, hard_fail, threshold_fail))
+
+    quality_score = weighted_sum / total_weights if total_weights else 0.0
+    score_breakdown = ScoreBreakdown(scores=scores, quality_score=quality_score)
+
     reasons: List[str] = []
     if quality_score < cutoff:
         reasons.append(f"quality score {quality_score:.2f} below {cutoff:.2f}")
 
-    def add_reason(condition: bool, text: str) -> None:
-        if condition:
-            reasons.append(text)
+    hard_fail_any = False
+    threshold_fail_any = False
+    for rule, hard_fail, threshold_fail in evaluations:
+        hard_fail_any = hard_fail_any or hard_fail
+        threshold_fail_any = threshold_fail_any or threshold_fail
+        if (hard_fail and rule.reason_on_hard_fail) or (
+            threshold_fail and rule.reason_on_threshold_fail
+        ):
+            reason = rule.reason_fn(metrics, thresholds, hard_cfg)
+            if reason:
+                reasons.append(reason)
 
-    add_reason(
-        scores["sharp"] < hard_cfg["sharp"]
-        or metrics.sharpness < thresholds.sharpness_min,
-        f"sharpness {metrics.sharpness:.1f} < min {thresholds.sharpness_min:.1f}",
-    )
-    add_reason(
-        scores["sharp_center"] < hard_cfg["sharp_center"]
-        or metrics.sharpness_center < thresholds.center_sharpness_min,
-        (
-            "center sharpness "
-            f"{metrics.sharpness_center:.1f} < "
-            f"min {thresholds.center_sharpness_min:.1f}"
-        ),
-    )
-    add_reason(
-        scores["teneng"] < hard_cfg["teneng"]
-        or metrics.tenengrad < thresholds.tenengrad_min,
-        f"contrast {metrics.tenengrad:.0f} < min {thresholds.tenengrad_min:.0f}",
-    )
-    add_reason(
-        scores["motion"] < hard_cfg["motion"]
-        or metrics.motion_ratio < thresholds.motion_ratio_min,
-        f"motion ratio {metrics.motion_ratio:.2f} < min {thresholds.motion_ratio_min:.2f}",
-    )
-    add_reason(
-        scores["noise"] < hard_cfg["noise"] or metrics.noise > thresholds.noise_std_max,
-        f"noise {metrics.noise:.1f} > max {thresholds.noise_std_max:.1f}",
-    )
-
-    if scores["brightness"] < hard_cfg["brightness"]:
-        if metrics.brightness_mean < thresholds.brightness_min:
-            reasons.append(
-                f"brightness {metrics.brightness_mean:.2f} < min {thresholds.brightness_min:.2f}"
-            )
-        elif metrics.brightness_mean > thresholds.brightness_max:
-            reasons.append(
-                f"brightness {metrics.brightness_mean:.2f} > max {thresholds.brightness_max:.2f}"
-            )
-        else:
-            reasons.append("poor exposure")
-    if scores["shadows"] < hard_cfg["shadows"]:
-        if metrics.shadows > thresholds.shadows_max:
-            reasons.append(
-                f"shadows {metrics.shadows:.2f} > max {thresholds.shadows_max:.2f}"
-            )
-        elif metrics.shadows < thresholds.shadows_min:
-            reasons.append(
-                f"shadows {metrics.shadows:.2f} < min {thresholds.shadows_min:.2f}"
-            )
-    if scores["highlights"] < hard_cfg["highlights"]:
-        if metrics.highlights > thresholds.highlights_max:
-            reasons.append(
-                f"highlights {metrics.highlights:.2f} > max {thresholds.highlights_max:.2f}"
-            )
-        elif metrics.highlights < thresholds.highlights_min:
-            reasons.append(
-                f"highlights {metrics.highlights:.2f} < min {thresholds.highlights_min:.2f}"
-            )
-    if scores["composition"] < hard_cfg["composition"]:
-        reasons.append(
-            f"composition {metrics.composition:.2f} < min {hard_cfg['composition']:.2f}"
-        )
-    return reasons
+    return score_breakdown, reasons, hard_fail_any, threshold_fail_any
 
 
 def _frame_metrics_from_result(result: AnalysisResult) -> FrameMetrics:
@@ -435,35 +568,11 @@ def _suggest_keep(
     cutoff = float(
         cfg.get("quality_score_min", DEFAULT_CONFIG["analysis"]["quality_score_min"])
     )
-    score_breakdown = _score_metrics(metrics, thresholds)
-    hard_fail = any(
-        score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
-    )
-    threshold_fail = any(
-        (
-            metrics.sharpness < thresholds.sharpness_min,
-            metrics.sharpness_center < thresholds.center_sharpness_min,
-            metrics.tenengrad < thresholds.tenengrad_min,
-            metrics.motion_ratio < thresholds.motion_ratio_min,
-            metrics.noise > thresholds.noise_std_max,
-            metrics.brightness_mean < thresholds.brightness_min,
-            metrics.brightness_mean > thresholds.brightness_max,
-            metrics.shadows < thresholds.shadows_min,
-            metrics.shadows > thresholds.shadows_max,
-            metrics.highlights < thresholds.highlights_min,
-            metrics.highlights > thresholds.highlights_max,
-        )
+    score_breakdown, reasons, hard_fail, threshold_fail = _evaluate_metrics(
+        metrics, thresholds, hard_cfg, cutoff
     )
     keep = (
         score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
-    )
-    reasons = _quality_reasons(
-        metrics,
-        thresholds,
-        score_breakdown.scores,
-        hard_cfg,
-        score_breakdown.quality_score,
-        cutoff,
     )
     if duplicate:
         reasons.append("duplicate")
@@ -733,6 +842,55 @@ def _label_duplicates(
         except Exception:
             return ""
 
+    comparisons: Tuple[
+        Tuple[
+            Callable[[AnalysisResult], Optional[float]],
+            Callable[[float, float], bool],
+            Callable[[float, float], str],
+        ],
+        ...,
+    ] = (
+        (
+            lambda item: item.get("sharpness"),
+            lambda candidate, keeper: candidate < keeper,
+            lambda candidate, keeper: f"sharpness {candidate:.1f} < {keeper:.1f}",
+        ),
+        (
+            lambda item: item.get("tenengrad"),
+            lambda candidate, keeper: candidate < keeper,
+            lambda candidate, keeper: f"contrast {candidate:.0f} < {keeper:.0f}",
+        ),
+        (
+            lambda item: item.get("motion_ratio"),
+            lambda candidate, keeper: candidate < keeper,
+            lambda candidate, keeper: (
+                f"motion ratio {candidate:.2f} < {keeper:.2f}"
+            ),
+        ),
+        (
+            lambda item: item.get("noise"),
+            lambda candidate, keeper: candidate > keeper,
+            lambda candidate, keeper: f"noise {candidate:.1f} > {keeper:.1f}",
+        ),
+    )
+
+    def _append_comparison_reason(
+        candidate: AnalysisResult,
+        keeper_result: AnalysisResult,
+        getter: Callable[[AnalysisResult], Optional[float]],
+        compare: Callable[[float, float], bool],
+        formatter: Callable[[float, float], str],
+        reasons: List[str],
+    ) -> None:
+        candidate_value = getter(candidate)
+        keeper_value = getter(keeper_result)
+        if candidate_value is None or keeper_value is None:
+            return
+        candidate_value = float(candidate_value)
+        keeper_value = float(keeper_value)
+        if compare(candidate_value, keeper_value):
+            reasons.append(formatter(candidate_value, keeper_value))
+
     for members in groups.values():
         if len(members) < 2:
             continue
@@ -755,38 +913,15 @@ def _label_duplicates(
             candidate = results[member]
             candidate["duplicate_of"] = keeper_result["path"]
             reason_parts: List[str] = []
-            if candidate["sharpness"] < keeper_result["sharpness"]:
-                reason_parts.append(
-                    f"sharpness {candidate['sharpness']:.1f} < {keeper_result['sharpness']:.1f}"
+            for getter, compare, formatter in comparisons:
+                _append_comparison_reason(
+                    candidate,
+                    keeper_result,
+                    getter,
+                    compare,
+                    formatter,
+                    reason_parts,
                 )
-            if (
-                candidate.get("tenengrad") is not None
-                and keeper_result.get("tenengrad") is not None
-            ):
-                if candidate["tenengrad"] < keeper_result["tenengrad"]:
-                    reason_parts.append(
-                        f"contrast {candidate['tenengrad']:.0f} < {keeper_result['tenengrad']:.0f}"
-                    )
-            if (
-                candidate.get("motion_ratio") is not None
-                and keeper_result.get("motion_ratio") is not None
-            ):
-                if candidate["motion_ratio"] < keeper_result["motion_ratio"]:
-                    reason_parts.append(
-                        (
-                            "motion ratio "
-                            f"{candidate['motion_ratio']:.2f} < "
-                            f"{keeper_result['motion_ratio']:.2f}"
-                        )
-                    )
-            if (
-                candidate.get("noise") is not None
-                and keeper_result.get("noise") is not None
-            ):
-                if candidate["noise"] > keeper_result["noise"]:
-                    reason_parts.append(
-                        f"noise {candidate['noise']:.1f} > {keeper_result['noise']:.1f}"
-                    )
             sim_reason = _similarity_reason(keeper, member)
             if sim_reason:
                 reason_parts.append(sim_reason)
