@@ -704,6 +704,8 @@ class GuiApp:
             self.input_var,
             self._browse_input,
             tooltip=tooltips["input_dir"],
+            entry_width=60,
+            center=True,
         )
 
         actions = ttk.Frame(run_tab)
@@ -1387,11 +1389,19 @@ class GuiApp:
         browse_cmd: Callable[[], None],
         *,
         tooltip: Optional[str] = None,
+        entry_width: Optional[int] = None,
+        center: bool = False,
     ) -> None:
         label_widget = ttk.Label(parent, text=label)
         label_widget.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
-        entry = ttk.Entry(parent, textvariable=variable)
-        entry.grid(row=row, column=1, sticky="ew", pady=4)
+        entry = ttk.Entry(
+            parent,
+            textvariable=variable,
+            width=entry_width,
+            justify="center" if center else "left",
+        )
+        entry_sticky = "" if center else "ew"
+        entry.grid(row=row, column=1, sticky=entry_sticky, pady=4)
         button = ttk.Button(parent, text="Browse", command=browse_cmd)
         button.grid(row=row, column=2, sticky="ew", pady=4, padx=(4, 0))
         if tooltip:
