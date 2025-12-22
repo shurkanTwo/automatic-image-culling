@@ -740,17 +740,22 @@ def _label_duplicates(
     )
     bucket_bits = max(
         0,
-        int(
-            analysis_cfg.get(
-                "duplicate_bucket_bits",
-                DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
-            )
+        min(
+            64,
+            int(
+                analysis_cfg.get(
+                    "duplicate_bucket_bits",
+                    DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
+                )
+            ),
         ),
     )
-    bucket_shift = max(0, 64 - bucket_bits) if bucket_bits else 0
-
-    def bucket_key(hash_val: int) -> int:
-        return hash_val >> bucket_shift if bucket_bits else 0
+    bucket_specs: List[Tuple[int, int]] = []
+    if bucket_bits:
+        for offset in range(0, 64, bucket_bits):
+            width = min(bucket_bits, 64 - offset)
+            mask = (1 << width) - 1
+            bucket_specs.append((offset, mask))
 
     entries: List[Tuple[int, int, float]] = []
     for idx, result in enumerate(results):
@@ -771,28 +776,44 @@ def _label_duplicates(
         if root_a != root_b:
             parent[root_b] = root_a
 
-    active_window = deque()  # (result_idx, bucket, timestamp)
-    bucket_index: Dict[int, List[int]] = defaultdict(list)
+    active_window = deque()  # (result_idx, hash, timestamp)
+    bucket_index: List[Dict[int, List[int]]] = [
+        defaultdict(list) for _ in bucket_specs
+    ]
 
     for idx_i, hash_i, ts_i in entries:
         while active_window and ts_i - active_window[0][2] > window_sec:
-            expired_idx, expired_bucket, __ = active_window.popleft()
-            bucket_list = bucket_index.get(expired_bucket)
-            if bucket_list:
-                try:
-                    bucket_list.remove(expired_idx)
-                except ValueError:
-                    pass
-                if not bucket_list:
-                    bucket_index.pop(expired_bucket, None)
+            expired_idx, expired_hash, __ = active_window.popleft()
+            for slot, (offset, mask) in enumerate(bucket_specs):
+                key = (expired_hash >> offset) & mask
+                bucket_list = bucket_index[slot].get(key)
+                if bucket_list:
+                    try:
+                        bucket_list.remove(expired_idx)
+                    except ValueError:
+                        pass
+                    if not bucket_list:
+                        bucket_index[slot].pop(key, None)
 
-        key = bucket_key(hash_i)
-        for candidate_idx in list(bucket_index.get(key, [])):
+        candidate_indexes: List[int] = []
+        if bucket_specs:
+            candidate_set: Set[int] = set()
+            for slot, (offset, mask) in enumerate(bucket_specs):
+                key = (hash_i >> offset) & mask
+                for candidate_idx in bucket_index[slot].get(key, []):
+                    candidate_set.add(candidate_idx)
+            candidate_indexes = list(candidate_set)
+        else:
+            candidate_indexes = [candidate[0] for candidate in active_window]
+
+        for candidate_idx in candidate_indexes:
             if hamming(hash_i, hash_by_idx[candidate_idx]) <= dup_threshold:
                 union(idx_i, candidate_idx)
 
-        active_window.append((idx_i, key, ts_i))
-        bucket_index[key].append(idx_i)
+        active_window.append((idx_i, hash_i, ts_i))
+        for slot, (offset, mask) in enumerate(bucket_specs):
+            key = (hash_i >> offset) & mask
+            bucket_index[slot][key].append(idx_i)
 
     groups: Dict[int, List[int]] = {}
     for idx, __, ___ in entries:

@@ -657,7 +657,7 @@ class GuiApp:
                 "Default: 8. Range: >=0."
             ),
             "duplicate_bucket_bits": (
-                "Number of high pHash bits to bucket comparisons (0 disables).\n"
+                "Number of pHash bits per bucket slice for candidate grouping (0 disables).\n"
                 "Default: 8. Range: 0-64."
             ),
             "report_path": (

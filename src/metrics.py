@@ -1,5 +1,6 @@
 """Image metric helpers used by the analyzer pipeline."""
 
+from functools import lru_cache
 import pathlib
 from typing import Any, Dict, Optional, TypedDict
 
@@ -126,50 +127,88 @@ def composition_score(arr: np.ndarray) -> float:
     return score
 
 
+@lru_cache(maxsize=4)
+def _dct_matrix(size: int) -> np.ndarray:
+    """Return an orthonormal DCT-II transform matrix of shape (size, size)."""
+    if size <= 0:
+        raise ValueError("DCT size must be positive.")
+    idx = np.arange(size, dtype=np.float32)
+    matrix = np.empty((size, size), dtype=np.float32)
+    factor = np.pi / float(size)
+    for k in range(size):
+        scale = np.sqrt(1.0 / size) if k == 0 else np.sqrt(2.0 / size)
+        matrix[k, :] = scale * np.cos((idx + 0.5) * k * factor)
+    return matrix
+
+
+def _downsample_mean(gray: np.ndarray, size: int) -> Optional[np.ndarray]:
+    """Downsample a 2D array to a square using block averaging."""
+    if size < 1 or gray.ndim != 2:
+        return None
+    h, w = gray.shape
+    if h < 1 or w < 1:
+        return None
+    if h == size and w == size:
+        return gray.astype(np.float32)
+    y_edges = np.linspace(0, h, num=size + 1, dtype=int)
+    x_edges = np.linspace(0, w, num=size + 1, dtype=int)
+    block_sums = np.add.reduceat(
+        np.add.reduceat(gray, y_edges[:-1], axis=0), x_edges[:-1], axis=1
+    )
+    heights = np.diff(y_edges).astype(np.float32)
+    widths = np.diff(x_edges).astype(np.float32)
+    area = np.maximum(heights[:, None] * widths[None, :], 1.0)
+    return (block_sums / area).astype(np.float32)
+
+
 def phash(
     preview_path: pathlib.Path,
     image_module: Optional[Any] = None,
     image: Optional[Any] = None,
     gray_array: Optional[np.ndarray] = None,
 ) -> Optional[int]:
-    """Compute a perceptual hash over an 8x8 luminance thumbnail.
+    """Compute a DCT-based perceptual hash over a 32x32 luminance thumbnail.
 
     Accepts either a pre-opened PIL image via ``image`` or a precomputed grayscale
     array via ``gray_array``. Falls back to opening from ``preview_path`` when
     needed.
     """
+    hash_size = 8
+    dct_size = 32
+    small: Optional[np.ndarray] = None
     if gray_array is not None:
         gray = np.asarray(gray_array, dtype=np.float32)
         if gray.ndim != 2 or gray.size == 0:
             return None
-        h, w = gray.shape
-        if h < 1 or w < 1:
+        small = _downsample_mean(gray, dct_size)
+        if small is None or small.size == 0:
             return None
-        # Downsample to 8x8 using block averaging without Python loops.
-        y_edges = np.linspace(0, h, num=9, dtype=int)
-        x_edges = np.linspace(0, w, num=9, dtype=int)
-        block_sums = np.add.reduceat(
-            np.add.reduceat(gray, y_edges[:-1], axis=0), x_edges[:-1], axis=1
-        )
-        heights = np.diff(y_edges).astype(np.float32)
-        widths = np.diff(x_edges).astype(np.float32)
-        area = np.maximum(heights[:, None] * widths[None, :], 1.0)
-        small = block_sums / area
-        pixels = small.astype(np.float32).ravel()
     else:
         if image_module is None:
             return None
         if image is None:
             with image_module.open(preview_path) as img_handle:
-                img = img_handle.convert("L").resize((8, 8), image_module.LANCZOS)
-                pixels = np.array(img, dtype=np.float32).ravel()
+                img = img_handle.convert("L").resize(
+                    (dct_size, dct_size), image_module.LANCZOS
+                )
+                small = np.array(img, dtype=np.float32)
         else:
-            img = image.convert("L").resize((8, 8), image_module.LANCZOS)
-            pixels = np.array(img, dtype=np.float32).ravel()
-    avg = sum(pixels) / len(pixels)
+            img = image.convert("L").resize((dct_size, dct_size), image_module.LANCZOS)
+            small = np.array(img, dtype=np.float32)
+    if small is None or small.size == 0:
+        return None
+    dct_mat = _dct_matrix(dct_size)
+    coeffs = dct_mat @ small @ dct_mat.T
+    top_left = coeffs[:hash_size, :hash_size]
+    flat = top_left.ravel()
+    if flat.size == 0:
+        return None
+    median = (
+        float(np.median(flat[1:])) if flat.size > 1 else float(flat[0])
+    )
     bits = 0
-    for i, p in enumerate(pixels):
-        if p > avg:
+    for i, coeff in enumerate(flat):
+        if coeff > median:
             bits |= 1 << i
     return bits
 
