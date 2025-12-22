@@ -203,47 +203,43 @@ class GuiApp:
         )
 
         actions = ttk.Frame(run_tab)
-        actions.grid(row=1, column=0, sticky="ew", pady=(10, 6))
+        actions.grid(row=1, column=0, pady=(10, 6))
         actions.grid_columnconfigure(0, weight=1)
-        actions.grid_columnconfigure(1, weight=1)
-        actions.grid_columnconfigure(2, weight=1)
 
-        self.scan_btn = ttk.Button(actions, text="Discover", command=self._start_scan)
-        self.scan_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
+        button_width = 26
+        self.scan_btn = ttk.Button(
+            actions, text="Discover", command=self._start_scan, width=button_width
+        )
+        self.scan_btn.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         self.analyze_btn = ttk.Button(
-            actions, text="Analyze + report", command=self._start_analyze
+            actions,
+            text="Analyze + report",
+            command=self._start_analyze,
+            width=button_width,
         )
-        self.analyze_btn.grid(
-            row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=(0, 6)
+        self.analyze_btn.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        self.open_btn = ttk.Button(
+            actions,
+            text="Open report",
+            command=self._open_report,
+            state="disabled",
+            width=button_width,
         )
-
+        self.open_btn.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         self.decisions_dry_btn = ttk.Button(
             actions,
             text="Apply decisions (dry run)",
             command=lambda: self._start_decisions(False),
+            width=button_width,
         )
-        self.decisions_dry_btn.grid(
-            row=1, column=0, sticky="ew", padx=(0, 6), pady=(6, 0)
-        )
+        self.decisions_dry_btn.grid(row=3, column=0, sticky="ew", pady=(0, 6))
         self.decisions_apply_btn = ttk.Button(
             actions,
             text="Apply decisions (move)",
             command=lambda: self._start_decisions(True),
+            width=button_width,
         )
-        self.decisions_apply_btn.grid(
-            row=1, column=1, sticky="ew", padx=6, pady=(6, 0)
-        )
-        self.open_btn = ttk.Button(
-            actions, text="Open report", command=self._open_report, state="disabled"
-        )
-        self.open_btn.grid(row=1, column=2, sticky="ew", padx=(6, 0), pady=(6, 0))
-        self.stop_btn = ttk.Button(
-            actions, text="Stop", command=self._request_stop, state="disabled"
-        )
-        self.stop_btn.grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0)
-        )
-
+        self.decisions_apply_btn.grid(row=4, column=0, sticky="ew")
         status_frame = ttk.Frame(run_tab)
         status_frame.grid(row=2, column=0, sticky="ew")
         status_frame.grid_columnconfigure(1, weight=1)
@@ -254,10 +250,18 @@ class GuiApp:
             row=0, column=1, sticky="e"
         )
 
+        progress_frame = ttk.Frame(run_tab)
+        progress_frame.grid(row=3, column=0, sticky="ew", pady=(4, 8))
+        progress_frame.grid_columnconfigure(0, weight=1)
+
         self.progress = ttk.Progressbar(
-            run_tab, mode="determinate", maximum=1, value=0
+            progress_frame, mode="determinate", maximum=1, value=0
         )
-        self.progress.grid(row=3, column=0, sticky="ew", pady=(4, 8))
+        self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self.stop_btn = ttk.Button(
+            progress_frame, text="Stop", command=self._request_stop, state="disabled"
+        )
+        self.stop_btn.grid(row=0, column=1, sticky="e")
 
         log_frame = ttk.Frame(run_tab)
         log_frame.grid(row=4, column=0, sticky="nsew")
