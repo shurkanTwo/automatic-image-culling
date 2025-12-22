@@ -1,46 +1,42 @@
-# Example configuration for ARW preprocessing and analysis
-input_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi
-output_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi/output
-preview_dir: /mnt/c/Users/lucas/Desktop/03_Varanasi/previews
+input_dir: input
+output_dir: output
+preview_dir: previews
 preview:
   long_edge: 2048
   format: webp
   quality: 85
-exclude_dirs:
-  - ./output
-  - ./previews
-concurrency: 4
 analysis:
-  sharpness_min: 40.0
-  tenengrad_min: 900.0
-  motion_ratio_min: 0.02
-  noise_std_max: 25.0
+  sharpness_min: 8.0
   brightness_min: 0.08
   brightness_max: 0.92
+  duplicate_hamming: 6
+  duplicate_window_seconds: 8.0
+  tenengrad_min: 200.0
+  motion_ratio_min: 0.02
+  noise_std_max: 25.0
+  face:
+    enabled: true
+    backend: mediapipe
+    det_size: 640
+    ctx_id: 0
+    allowed_modules:
+    - detection
+    - recognition
+  report_path: ./report.html
+  results_path: ./analysis.json
+  shadows_min: 0.0
+  shadows_max: 0.5
+  highlights_min: 0.0
+  highlights_max: 0.1
   quality_score_min: 0.75
-  shadows_min: 0.01
-  shadows_max: 0.6
-  highlights_min: 0.01
-  highlights_max: 0.98
   hard_fail_sharp_ratio: 0.55
+  hard_fail_sharp_center_ratio: 0.55
   hard_fail_teneng_ratio: 0.55
   hard_fail_motion_ratio: 0.55
   hard_fail_brightness_ratio: 0.5
   hard_fail_noise_ratio: 0.45
   hard_fail_shadows_ratio: 0.5
   hard_fail_highlights_ratio: 0.5
-  hard_fail_sharp_center_ratio: 0.55
-  center_sharpness_min: 12.0
   hard_fail_composition_ratio: 0.4
-  duplicate_hamming: 6
-  duplicate_window_seconds: 5
-  face:
-    enabled: False
-    backend: insightface
-    det_size: 640
-    ctx_id: 0
-    allowed_modules:
-      - detection
-      - recognition
-  report_path: ./report.html
-  results_path: ./analysis.json
+  duplicate_bucket_bits: 8
+concurrency: 4
