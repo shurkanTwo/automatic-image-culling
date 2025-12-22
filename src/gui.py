@@ -706,6 +706,7 @@ class GuiApp:
             tooltip=tooltips["input_dir"],
             entry_width=60,
             center=True,
+            center_row=True,
         )
 
         actions = ttk.Frame(run_tab)
@@ -1391,19 +1392,30 @@ class GuiApp:
         tooltip: Optional[str] = None,
         entry_width: Optional[int] = None,
         center: bool = False,
+        center_row: bool = False,
     ) -> None:
-        label_widget = ttk.Label(parent, text=label)
-        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        row_parent = parent
+        label_pady = 4
+        entry_pady = 4
+        button_pady = 4
+        if center_row:
+            row_parent = ttk.Frame(parent)
+            row_parent.grid(row=row, column=0, columnspan=3, sticky="n", pady=4)
+            label_pady = 0
+            entry_pady = 0
+            button_pady = 0
+        label_widget = ttk.Label(row_parent, text=label)
+        label_widget.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=label_pady)
         entry = ttk.Entry(
-            parent,
+            row_parent,
             textvariable=variable,
             width=entry_width,
             justify="center" if center else "left",
         )
-        entry_sticky = "" if center else "ew"
-        entry.grid(row=row, column=1, sticky=entry_sticky, pady=4)
-        button = ttk.Button(parent, text="Browse", command=browse_cmd)
-        button.grid(row=row, column=2, sticky="ew", pady=4, padx=(4, 0))
+        entry_sticky = "" if center or center_row else "ew"
+        entry.grid(row=0, column=1, sticky=entry_sticky, pady=entry_pady)
+        button = ttk.Button(row_parent, text="Browse", command=browse_cmd)
+        button.grid(row=0, column=2, sticky="ew", pady=button_pady, padx=(4, 0))
         if tooltip:
             self._add_tooltip(label_widget, tooltip)
             self._add_tooltip(entry, tooltip)
