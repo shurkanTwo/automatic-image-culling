@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, TypedDict, cast
 
 from .config import AppConfig
+from .paths import input_dir_from_cfg, output_dir_for_input
 
 
 class DecisionEntry(TypedDict, total=False):
@@ -105,9 +106,8 @@ def apply_decisions(
     """
     entries = _load_decisions(decisions_path)
     total = len(entries)
-    input_dir_val = cfg.get("input_dir")
-    input_dir = pathlib.Path(input_dir_val) if input_dir_val else None
-    output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
+    input_dir = input_dir_from_cfg(cfg)
+    output_dir = output_dir_for_input(input_dir)
     keep_root = output_dir / keep_subdir
     discard_root = output_dir / discard_subdir
     if apply:

@@ -33,6 +33,14 @@ from .config import (
     load_config,
     save_config,
 )
+from .paths import (
+    analysis_dir_for_input,
+    decisions_path_for_input,
+    drop_path_config,
+    input_dir_from_cfg,
+    output_dir_for_input,
+    preview_dir_for_input,
+)
 from .decisions import apply_decisions
 from .discovery import capture_date, find_arw_files, read_exif
 from .preview import generate_preview
@@ -47,8 +55,13 @@ class _CancelError(Exception):
 def _exclude_list(cfg: AppConfig) -> list[str]:
     """Return a de-duplicated list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
+    input_dir = input_dir_from_cfg(cfg)
     exclude_dirs.extend(
-        [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
+        [
+            str(analysis_dir_for_input(input_dir)),
+            str(output_dir_for_input(input_dir)),
+            str(preview_dir_for_input(input_dir)),
+        ]
     )
     return list(dict.fromkeys(exclude_dirs))
 
@@ -97,9 +110,6 @@ class GuiApp:
         self.running = False
 
         self.input_var = tk.StringVar()
-        self.output_var = tk.StringVar()
-        self.preview_var = tk.StringVar()
-        self.decisions_var = tk.StringVar()
         self.config_var = tk.StringVar()
         self.preview_long_edge_var = tk.StringVar()
         self.preview_format_var = tk.StringVar()
@@ -190,23 +200,6 @@ class GuiApp:
 
         self._add_path_row(
             form, 0, "Input folder", self.input_var, self._browse_input
-        )
-        self._add_path_row(
-            form, 1, "Output folder", self.output_var, self._browse_output
-        )
-        self._add_path_row(
-            form, 2, "Preview folder", self.preview_var, self._browse_preview
-        )
-
-        decisions_label = ttk.Label(form, text="Decisions file")
-        decisions_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
-        self.decisions_entry = ttk.Entry(form, textvariable=self.decisions_var)
-        self.decisions_entry.grid(row=3, column=1, sticky="ew", pady=4)
-        self.decisions_browse_btn = ttk.Button(
-            form, text="Browse", command=self._browse_decisions
-        )
-        self.decisions_browse_btn.grid(
-            row=3, column=2, sticky="ew", pady=4, padx=(4, 0)
         )
 
         actions = ttk.Frame(run_tab)
@@ -583,14 +576,8 @@ class GuiApp:
         self._bind_mousewheel_recursive(config_body, config_canvas)
 
         self.input_entry = self._entry_by_var(self.input_var, form)
-        self.output_entry = self._entry_by_var(self.output_var, form)
-        self.preview_entry = self._entry_by_var(self.preview_var, form)
         self._controls = [
             self.input_entry,
-            self.output_entry,
-            self.preview_entry,
-            self.decisions_entry,
-            self.decisions_browse_btn,
             self.scan_btn,
             self.previews_btn,
             self.analyze_btn,
@@ -658,8 +645,6 @@ class GuiApp:
 
     def _apply_config_to_vars(self, cfg: AppConfig) -> None:
         self.input_var.set(cfg.get("input_dir", ""))
-        self.output_var.set(cfg.get("output_dir", ""))
-        self.preview_var.set(cfg.get("preview_dir", ""))
         self.exclude_dirs_var.set(
             self._format_list(cfg.get("exclude_dirs", []))
         )
@@ -782,16 +767,11 @@ class GuiApp:
     def _collect_config(self) -> AppConfig:
         cfg_path = self.config_var.get().strip()
         cfg = load_config(cfg_path or None)
+        drop_path_config(cfg)
 
         input_dir = self.input_var.get().strip()
-        output_dir = self.output_var.get().strip()
-        preview_dir = self.preview_var.get().strip()
         if input_dir:
             cfg["input_dir"] = _clean_path(input_dir)
-        if output_dir:
-            cfg["output_dir"] = _clean_path(output_dir)
-        if preview_dir:
-            cfg["preview_dir"] = _clean_path(preview_dir)
 
         exclude_dirs = self._parse_list(self.exclude_dirs_var.get())
         if exclude_dirs:
@@ -990,16 +970,13 @@ class GuiApp:
             self.config_var.set("config.yaml")
         cfg_path = self.config_var.get().strip()
         cfg = load_config(cfg_path or None)
+        drop_path_config(cfg)
         self._apply_config_to_vars(cfg)
-        self._maybe_set_decisions_path(cfg)
 
     def _bind_state_refresh(self) -> None:
         for var in (
             self.input_var,
-            self.output_var,
-            self.preview_var,
             self.preview_format_var,
-            self.decisions_var,
             self.config_var,
         ):
             var.trace_add("write", lambda *_: self._schedule_state_refresh())
@@ -1008,15 +985,6 @@ class GuiApp:
         if self._refresh_job is not None:
             return
         self._refresh_job = self.root.after(250, self._refresh_action_states)
-
-    def _maybe_set_decisions_path(self, cfg: AppConfig) -> None:
-        """Use output_dir/analysis/decisions.json when it exists."""
-        if self.decisions_var.get():
-            return
-        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-        candidate = output_dir / "analysis" / "decisions.json"
-        if candidate.exists():
-            self.decisions_var.set(str(candidate))
 
     @staticmethod
     def _entry_by_var(var: "tk.StringVar", parent: "tk.Widget") -> "ttk.Entry":
@@ -1112,22 +1080,6 @@ class GuiApp:
     def _browse_input(self) -> None:
         self._browse_directory(self.input_var, "Select input folder")
 
-    def _browse_output(self) -> None:
-        self._browse_directory(self.output_var, "Select output folder")
-
-    def _browse_preview(self) -> None:
-        self._browse_directory(self.preview_var, "Select preview folder")
-
-    def _browse_decisions(self) -> None:
-        if filedialog is None:
-            return
-        selected = filedialog.askopenfilename(
-            title="Select decisions.json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
-        if selected:
-            self.decisions_var.set(selected)
-
     def _browse_directory(self, var: "tk.StringVar", title: str) -> None:
         if filedialog is None:
             return
@@ -1155,15 +1107,13 @@ class GuiApp:
             self._show_message(f"Config not found: {cfg_path}")
             return
         cfg = load_config(str(cfg_path))
+        drop_path_config(cfg)
         self._apply_config_to_vars(cfg)
-        self._maybe_set_decisions_path(cfg)
         self._append_log(f"Loaded config from {cfg_path}")
 
     def _reset_config(self) -> None:
         cfg = default_config()
         self._apply_config_to_vars(cfg)
-        self.decisions_var.set("")
-        self._maybe_set_decisions_path(cfg)
         self._append_log("Reset config to defaults (not saved).")
 
     def _save_config(self) -> None:
@@ -1189,6 +1139,7 @@ class GuiApp:
             self.config_var.set(path)
         cfg_path = pathlib.Path(_clean_path(path))
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        drop_path_config(cfg)
         save_config(str(cfg_path), cfg)
         if log:
             self._append_log(f"Saved config to {cfg_path}")
@@ -1236,7 +1187,7 @@ class GuiApp:
         if apply_changes and messagebox is not None:
             confirm = messagebox.askyesno(
                 "Automatic Image Culling",
-                "This will move files based on decisions.json. Continue?",
+                "This will move files based on analysis/decisions.json. Continue?",
             )
             if not confirm:
                 return
@@ -1263,17 +1214,12 @@ class GuiApp:
     def _read_config_for_state(self) -> AppConfig:
         cfg_path = self.config_var.get().strip()
         cfg = load_config(cfg_path or None)
+        drop_path_config(cfg)
 
         input_dir = self.input_var.get().strip()
-        output_dir = self.output_var.get().strip()
-        preview_dir = self.preview_var.get().strip()
 
         if input_dir:
             cfg["input_dir"] = _clean_path(input_dir)
-        if output_dir:
-            cfg["output_dir"] = _clean_path(output_dir)
-        if preview_dir:
-            cfg["preview_dir"] = _clean_path(preview_dir)
 
         preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
         preview_format = self.preview_format_var.get().strip()
@@ -1286,8 +1232,8 @@ class GuiApp:
     @staticmethod
     def _resolve_analysis_paths(cfg: AppConfig) -> Tuple[pathlib.Path, pathlib.Path]:
         analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
-        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-        analysis_dir = output_dir / "analysis"
+        input_dir = input_dir_from_cfg(cfg)
+        analysis_dir = analysis_dir_for_input(input_dir)
 
         report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
         if not report_path.is_absolute():
@@ -1300,11 +1246,8 @@ class GuiApp:
         return report_path, results_path
 
     def _resolve_decisions_path(self, cfg: AppConfig) -> pathlib.Path:
-        raw = self.decisions_var.get().strip()
-        if raw:
-            return pathlib.Path(_clean_path(raw))
-        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-        return output_dir / "analysis" / "decisions.json"
+        input_dir = input_dir_from_cfg(cfg)
+        return decisions_path_for_input(input_dir)
 
     @staticmethod
     def _has_arw_files(directory: pathlib.Path) -> bool:
@@ -1336,9 +1279,8 @@ class GuiApp:
             return
 
         cfg = self._read_config_for_state()
-        input_dir = pathlib.Path(cfg.get("input_dir", ""))
-        output_dir = pathlib.Path(cfg.get("output_dir", "./output"))
-        preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
+        input_dir = input_dir_from_cfg(cfg)
+        preview_dir = preview_dir_for_input(input_dir)
         preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
         preview_fmt = str(preview_cfg.get("format", "webp"))
 
@@ -1350,8 +1292,6 @@ class GuiApp:
         analysis_done = report_path.exists() or results_path.exists()
 
         decisions_path = self._resolve_decisions_path(cfg)
-        if decisions_path.exists() and not self.decisions_var.get():
-            self.decisions_var.set(str(decisions_path))
         decisions_exist = decisions_path.exists()
 
         self.scan_btn.configure(state="normal" if input_exists else "disabled")
@@ -1366,8 +1306,8 @@ class GuiApp:
 
     def _run_scan(self, cfg: AppConfig) -> None:
         try:
-            input_dir = cfg.get("input_dir", "./input")
-            files = find_arw_files(input_dir, exclude_dirs=_exclude_list(cfg))
+            input_dir = input_dir_from_cfg(cfg)
+            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
@@ -1440,8 +1380,8 @@ class GuiApp:
 
     def _run_previews(self, cfg: AppConfig) -> None:
         try:
-            input_dir = cfg.get("input_dir", "./input")
-            files = find_arw_files(input_dir, exclude_dirs=_exclude_list(cfg))
+            input_dir = input_dir_from_cfg(cfg)
+            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
@@ -1455,7 +1395,7 @@ class GuiApp:
             self._send("log", f"Found {total} .ARW files.")
 
             preview_cfg = _preview_config(cfg)
-            preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
+            preview_dir = preview_dir_for_input(input_dir)
             preview_dir.mkdir(parents=True, exist_ok=True)
             workers = max(1, int(cfg.get("concurrency", 4) or 4))
             missing_dep = self._generate_previews(
@@ -1478,15 +1418,12 @@ class GuiApp:
 
     def _run_decisions(self, cfg: AppConfig, apply_changes: bool) -> None:
         try:
-            decisions_path = self.decisions_var.get().strip()
-            if not decisions_path:
-                self._send("error", "Decisions file is required.")
-                return
+            input_dir = input_dir_from_cfg(cfg)
             if self._cancel_event.is_set():
                 self._send("log", "Decisions cancelled.")
                 self._send("done", None)
                 return
-            decisions_file = pathlib.Path(_clean_path(decisions_path))
+            decisions_file = decisions_path_for_input(input_dir)
             if not decisions_file.exists():
                 self._send("error", f"Decisions file not found: {decisions_file}")
                 return
@@ -1535,8 +1472,8 @@ class GuiApp:
 
     def _run_analysis(self, cfg: AppConfig) -> None:
         try:
-            input_dir = cfg.get("input_dir", "./input")
-            files = find_arw_files(input_dir, exclude_dirs=_exclude_list(cfg))
+            input_dir = input_dir_from_cfg(cfg)
+            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
             if not files:
                 self._send("log", "No .ARW files found.")
                 self._send("done", None)
@@ -1550,7 +1487,7 @@ class GuiApp:
             self._send("log", f"Found {total} .ARW files.")
 
             preview_cfg = _preview_config(cfg)
-            preview_dir = pathlib.Path(cfg.get("preview_dir", "./previews"))
+            preview_dir = preview_dir_for_input(input_dir)
             preview_dir.mkdir(parents=True, exist_ok=True)
             workers = max(1, int(cfg.get("concurrency", 4) or 4))
             missing_dep = self._generate_previews(
@@ -1566,7 +1503,7 @@ class GuiApp:
                     "Preview generation unavailable; check rawpy/Pillow installation.",
                 )
 
-            analysis_dir = pathlib.Path(cfg.get("output_dir", "./output")) / "analysis"
+            analysis_dir = analysis_dir_for_input(input_dir)
             analysis_dir.mkdir(parents=True, exist_ok=True)
             analysis_cfg = _prepare_analysis_config(cfg, analysis_dir)
             cfg["analysis"] = analysis_cfg

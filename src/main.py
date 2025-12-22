@@ -17,6 +17,14 @@ from .discovery import (
     read_exif,
 )
 from .preview import ensure_preview, generate_preview
+from .paths import (
+    analysis_dir_for_input,
+    decisions_path_for_input,
+    drop_path_config,
+    input_dir_from_cfg,
+    output_dir_for_input,
+    preview_dir_for_input,
+)
 
 try:
     import tqdm  # type: ignore
@@ -51,8 +59,13 @@ class _Progress:
 def _exclude_list(cfg: AppConfig) -> List[str]:
     """Return a de-duplicated, deterministic list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
+    input_dir = input_dir_from_cfg(cfg)
     exclude_dirs.extend(
-        [cfg.get("output_dir", "./output"), cfg.get("preview_dir", "./previews")]
+        [
+            str(analysis_dir_for_input(input_dir)),
+            str(output_dir_for_input(input_dir)),
+            str(preview_dir_for_input(input_dir)),
+        ]
     )
     return list(dict.fromkeys(exclude_dirs))
 
@@ -66,9 +79,11 @@ def _preview_config(cfg: AppConfig) -> PreviewConfig:
     return preview_cfg
 
 
-def _preview_dir(cfg: AppConfig) -> pathlib.Path:
-    """Return the configured preview directory path."""
-    return pathlib.Path(cfg.get("preview_dir", "./previews"))
+def _load_app_config(path: Optional[str]) -> AppConfig:
+    """Load config and drop legacy path overrides."""
+    cfg = load_config(path)
+    drop_path_config(cfg)
+    return cfg
 
 
 def _prepare_analysis_config(
@@ -92,9 +107,10 @@ def _prepare_analysis_config(
 
 def scan_command(args: argparse.Namespace) -> None:
     """List .ARW files with basic metadata."""
-    cfg = load_config(args.config)
-    files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
-    print(f"Found {len(files)} .ARW files in {cfg['input_dir']}")
+    cfg = _load_app_config(args.config)
+    input_dir = input_dir_from_cfg(cfg)
+    files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
+    print(f"Found {len(files)} .ARW files in {input_dir}")
     bar = _Progress(len(files), "Scan")
 
     def _exif_with_fallback(path: pathlib.Path) -> Tuple[ExifData, _dt.datetime]:
@@ -120,13 +136,14 @@ def scan_command(args: argparse.Namespace) -> None:
 
 def previews_command(args: argparse.Namespace) -> None:
     """Generate preview images for each discovered RAW file."""
-    cfg = load_config(args.config)
+    cfg = _load_app_config(args.config)
     preview_cfg = _preview_config(cfg)
-    files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
+    input_dir = input_dir_from_cfg(cfg)
+    files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
         return
-    preview_dir = _preview_dir(cfg)
+    preview_dir = preview_dir_for_input(input_dir)
     bar = _Progress(len(files), "Previews")
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=cfg.get("concurrency", 4)
@@ -145,18 +162,19 @@ def previews_command(args: argparse.Namespace) -> None:
 
 def analyze_command(args: argparse.Namespace) -> None:
     """Run analysis pipeline and emit JSON and HTML outputs."""
-    cfg = load_config(args.config)
+    cfg = _load_app_config(args.config)
     preview_cfg = _preview_config(cfg)
-    files = find_arw_files(cfg["input_dir"], exclude_dirs=_exclude_list(cfg))
+    input_dir = input_dir_from_cfg(cfg)
+    files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
     if not files:
         print("No .ARW files found")
         return
 
-    preview_dir = _preview_dir(cfg)
+    preview_dir = preview_dir_for_input(input_dir)
     for path in files:
         ensure_preview(path, preview_dir, preview_cfg)
 
-    analysis_dir = pathlib.Path(cfg.get("output_dir", "./output")) / "analysis"
+    analysis_dir = analysis_dir_for_input(input_dir)
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     analysis_cfg = _prepare_analysis_config(cfg, analysis_dir)
@@ -179,8 +197,9 @@ def analyze_command(args: argparse.Namespace) -> None:
 
 def decisions_command(args: argparse.Namespace) -> None:
     """Apply decisions.json and move/copy files into keep/discard folders."""
-    cfg = load_config(args.config)
-    decisions_path = pathlib.Path(args.decisions)
+    cfg = _load_app_config(args.config)
+    input_dir = input_dir_from_cfg(cfg)
+    decisions_path = decisions_path_for_input(input_dir)
     if not decisions_path.exists():
         print(f"Decisions file not found: {decisions_path}")
         return
@@ -233,10 +252,8 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.set_defaults(func=analyze_command)
 
     decisions = sub.add_parser(
-        "decisions", help="Apply decisions.json to move/copy files"
-    )
-    decisions.add_argument(
-        "--decisions", required=True, help="Path to decisions.json"
+        "decisions",
+        help="Apply analysis/decisions.json to move/copy files",
     )
     decisions.add_argument(
         "--apply",

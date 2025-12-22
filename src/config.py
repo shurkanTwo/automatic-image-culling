@@ -64,8 +64,6 @@ class AppConfig(TypedDict, total=False):
     """Top-level application configuration."""
 
     input_dir: str
-    output_dir: str
-    preview_dir: str
     preview: PreviewConfig
     analysis: AnalysisConfig
     concurrency: int
@@ -74,9 +72,8 @@ class AppConfig(TypedDict, total=False):
 
 DEFAULT_CONFIG: AppConfig = {
     "input_dir": "./input",
-    "output_dir": "./output",
-    "preview_dir": "./previews",
     "preview": {"long_edge": 2048, "format": "webp", "quality": 85},
+    "exclude_dirs": ["analysis", "output", "previews"],
     "analysis": {
         "sharpness_min": 8.0,
         "brightness_min": 0.08,
