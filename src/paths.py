@@ -15,9 +15,7 @@ DECISIONS_FILENAME = "decisions.json"
 
 def input_dir_from_cfg(cfg: Mapping[str, Any]) -> pathlib.Path:
     """Return the input directory from config."""
-    return pathlib.Path(
-        cfg.get("input_dir", DEFAULT_CONFIG["input_dir"])
-    ).expanduser()
+    return pathlib.Path(cfg.get("input_dir", DEFAULT_CONFIG["input_dir"])).expanduser()
 
 
 def output_dir_for_input(input_dir: pathlib.Path) -> pathlib.Path:

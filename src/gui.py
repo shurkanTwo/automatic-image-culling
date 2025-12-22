@@ -267,7 +267,9 @@ class GuiApp:
         container.grid_rowconfigure(1, weight=1)
 
         title = ttk.Label(
-            container, text="Automatic Image Culling", font=("TkDefaultFont", 15, "bold")
+            container,
+            text="Automatic Image Culling",
+            font=("TkDefaultFont", 15, "bold"),
         )
         title.grid(row=0, column=0, sticky="w", pady=(0, 8))
 
@@ -284,12 +286,10 @@ class GuiApp:
 
         tooltips = {
             "input_dir": (
-                "Folder that contains RAW images to process.\n"
-                "Default: ./input."
+                "Folder that contains RAW images to process.\n" "Default: ./input."
             ),
             "config_file": (
-                "YAML configuration file to load/save.\n"
-                "Default: config.yaml."
+                "YAML configuration file to load/save.\n" "Default: config.yaml."
             ),
             "concurrency": (
                 "Number of worker threads used for preview generation and analysis.\n"
@@ -309,8 +309,7 @@ class GuiApp:
                 "Default: webp."
             ),
             "preview_quality": (
-                "Compression quality for previews.\n"
-                "Default: 85. Range: 0-100."
+                "Compression quality for previews.\n" "Default: 85. Range: 0-100."
             ),
             "sharpness_min": (
                 "Minimum focus score (variance of Laplacian) to avoid rejection.\n"
@@ -418,8 +417,7 @@ class GuiApp:
                 "Default: ./analysis.json."
             ),
             "face_enabled": (
-                "Toggle face detection and scoring during analysis.\n"
-                "Default: true."
+                "Toggle face detection and scoring during analysis.\n" "Default: true."
             ),
             "face_backend": (
                 "Face detection backend.\n"
@@ -430,8 +428,7 @@ class GuiApp:
                 "Default: 640. Range: >=1."
             ),
             "face_ctx_id": (
-                "InsightFace device index (GPU id).\n"
-                "Default: 0. Range: integer."
+                "InsightFace device index (GPU id).\n" "Default: 0. Range: integer."
             ),
             "face_allowed_modules": (
                 "InsightFace modules to load (comma-separated).\n"
@@ -547,27 +544,19 @@ class GuiApp:
         self.config_browse_btn = ttk.Button(
             config_file_frame, text="Browse", command=self._browse_config
         )
-        self.config_browse_btn.grid(
-            row=0, column=2, sticky="ew", pady=4, padx=(4, 0)
-        )
+        self.config_browse_btn.grid(row=0, column=2, sticky="ew", pady=4, padx=(4, 0))
         self.config_load_btn = ttk.Button(
             config_file_frame, text="Reload", command=self._load_config
         )
-        self.config_load_btn.grid(
-            row=0, column=3, sticky="ew", pady=4, padx=(4, 0)
-        )
+        self.config_load_btn.grid(row=0, column=3, sticky="ew", pady=4, padx=(4, 0))
         self.config_save_btn = ttk.Button(
             config_file_frame, text="Save", command=self._save_config
         )
-        self.config_save_btn.grid(
-            row=0, column=4, sticky="ew", pady=4, padx=(4, 0)
-        )
+        self.config_save_btn.grid(row=0, column=4, sticky="ew", pady=4, padx=(4, 0))
         self.config_reset_btn = ttk.Button(
             config_file_frame, text="Reset to defaults", command=self._reset_config
         )
-        self.config_reset_btn.grid(
-            row=0, column=5, sticky="ew", pady=4, padx=(4, 0)
-        )
+        self.config_reset_btn.grid(row=0, column=5, sticky="ew", pady=4, padx=(4, 0))
         config_controls.extend(
             [
                 self.config_entry,
@@ -1000,9 +989,7 @@ class GuiApp:
             self._format_list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
         )
         self.concurrency_var.set(
-            self._format_number(
-                cfg.get("concurrency", DEFAULT_CONFIG["concurrency"])
-            )
+            self._format_number(cfg.get("concurrency", DEFAULT_CONFIG["concurrency"]))
         )
 
         preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
@@ -1217,18 +1204,10 @@ class GuiApp:
 
         face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
         self.analysis_face_enabled_var.set(
-            bool(
-                face_cfg.get(
-                    "enabled", DEFAULT_CONFIG["analysis"]["face"]["enabled"]
-                )
-            )
+            bool(face_cfg.get("enabled", DEFAULT_CONFIG["analysis"]["face"]["enabled"]))
         )
         self.analysis_face_backend_var.set(
-            str(
-                face_cfg.get(
-                    "backend", DEFAULT_CONFIG["analysis"]["face"]["backend"]
-                )
-            )
+            str(face_cfg.get("backend", DEFAULT_CONFIG["analysis"]["face"]["backend"]))
         )
         self.analysis_face_det_size_var.set(
             self._format_number(
@@ -1243,9 +1222,7 @@ class GuiApp:
         allowed_modules = face_cfg.get(
             "allowed_modules", DEFAULT_CONFIG["analysis"]["face"]["allowed_modules"]
         )
-        self.analysis_face_allowed_modules_var.set(
-            self._format_list(allowed_modules)
-        )
+        self.analysis_face_allowed_modules_var.set(self._format_list(allowed_modules))
         providers = face_cfg.get("providers")
         self.analysis_face_providers_var.set(
             self._format_list(providers) if providers is not None else ""
@@ -1266,7 +1243,9 @@ class GuiApp:
         else:
             cfg.pop("exclude_dirs", None)
 
-        concurrency = self._parse_optional_int(self.concurrency_var.get(), "Concurrency")
+        concurrency = self._parse_optional_int(
+            self.concurrency_var.get(), "Concurrency"
+        )
         if concurrency is not None:
             cfg["concurrency"] = concurrency
 
@@ -1434,9 +1413,7 @@ class GuiApp:
         )
         if ctx_id is not None:
             face_cfg["ctx_id"] = ctx_id
-        allowed_modules = self._parse_list(
-            self.analysis_face_allowed_modules_var.get()
-        )
+        allowed_modules = self._parse_list(self.analysis_face_allowed_modules_var.get())
         if allowed_modules:
             face_cfg["allowed_modules"] = allowed_modules
         else:
@@ -1547,9 +1524,7 @@ class GuiApp:
             return
         self._tooltips.append(_Tooltip(widget, text))
 
-    def _on_mousewheel(
-        self, canvas: "tk.Canvas", event: "tk.Event"
-    ) -> str:
+    def _on_mousewheel(self, canvas: "tk.Canvas", event: "tk.Event") -> str:
         if getattr(event, "num", None) == 4 or event.delta > 0:
             canvas.yview_scroll(-1, "units")
         elif getattr(event, "num", None) == 5 or event.delta < 0:

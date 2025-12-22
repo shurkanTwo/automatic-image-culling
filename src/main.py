@@ -8,7 +8,13 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
-from .config import DEFAULT_CONFIG, AnalysisConfig, AppConfig, PreviewConfig, load_config
+from .config import (
+    DEFAULT_CONFIG,
+    AnalysisConfig,
+    AppConfig,
+    PreviewConfig,
+    load_config,
+)
 from .decisions import apply_decisions
 from .discovery import (
     ExifData,

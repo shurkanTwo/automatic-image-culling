@@ -113,9 +113,7 @@ class Thresholds:
             cfg.get("tenengrad_min", DEFAULT_CONFIG["analysis"]["tenengrad_min"])
         )
         motion_min = float(
-            cfg.get(
-                "motion_ratio_min", DEFAULT_CONFIG["analysis"]["motion_ratio_min"]
-            )
+            cfg.get("motion_ratio_min", DEFAULT_CONFIG["analysis"]["motion_ratio_min"])
         )
 
         sharp_factor = 1.0
@@ -435,9 +433,7 @@ def _suggest_keep(
     thresholds = Thresholds.from_config(cfg, exif)
     hard_cfg = _hard_fail_thresholds(cfg)
     cutoff = float(
-        cfg.get(
-            "quality_score_min", DEFAULT_CONFIG["analysis"]["quality_score_min"]
-        )
+        cfg.get("quality_score_min", DEFAULT_CONFIG["analysis"]["quality_score_min"])
     )
     score_breakdown = _score_metrics(metrics, thresholds)
     hard_fail = any(
@@ -458,7 +454,9 @@ def _suggest_keep(
             metrics.highlights > thresholds.highlights_max,
         )
     )
-    keep = score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
+    keep = (
+        score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
+    )
     reasons = _quality_reasons(
         metrics,
         thresholds,
