@@ -114,6 +114,11 @@ def _clone_defaults() -> AppConfig:
     return copy.deepcopy(DEFAULT_CONFIG)
 
 
+def default_config() -> AppConfig:
+    """Return a deep copy of the default configuration."""
+    return _clone_defaults()
+
+
 def load_config(path: Optional[str]) -> AppConfig:
     """
     Load configuration from YAML if present; otherwise return defaults.
