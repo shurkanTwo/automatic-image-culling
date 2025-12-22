@@ -39,7 +39,7 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 
 ## Configuration
 
-- See `config.example.yaml` for a minimal override template; defaults live in the app/GUI.
+- Defaults live in the app/GUI; use the Configuration tab to save `config.yaml`.
 - `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Under WSL, set `output_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
 
