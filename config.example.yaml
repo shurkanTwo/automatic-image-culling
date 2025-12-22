@@ -1,4 +1,0 @@
-# Example configuration. Defaults live in the app/GUI; set overrides as needed.
-input_dir: /path/to/input
-output_dir: /path/to/output
-preview_dir: /path/to/previews
