@@ -4,10 +4,11 @@ import json
 import pathlib
 from typing import Any, Dict, Mapping, Optional, Sequence
 
-TEMPLATE_FILE = pathlib.Path(__file__).with_name("report_template.html")
-CSS_FILE = pathlib.Path(__file__).with_name("report.css")
-BOOTSTRAP_CSS_FILE = pathlib.Path(__file__).with_name("bootstrap_5_3_8.min.css")
-JS_FILE = pathlib.Path(__file__).with_name("report.js")
+ASSETS_DIR = pathlib.Path(__file__).parent / "assets" / "report"
+TEMPLATE_FILE = ASSETS_DIR / "report_template.html"
+CSS_FILE = ASSETS_DIR / "report.css"
+BOOTSTRAP_CSS_FILE = ASSETS_DIR / "bootstrap_5_3_8.min.css"
+JS_FILE = ASSETS_DIR / "report.js"
 
 
 def _write_sidecar(source: pathlib.Path, target: pathlib.Path) -> None:
