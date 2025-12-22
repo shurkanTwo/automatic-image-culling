@@ -29,6 +29,7 @@ from .config import (
     AppConfig,
     FaceConfig,
     PreviewConfig,
+    default_config,
     load_config,
     save_config,
 )
@@ -309,12 +310,19 @@ class GuiApp:
         self.config_save_btn.grid(
             row=0, column=4, sticky="ew", pady=4, padx=(4, 0)
         )
+        self.config_reset_btn = ttk.Button(
+            config_file_frame, text="Reset to defaults", command=self._reset_config
+        )
+        self.config_reset_btn.grid(
+            row=0, column=5, sticky="ew", pady=4, padx=(4, 0)
+        )
         config_controls.extend(
             [
                 self.config_entry,
                 self.config_browse_btn,
                 self.config_load_btn,
                 self.config_save_btn,
+                self.config_reset_btn,
             ]
         )
 
@@ -571,6 +579,8 @@ class GuiApp:
             self.analysis_face_providers_var,
         )
         config_controls.append(entry)
+
+        self._bind_mousewheel_recursive(config_body, config_canvas)
 
         self.input_entry = self._entry_by_var(self.input_var, form)
         self.output_entry = self._entry_by_var(self.output_var, form)
@@ -1069,6 +1079,36 @@ class GuiApp:
         entry.grid(row=row, column=1, sticky="ew", pady=4)
         return entry
 
+    def _on_mousewheel(
+        self, canvas: "tk.Canvas", event: "tk.Event"
+    ) -> str:
+        if getattr(event, "num", None) == 4 or event.delta > 0:
+            canvas.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5 or event.delta < 0:
+            canvas.yview_scroll(1, "units")
+        return "break"
+
+    def _bind_mousewheel_recursive(
+        self, widget: "tk.Widget", canvas: "tk.Canvas"
+    ) -> None:
+        widget.bind(
+            "<MouseWheel>",
+            lambda event, target=canvas: self._on_mousewheel(target, event),
+            add="+",
+        )
+        widget.bind(
+            "<Button-4>",
+            lambda event, target=canvas: self._on_mousewheel(target, event),
+            add="+",
+        )
+        widget.bind(
+            "<Button-5>",
+            lambda event, target=canvas: self._on_mousewheel(target, event),
+            add="+",
+        )
+        for child in widget.winfo_children():
+            self._bind_mousewheel_recursive(child, canvas)
+
     def _browse_input(self) -> None:
         self._browse_directory(self.input_var, "Select input folder")
 
@@ -1118,6 +1158,13 @@ class GuiApp:
         self._apply_config_to_vars(cfg)
         self._maybe_set_decisions_path(cfg)
         self._append_log(f"Loaded config from {cfg_path}")
+
+    def _reset_config(self) -> None:
+        cfg = default_config()
+        self._apply_config_to_vars(cfg)
+        self.decisions_var.set("")
+        self._maybe_set_decisions_path(cfg)
+        self._append_log("Reset config to defaults (not saved).")
 
     def _save_config(self) -> None:
         path = self.config_var.get().strip()
