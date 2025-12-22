@@ -9,7 +9,8 @@ import queue
 import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Optional, Tuple, cast
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
 
 try:
     import tkinter as tk
@@ -140,6 +141,292 @@ class _Tooltip:
 def _clean_path(value: str) -> str:
     """Normalize user-provided path strings."""
     return str(pathlib.Path(value).expanduser())
+
+
+@dataclass(frozen=True)
+class _FieldSpec:
+    var_name: str
+    key: str
+    default: object
+    kind: str
+    label: str = ""
+    empty_action: str = "skip"
+    normalizer: Optional[Callable[[Any], Any]] = None
+
+
+APP_FIELDS = [
+    _FieldSpec(
+        "input_var",
+        "input_dir",
+        DEFAULT_CONFIG["input_dir"],
+        "str",
+        normalizer=_clean_path,
+    ),
+    _FieldSpec(
+        "exclude_dirs_var",
+        "exclude_dirs",
+        DEFAULT_CONFIG["exclude_dirs"],
+        "list",
+        empty_action="remove",
+    ),
+    _FieldSpec(
+        "concurrency_var",
+        "concurrency",
+        DEFAULT_CONFIG["concurrency"],
+        "int",
+        label="Concurrency",
+    ),
+]
+
+PREVIEW_FIELDS = [
+    _FieldSpec(
+        "preview_long_edge_var",
+        "long_edge",
+        DEFAULT_CONFIG["preview"]["long_edge"],
+        "int",
+        label="Preview long edge",
+    ),
+    _FieldSpec(
+        "preview_format_var",
+        "format",
+        DEFAULT_CONFIG["preview"]["format"],
+        "str",
+    ),
+    _FieldSpec(
+        "preview_quality_var",
+        "quality",
+        DEFAULT_CONFIG["preview"]["quality"],
+        "int",
+        label="Preview quality",
+    ),
+]
+
+ANALYSIS_FIELDS = [
+    _FieldSpec(
+        "analysis_sharpness_min_var",
+        "sharpness_min",
+        DEFAULT_CONFIG["analysis"]["sharpness_min"],
+        "float",
+        label="Sharpness min",
+    ),
+    _FieldSpec(
+        "analysis_center_sharpness_min_var",
+        "center_sharpness_min",
+        None,
+        "float",
+        label="Center sharpness min",
+        empty_action="remove",
+    ),
+    _FieldSpec(
+        "analysis_tenengrad_min_var",
+        "tenengrad_min",
+        DEFAULT_CONFIG["analysis"]["tenengrad_min"],
+        "float",
+        label="Tenengrad min",
+    ),
+    _FieldSpec(
+        "analysis_motion_ratio_min_var",
+        "motion_ratio_min",
+        DEFAULT_CONFIG["analysis"]["motion_ratio_min"],
+        "float",
+        label="Motion ratio min",
+    ),
+    _FieldSpec(
+        "analysis_noise_std_max_var",
+        "noise_std_max",
+        DEFAULT_CONFIG["analysis"]["noise_std_max"],
+        "float",
+        label="Noise std max",
+    ),
+    _FieldSpec(
+        "analysis_brightness_min_var",
+        "brightness_min",
+        DEFAULT_CONFIG["analysis"]["brightness_min"],
+        "float",
+        label="Brightness min",
+    ),
+    _FieldSpec(
+        "analysis_brightness_max_var",
+        "brightness_max",
+        DEFAULT_CONFIG["analysis"]["brightness_max"],
+        "float",
+        label="Brightness max",
+    ),
+    _FieldSpec(
+        "analysis_shadows_min_var",
+        "shadows_min",
+        DEFAULT_CONFIG["analysis"]["shadows_min"],
+        "float",
+        label="Shadows min",
+    ),
+    _FieldSpec(
+        "analysis_shadows_max_var",
+        "shadows_max",
+        DEFAULT_CONFIG["analysis"]["shadows_max"],
+        "float",
+        label="Shadows max",
+    ),
+    _FieldSpec(
+        "analysis_highlights_min_var",
+        "highlights_min",
+        DEFAULT_CONFIG["analysis"]["highlights_min"],
+        "float",
+        label="Highlights min",
+    ),
+    _FieldSpec(
+        "analysis_highlights_max_var",
+        "highlights_max",
+        DEFAULT_CONFIG["analysis"]["highlights_max"],
+        "float",
+        label="Highlights max",
+    ),
+    _FieldSpec(
+        "analysis_quality_score_min_var",
+        "quality_score_min",
+        DEFAULT_CONFIG["analysis"]["quality_score_min"],
+        "float",
+        label="Quality score min",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_sharp_ratio_var",
+        "hard_fail_sharp_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_sharp_ratio"],
+        "float",
+        label="Sharpness ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_sharp_center_ratio_var",
+        "hard_fail_sharp_center_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_sharp_center_ratio"],
+        "float",
+        label="Center sharpness ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_teneng_ratio_var",
+        "hard_fail_teneng_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_teneng_ratio"],
+        "float",
+        label="Tenengrad ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_motion_ratio_var",
+        "hard_fail_motion_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_motion_ratio"],
+        "float",
+        label="Motion ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_brightness_ratio_var",
+        "hard_fail_brightness_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_brightness_ratio"],
+        "float",
+        label="Brightness ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_noise_ratio_var",
+        "hard_fail_noise_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_noise_ratio"],
+        "float",
+        label="Noise ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_shadows_ratio_var",
+        "hard_fail_shadows_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_shadows_ratio"],
+        "float",
+        label="Shadows ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_highlights_ratio_var",
+        "hard_fail_highlights_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_highlights_ratio"],
+        "float",
+        label="Highlights ratio",
+    ),
+    _FieldSpec(
+        "analysis_hard_fail_composition_ratio_var",
+        "hard_fail_composition_ratio",
+        DEFAULT_CONFIG["analysis"]["hard_fail_composition_ratio"],
+        "float",
+        label="Composition ratio",
+    ),
+    _FieldSpec(
+        "analysis_duplicate_hamming_var",
+        "duplicate_hamming",
+        DEFAULT_CONFIG["analysis"]["duplicate_hamming"],
+        "int",
+        label="Duplicate hamming",
+    ),
+    _FieldSpec(
+        "analysis_duplicate_window_seconds_var",
+        "duplicate_window_seconds",
+        DEFAULT_CONFIG["analysis"]["duplicate_window_seconds"],
+        "float",
+        label="Duplicate window seconds",
+    ),
+    _FieldSpec(
+        "analysis_duplicate_bucket_bits_var",
+        "duplicate_bucket_bits",
+        DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
+        "int",
+        label="Duplicate bucket bits",
+    ),
+    _FieldSpec(
+        "analysis_report_path_var",
+        "report_path",
+        DEFAULT_CONFIG["analysis"]["report_path"],
+        "str",
+    ),
+    _FieldSpec(
+        "analysis_results_path_var",
+        "results_path",
+        DEFAULT_CONFIG["analysis"]["results_path"],
+        "str",
+    ),
+]
+
+FACE_FIELDS = [
+    _FieldSpec(
+        "analysis_face_enabled_var",
+        "enabled",
+        DEFAULT_CONFIG["analysis"]["face"]["enabled"],
+        "bool",
+    ),
+    _FieldSpec(
+        "analysis_face_backend_var",
+        "backend",
+        DEFAULT_CONFIG["analysis"]["face"]["backend"],
+        "str",
+    ),
+    _FieldSpec(
+        "analysis_face_det_size_var",
+        "det_size",
+        DEFAULT_CONFIG["analysis"]["face"]["det_size"],
+        "int",
+        label="Detection size",
+    ),
+    _FieldSpec(
+        "analysis_face_ctx_id_var",
+        "ctx_id",
+        DEFAULT_CONFIG["analysis"]["face"]["ctx_id"],
+        "int",
+        label="Context id",
+    ),
+    _FieldSpec(
+        "analysis_face_allowed_modules_var",
+        "allowed_modules",
+        DEFAULT_CONFIG["analysis"]["face"]["allowed_modules"],
+        "list",
+        empty_action="remove",
+    ),
+    _FieldSpec(
+        "analysis_face_providers_var",
+        "providers",
+        None,
+        "list",
+        empty_action="remove",
+    ),
+]
 
 
 class GuiApp:
@@ -939,446 +1226,88 @@ class GuiApp:
                     items.append(part)
         return items
 
+    @staticmethod
+    def _parse_optional_str(value: str) -> Optional[str]:
+        value = value.strip()
+        return value or None
+
+    def _parse_field_value(self, spec: _FieldSpec, raw: str) -> Optional[Any]:
+        if spec.kind == "int":
+            return self._parse_optional_int(raw, spec.label)
+        if spec.kind == "float":
+            return self._parse_optional_float(raw, spec.label)
+        if spec.kind == "list":
+            return self._parse_list(raw)
+        if spec.kind == "str":
+            return self._parse_optional_str(raw)
+        return None
+
+    def _apply_field_specs(
+        self, cfg: Mapping[str, Any], specs: Sequence[_FieldSpec]
+    ) -> None:
+        for spec in specs:
+            value = cfg.get(spec.key, spec.default)
+            var = getattr(self, spec.var_name)
+            if spec.kind == "bool":
+                var.set(bool(value))
+            elif spec.kind == "list":
+                var.set(self._format_list(value))
+            elif spec.kind in {"int", "float"}:
+                var.set(self._format_number(value))
+            else:
+                var.set("" if value is None else str(value))
+
+    def _collect_field_specs(
+        self, cfg: MutableMapping[str, Any], specs: Sequence[_FieldSpec]
+    ) -> None:
+        for spec in specs:
+            var = getattr(self, spec.var_name)
+            if spec.kind == "bool":
+                cfg[spec.key] = bool(var.get())
+                continue
+            raw = var.get()
+            parsed = self._parse_field_value(spec, raw)
+            if spec.kind == "list":
+                if parsed:
+                    cfg[spec.key] = parsed
+                elif spec.empty_action == "remove":
+                    cfg.pop(spec.key, None)
+                continue
+            if parsed is None:
+                if spec.empty_action == "remove":
+                    cfg.pop(spec.key, None)
+                continue
+            if spec.normalizer is not None:
+                parsed = spec.normalizer(parsed)
+            cfg[spec.key] = parsed
+
     def _apply_config_to_vars(self, cfg: AppConfig) -> None:
-        self.input_var.set(cfg.get("input_dir", DEFAULT_CONFIG["input_dir"]))
-        self.exclude_dirs_var.set(
-            self._format_list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
-        )
-        self.concurrency_var.set(
-            self._format_number(cfg.get("concurrency", DEFAULT_CONFIG["concurrency"]))
-        )
+        self._apply_field_specs(cfg, APP_FIELDS)
 
         preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
-        self.preview_long_edge_var.set(
-            self._format_number(
-                preview_cfg.get("long_edge", DEFAULT_CONFIG["preview"]["long_edge"])
-            )
-        )
-        self.preview_format_var.set(
-            str(preview_cfg.get("format", DEFAULT_CONFIG["preview"]["format"]))
-        )
-        self.preview_quality_var.set(
-            self._format_number(
-                preview_cfg.get("quality", DEFAULT_CONFIG["preview"]["quality"])
-            )
-        )
+        self._apply_field_specs(preview_cfg, PREVIEW_FIELDS)
 
         analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
-        self.analysis_sharpness_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "sharpness_min", DEFAULT_CONFIG["analysis"]["sharpness_min"]
-                )
-            )
-        )
-        center_value = analysis_cfg.get("center_sharpness_min")
-        self.analysis_center_sharpness_min_var.set(
-            self._format_number(center_value) if center_value is not None else ""
-        )
-        self.analysis_tenengrad_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "tenengrad_min", DEFAULT_CONFIG["analysis"]["tenengrad_min"]
-                )
-            )
-        )
-        self.analysis_motion_ratio_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "motion_ratio_min",
-                    DEFAULT_CONFIG["analysis"]["motion_ratio_min"],
-                )
-            )
-        )
-        self.analysis_noise_std_max_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "noise_std_max", DEFAULT_CONFIG["analysis"]["noise_std_max"]
-                )
-            )
-        )
-        self.analysis_brightness_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "brightness_min", DEFAULT_CONFIG["analysis"]["brightness_min"]
-                )
-            )
-        )
-        self.analysis_brightness_max_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "brightness_max", DEFAULT_CONFIG["analysis"]["brightness_max"]
-                )
-            )
-        )
-        self.analysis_shadows_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "shadows_min", DEFAULT_CONFIG["analysis"]["shadows_min"]
-                )
-            )
-        )
-        self.analysis_shadows_max_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "shadows_max", DEFAULT_CONFIG["analysis"]["shadows_max"]
-                )
-            )
-        )
-        self.analysis_highlights_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "highlights_min", DEFAULT_CONFIG["analysis"]["highlights_min"]
-                )
-            )
-        )
-        self.analysis_highlights_max_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "highlights_max", DEFAULT_CONFIG["analysis"]["highlights_max"]
-                )
-            )
-        )
-        self.analysis_quality_score_min_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "quality_score_min",
-                    DEFAULT_CONFIG["analysis"]["quality_score_min"],
-                )
-            )
-        )
-        self.analysis_hard_fail_sharp_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_sharp_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_sharp_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_sharp_center_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_sharp_center_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_sharp_center_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_teneng_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_teneng_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_teneng_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_motion_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_motion_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_motion_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_brightness_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_brightness_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_brightness_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_noise_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_noise_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_noise_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_shadows_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_shadows_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_shadows_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_highlights_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_highlights_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_highlights_ratio"],
-                )
-            )
-        )
-        self.analysis_hard_fail_composition_ratio_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "hard_fail_composition_ratio",
-                    DEFAULT_CONFIG["analysis"]["hard_fail_composition_ratio"],
-                )
-            )
-        )
-        self.analysis_duplicate_hamming_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "duplicate_hamming",
-                    DEFAULT_CONFIG["analysis"]["duplicate_hamming"],
-                )
-            )
-        )
-        self.analysis_duplicate_window_seconds_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "duplicate_window_seconds",
-                    DEFAULT_CONFIG["analysis"]["duplicate_window_seconds"],
-                )
-            )
-        )
-        self.analysis_duplicate_bucket_bits_var.set(
-            self._format_number(
-                analysis_cfg.get(
-                    "duplicate_bucket_bits",
-                    DEFAULT_CONFIG["analysis"]["duplicate_bucket_bits"],
-                )
-            )
-        )
-        self.analysis_report_path_var.set(
-            str(
-                analysis_cfg.get(
-                    "report_path", DEFAULT_CONFIG["analysis"]["report_path"]
-                )
-            )
-        )
-        self.analysis_results_path_var.set(
-            str(
-                analysis_cfg.get(
-                    "results_path", DEFAULT_CONFIG["analysis"]["results_path"]
-                )
-            )
-        )
+        self._apply_field_specs(analysis_cfg, ANALYSIS_FIELDS)
 
         face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
-        self.analysis_face_enabled_var.set(
-            bool(face_cfg.get("enabled", DEFAULT_CONFIG["analysis"]["face"]["enabled"]))
-        )
-        self.analysis_face_backend_var.set(
-            str(face_cfg.get("backend", DEFAULT_CONFIG["analysis"]["face"]["backend"]))
-        )
-        self.analysis_face_det_size_var.set(
-            self._format_number(
-                face_cfg.get("det_size", DEFAULT_CONFIG["analysis"]["face"]["det_size"])
-            )
-        )
-        self.analysis_face_ctx_id_var.set(
-            self._format_number(
-                face_cfg.get("ctx_id", DEFAULT_CONFIG["analysis"]["face"]["ctx_id"])
-            )
-        )
-        allowed_modules = face_cfg.get(
-            "allowed_modules", DEFAULT_CONFIG["analysis"]["face"]["allowed_modules"]
-        )
-        self.analysis_face_allowed_modules_var.set(self._format_list(allowed_modules))
-        providers = face_cfg.get("providers")
-        self.analysis_face_providers_var.set(
-            self._format_list(providers) if providers is not None else ""
-        )
+        self._apply_field_specs(face_cfg, FACE_FIELDS)
 
     def _collect_config(self) -> AppConfig:
         cfg_path = self.config_var.get().strip()
         cfg = load_config(cfg_path or None)
         drop_path_config(cfg)
-
-        input_dir = self.input_var.get().strip()
-        if input_dir:
-            cfg["input_dir"] = _clean_path(input_dir)
-
-        exclude_dirs = self._parse_list(self.exclude_dirs_var.get())
-        if exclude_dirs:
-            cfg["exclude_dirs"] = exclude_dirs
-        else:
-            cfg.pop("exclude_dirs", None)
-
-        concurrency = self._parse_optional_int(
-            self.concurrency_var.get(), "Concurrency"
-        )
-        if concurrency is not None:
-            cfg["concurrency"] = concurrency
+        self._collect_field_specs(cfg, APP_FIELDS)
 
         preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
-        long_edge = self._parse_optional_int(
-            self.preview_long_edge_var.get(), "Preview long edge"
-        )
-        if long_edge is not None:
-            preview_cfg["long_edge"] = long_edge
-        fmt = self.preview_format_var.get().strip()
-        if fmt:
-            preview_cfg["format"] = fmt
-        quality = self._parse_optional_int(
-            self.preview_quality_var.get(), "Preview quality"
-        )
-        if quality is not None:
-            preview_cfg["quality"] = quality
+        self._collect_field_specs(preview_cfg, PREVIEW_FIELDS)
         cfg["preview"] = preview_cfg
 
         analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
-        sharpness = self._parse_optional_float(
-            self.analysis_sharpness_min_var.get(), "Sharpness min"
-        )
-        if sharpness is not None:
-            analysis_cfg["sharpness_min"] = sharpness
-        center = self._parse_optional_float(
-            self.analysis_center_sharpness_min_var.get(),
-            "Center sharpness min",
-        )
-        if center is None:
-            analysis_cfg.pop("center_sharpness_min", None)
-        else:
-            analysis_cfg["center_sharpness_min"] = center
-        tenengrad = self._parse_optional_float(
-            self.analysis_tenengrad_min_var.get(), "Tenengrad min"
-        )
-        if tenengrad is not None:
-            analysis_cfg["tenengrad_min"] = tenengrad
-        motion_ratio = self._parse_optional_float(
-            self.analysis_motion_ratio_min_var.get(), "Motion ratio min"
-        )
-        if motion_ratio is not None:
-            analysis_cfg["motion_ratio_min"] = motion_ratio
-        noise_std = self._parse_optional_float(
-            self.analysis_noise_std_max_var.get(), "Noise std max"
-        )
-        if noise_std is not None:
-            analysis_cfg["noise_std_max"] = noise_std
-        brightness_min = self._parse_optional_float(
-            self.analysis_brightness_min_var.get(), "Brightness min"
-        )
-        if brightness_min is not None:
-            analysis_cfg["brightness_min"] = brightness_min
-        brightness_max = self._parse_optional_float(
-            self.analysis_brightness_max_var.get(), "Brightness max"
-        )
-        if brightness_max is not None:
-            analysis_cfg["brightness_max"] = brightness_max
-        shadows_min = self._parse_optional_float(
-            self.analysis_shadows_min_var.get(), "Shadows min"
-        )
-        if shadows_min is not None:
-            analysis_cfg["shadows_min"] = shadows_min
-        shadows_max = self._parse_optional_float(
-            self.analysis_shadows_max_var.get(), "Shadows max"
-        )
-        if shadows_max is not None:
-            analysis_cfg["shadows_max"] = shadows_max
-        highlights_min = self._parse_optional_float(
-            self.analysis_highlights_min_var.get(), "Highlights min"
-        )
-        if highlights_min is not None:
-            analysis_cfg["highlights_min"] = highlights_min
-        highlights_max = self._parse_optional_float(
-            self.analysis_highlights_max_var.get(), "Highlights max"
-        )
-        if highlights_max is not None:
-            analysis_cfg["highlights_max"] = highlights_max
-        quality_min = self._parse_optional_float(
-            self.analysis_quality_score_min_var.get(), "Quality score min"
-        )
-        if quality_min is not None:
-            analysis_cfg["quality_score_min"] = quality_min
-        hard_fail_sharp = self._parse_optional_float(
-            self.analysis_hard_fail_sharp_ratio_var.get(), "Sharpness ratio"
-        )
-        if hard_fail_sharp is not None:
-            analysis_cfg["hard_fail_sharp_ratio"] = hard_fail_sharp
-        hard_fail_center = self._parse_optional_float(
-            self.analysis_hard_fail_sharp_center_ratio_var.get(),
-            "Center sharpness ratio",
-        )
-        if hard_fail_center is not None:
-            analysis_cfg["hard_fail_sharp_center_ratio"] = hard_fail_center
-        hard_fail_teneng = self._parse_optional_float(
-            self.analysis_hard_fail_teneng_ratio_var.get(), "Tenengrad ratio"
-        )
-        if hard_fail_teneng is not None:
-            analysis_cfg["hard_fail_teneng_ratio"] = hard_fail_teneng
-        hard_fail_motion = self._parse_optional_float(
-            self.analysis_hard_fail_motion_ratio_var.get(), "Motion ratio"
-        )
-        if hard_fail_motion is not None:
-            analysis_cfg["hard_fail_motion_ratio"] = hard_fail_motion
-        hard_fail_brightness = self._parse_optional_float(
-            self.analysis_hard_fail_brightness_ratio_var.get(), "Brightness ratio"
-        )
-        if hard_fail_brightness is not None:
-            analysis_cfg["hard_fail_brightness_ratio"] = hard_fail_brightness
-        hard_fail_noise = self._parse_optional_float(
-            self.analysis_hard_fail_noise_ratio_var.get(), "Noise ratio"
-        )
-        if hard_fail_noise is not None:
-            analysis_cfg["hard_fail_noise_ratio"] = hard_fail_noise
-        hard_fail_shadows = self._parse_optional_float(
-            self.analysis_hard_fail_shadows_ratio_var.get(), "Shadows ratio"
-        )
-        if hard_fail_shadows is not None:
-            analysis_cfg["hard_fail_shadows_ratio"] = hard_fail_shadows
-        hard_fail_highlights = self._parse_optional_float(
-            self.analysis_hard_fail_highlights_ratio_var.get(), "Highlights ratio"
-        )
-        if hard_fail_highlights is not None:
-            analysis_cfg["hard_fail_highlights_ratio"] = hard_fail_highlights
-        hard_fail_composition = self._parse_optional_float(
-            self.analysis_hard_fail_composition_ratio_var.get(), "Composition ratio"
-        )
-        if hard_fail_composition is not None:
-            analysis_cfg["hard_fail_composition_ratio"] = hard_fail_composition
-        duplicate_hamming = self._parse_optional_int(
-            self.analysis_duplicate_hamming_var.get(), "Duplicate hamming"
-        )
-        if duplicate_hamming is not None:
-            analysis_cfg["duplicate_hamming"] = duplicate_hamming
-        duplicate_window = self._parse_optional_float(
-            self.analysis_duplicate_window_seconds_var.get(),
-            "Duplicate window seconds",
-        )
-        if duplicate_window is not None:
-            analysis_cfg["duplicate_window_seconds"] = duplicate_window
-        duplicate_bucket = self._parse_optional_int(
-            self.analysis_duplicate_bucket_bits_var.get(), "Duplicate bucket bits"
-        )
-        if duplicate_bucket is not None:
-            analysis_cfg["duplicate_bucket_bits"] = duplicate_bucket
-        report_path = self.analysis_report_path_var.get().strip()
-        if report_path:
-            analysis_cfg["report_path"] = report_path
-        results_path = self.analysis_results_path_var.get().strip()
-        if results_path:
-            analysis_cfg["results_path"] = results_path
+        self._collect_field_specs(analysis_cfg, ANALYSIS_FIELDS)
 
         face_cfg = cast(FaceConfig, dict(analysis_cfg.get("face") or {}))
-        face_cfg["enabled"] = bool(self.analysis_face_enabled_var.get())
-        backend = self.analysis_face_backend_var.get().strip()
-        if backend:
-            face_cfg["backend"] = backend
-        det_size = self._parse_optional_int(
-            self.analysis_face_det_size_var.get(), "Detection size"
-        )
-        if det_size is not None:
-            face_cfg["det_size"] = det_size
-        ctx_id = self._parse_optional_int(
-            self.analysis_face_ctx_id_var.get(), "Context id"
-        )
-        if ctx_id is not None:
-            face_cfg["ctx_id"] = ctx_id
-        allowed_modules = self._parse_list(self.analysis_face_allowed_modules_var.get())
-        if allowed_modules:
-            face_cfg["allowed_modules"] = allowed_modules
-        else:
-            face_cfg.pop("allowed_modules", None)
-        providers = self._parse_list(self.analysis_face_providers_var.get())
-        if providers:
-            face_cfg["providers"] = providers
-        else:
-            face_cfg.pop("providers", None)
+        self._collect_field_specs(face_cfg, FACE_FIELDS)
         analysis_cfg["face"] = face_cfg
         cfg["analysis"] = analysis_cfg
 
