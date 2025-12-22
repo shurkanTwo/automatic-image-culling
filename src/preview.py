@@ -68,7 +68,8 @@ def generate_preview(
         try:
             thumb = raw.extract_thumb()
             if thumb.format == rawpy.ThumbFormat.JPEG:
-                img = Image.open(io.BytesIO(thumb.data))
+                with Image.open(io.BytesIO(thumb.data)) as thumb_img:
+                    img = thumb_img.copy()
             else:
                 raise RuntimeError("Non-JPEG thumbnail; falling back to demosaic")
         except Exception:
@@ -96,13 +97,16 @@ def open_preview_rgb(
     """Open a preview image as RGB and optionally downscale to a target size."""
     if Image is None:
         return None
-    img = Image.open(preview_path).convert("RGB")
-    if size:
-        width, height = img.size
-        scale = size / float(max(width, height))
-        if scale < 1.0:
-            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
-    return np.array(img, dtype=np.float32)
+    with Image.open(preview_path) as img_handle:
+        img = img_handle.convert("RGB")
+        if size is not None and size > 0:
+            width, height = img.size
+            scale = size / float(max(width, height))
+            if scale < 1.0:
+                img = img.resize(
+                    (int(width * scale), int(height * scale)), Image.LANCZOS
+                )
+        return np.array(img, dtype=np.float32)
 
 
 def preview_path_for(

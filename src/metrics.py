@@ -157,14 +157,15 @@ def phash(
         small = block_sums / area
         pixels = small.astype(np.float32).ravel()
     else:
-        if image is None:
-            if image_module is None:
-                return None
-            image = image_module.open(preview_path)
         if image_module is None:
             return None
-        img = image.convert("L").resize((8, 8), image_module.LANCZOS)
-        pixels = np.array(img, dtype=np.float32).ravel()
+        if image is None:
+            with image_module.open(preview_path) as img_handle:
+                img = img_handle.convert("L").resize((8, 8), image_module.LANCZOS)
+                pixels = np.array(img, dtype=np.float32).ravel()
+        else:
+            img = image.convert("L").resize((8, 8), image_module.LANCZOS)
+            pixels = np.array(img, dtype=np.float32).ravel()
     avg = sum(pixels) / len(pixels)
     bits = 0
     for i, p in enumerate(pixels):

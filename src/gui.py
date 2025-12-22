@@ -1327,7 +1327,7 @@ class GuiApp:
             self.preview_format_var,
             self.config_var,
         ):
-            var.trace_add("write", lambda *_: self._schedule_state_refresh())
+            var.trace_add("write", lambda *__: self._schedule_state_refresh())
 
     def _schedule_state_refresh(self) -> None:
         if self._refresh_job is not None:
@@ -1611,7 +1611,7 @@ class GuiApp:
     def _has_arw_files(directory: pathlib.Path) -> bool:
         if not directory.exists():
             return False
-        for _, __, filenames in os.walk(directory):
+        for __, ___, filenames in os.walk(directory):
             for name in filenames:
                 if name.lower().endswith(".arw"):
                     return True
@@ -1933,7 +1933,7 @@ def main() -> None:
         ) from _TK_IMPORT_ERROR
     root = tk.Tk()
     app = GuiApp(root)
-    _ = app
+    __ = app
     root.mainloop()
 
 

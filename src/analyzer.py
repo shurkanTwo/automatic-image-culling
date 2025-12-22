@@ -373,7 +373,7 @@ def _suggest_keep(
         score_breakdown.scores[key] < hard_cfg[key] for key in score_breakdown.scores
     )
     threshold_fail = any(
-        [
+        (
             metrics.sharpness < thresholds.sharpness_min,
             metrics.sharpness_center < thresholds.center_sharpness_min,
             metrics.tenengrad < thresholds.tenengrad_min,
@@ -385,7 +385,7 @@ def _suggest_keep(
             metrics.shadows > thresholds.shadows_max,
             metrics.highlights < thresholds.highlights_min,
             metrics.highlights > thresholds.highlights_max,
-        ]
+        )
     )
     keep = score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
     reasons = _quality_reasons(
@@ -567,8 +567,8 @@ def _label_duplicates(
         if result["phash"] is not None and result.get("capture_ts") is not None:
             entries.append((idx, int(result["phash"]), float(result["capture_ts"])))
     entries.sort(key=lambda item: item[2])
-    parent = {idx: idx for idx, _, _ in entries}
-    hash_by_idx = {idx: hash_val for idx, hash_val, _ in entries}
+    parent = {idx: idx for idx, __, ___ in entries}
+    hash_by_idx = {idx: hash_val for idx, hash_val, __ in entries}
 
     def find(node: int) -> int:
         while parent[node] != node:
@@ -586,7 +586,7 @@ def _label_duplicates(
 
     for idx_i, hash_i, ts_i in entries:
         while active_window and ts_i - active_window[0][2] > window_sec:
-            expired_idx, expired_bucket, _ = active_window.popleft()
+            expired_idx, expired_bucket, __ = active_window.popleft()
             bucket_list = bucket_index.get(expired_bucket)
             if bucket_list:
                 try:
@@ -605,7 +605,7 @@ def _label_duplicates(
         bucket_index[key].append(idx_i)
 
     groups: Dict[int, List[int]] = {}
-    for idx, _, _ in entries:
+    for idx, __, ___ in entries:
         root = find(idx)
         groups.setdefault(root, []).append(idx)
 

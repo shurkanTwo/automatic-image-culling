@@ -131,7 +131,7 @@ def _detect_with_mediapipe(
     results_mp = detector.process(rgb_full.astype(np.uint8))
     if not results_mp.detections:
         return detections
-    height, width, _ = rgb_full.shape
+    height, width, __ = rgb_full.shape
     for det in results_mp.detections:
         bbox = det.location_data.relative_bounding_box
         x1 = int(bbox.xmin * width)
