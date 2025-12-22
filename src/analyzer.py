@@ -508,6 +508,8 @@ def _evaluate_metrics(
     weighted_sum = 0.0
     total_weights = 0.0
     evaluations: List[Tuple[MetricRule, bool, bool]] = []
+    threshold_failed_keys: List[str] = []
+    hard_failed_keys: List[str] = []
 
     for rule in METRIC_RULES:
         score = rule.score_fn(metrics, thresholds)
@@ -517,6 +519,10 @@ def _evaluate_metrics(
         hard_fail = score < hard_cfg[rule.hard_key]
         threshold_fail = rule.threshold_fail_fn(metrics, thresholds)
         evaluations.append((rule, hard_fail, threshold_fail))
+        if hard_fail:
+            hard_failed_keys.append(rule.key)
+        if threshold_fail:
+            threshold_failed_keys.append(rule.key)
 
     quality_score = weighted_sum / total_weights if total_weights else 0.0
     score_breakdown = ScoreBreakdown(scores=scores, quality_score=quality_score)
@@ -536,6 +542,31 @@ def _evaluate_metrics(
             reason = rule.reason_fn(metrics, thresholds, hard_cfg)
             if reason:
                 reasons.append(reason)
+
+    if not reasons and (hard_fail_any or threshold_fail_any):
+        label_map = {
+            "sharp": "sharpness",
+            "sharp_center": "center sharpness",
+            "teneng": "contrast",
+            "motion": "motion",
+            "noise": "noise",
+            "brightness": "brightness",
+            "shadows": "shadows",
+            "highlights": "highlights",
+            "composition": "composition",
+        }
+        failed = hard_failed_keys or threshold_failed_keys
+        unique_labels: List[str] = []
+        seen = set()
+        for key in failed:
+            label = label_map.get(key, key)
+            if label in seen:
+                continue
+            seen.add(label)
+            unique_labels.append(label)
+        prefix = "failed hard thresholds" if hard_failed_keys else "failed thresholds"
+        if unique_labels:
+            reasons.append(f"{prefix}: {', '.join(unique_labels)}")
 
     return score_breakdown, reasons, hard_fail_any, threshold_fail_any
 
