@@ -292,16 +292,13 @@ def _brightness_score(metrics: FrameMetrics, thresholds: Thresholds) -> float:
     brightness_mid = (thresholds.brightness_min + thresholds.brightness_max) / 2
     brightness_half = (thresholds.brightness_max - thresholds.brightness_min) / 2
     return _clamp01(
-        1
-        - abs(metrics.brightness_mean - brightness_mid)
-        / max(brightness_half, 1e-6)
+        1 - abs(metrics.brightness_mean - brightness_mid) / max(brightness_half, 1e-6)
     )
 
 
 def _noise_score(metrics: FrameMetrics, thresholds: Thresholds) -> float:
     return _clamp01(
-        thresholds.noise_std_max
-        / (thresholds.noise_std_max + max(metrics.noise, 1e-6))
+        thresholds.noise_std_max / (thresholds.noise_std_max + max(metrics.noise, 1e-6))
     )
 
 
@@ -863,9 +860,7 @@ def _label_duplicates(
         (
             lambda item: item.get("motion_ratio"),
             lambda candidate, keeper: candidate < keeper,
-            lambda candidate, keeper: (
-                f"motion ratio {candidate:.2f} < {keeper:.2f}"
-            ),
+            lambda candidate, keeper: (f"motion ratio {candidate:.2f} < {keeper:.2f}"),
         ),
         (
             lambda item: item.get("noise"),

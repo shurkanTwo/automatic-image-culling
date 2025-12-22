@@ -10,7 +10,16 @@ import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 try:
     import tkinter as tk
