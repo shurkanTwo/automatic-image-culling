@@ -1,6 +1,6 @@
 # Automatic Image Culling
 
-Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag keepers with an HTML report.
+Small toolchain to scan Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
 
 ## Quick start
 
@@ -28,13 +28,12 @@ Small toolchain to scan Sony `.ARW` photos, generate previews, and score/flag ke
 ## Commands
 
 - `python -m src.main scan --config config.yaml` — list discovered `.ARW` files (+EXIF if `--json`).
-- `python -m src.main previews --config config.yaml` — generate and cache previews.
 - `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
 - `python -m src.main decisions --apply` — move files into keep/discard subfolders based on `analysis/decisions.json`.
 
 ## GUI (optional)
 
-- `python -m src.gui` — launch a simple desktop UI to run discover, previews, analyze, and decisions steps.
+- `python -m src.gui` — launch a simple desktop UI to run discover, analyze, and decisions steps (analysis generates previews automatically).
 - Use the Configuration tab to edit settings (thresholds, face detection, etc.) and Save to `config.yaml`.
 
 ## Configuration

@@ -16,7 +16,7 @@ from .discovery import (
     find_arw_files,
     read_exif,
 )
-from .preview import ensure_preview, generate_preview
+from .preview import ensure_preview
 from .paths import (
     analysis_dir_for_input,
     decisions_path_for_input,
@@ -134,32 +134,6 @@ def scan_command(args: argparse.Namespace) -> None:
         print(json.dumps(data, indent=2))
 
 
-def previews_command(args: argparse.Namespace) -> None:
-    """Generate preview images for each discovered RAW file."""
-    cfg = _load_app_config(args.config)
-    preview_cfg = _preview_config(cfg)
-    input_dir = input_dir_from_cfg(cfg)
-    files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
-    if not files:
-        print("No .ARW files found")
-        return
-    preview_dir = preview_dir_for_input(input_dir)
-    bar = _Progress(len(files), "Previews")
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=cfg.get("concurrency", 4)
-    ) as pool:
-        jobs = [
-            pool.submit(generate_preview, path, preview_dir, preview_cfg)
-            for path in files
-        ]
-        for job in concurrent.futures.as_completed(jobs):
-            result = job.result()
-            if result is not None:
-                print(f"Preview written: {result}")
-            bar.update(1)
-    bar.close()
-
-
 def analyze_command(args: argparse.Namespace) -> None:
     """Run analysis pipeline and emit JSON and HTML outputs."""
     cfg = _load_app_config(args.config)
@@ -171,8 +145,23 @@ def analyze_command(args: argparse.Namespace) -> None:
         return
 
     preview_dir = preview_dir_for_input(input_dir)
-    for path in files:
-        ensure_preview(path, preview_dir, preview_cfg)
+    bar = _Progress(len(files), "Previews")
+    missing_dep = False
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=cfg.get("concurrency", 4)
+    ) as pool:
+        jobs = [
+            pool.submit(ensure_preview, path, preview_dir, preview_cfg)
+            for path in files
+        ]
+        for job in concurrent.futures.as_completed(jobs):
+            result = job.result()
+            if result is None:
+                missing_dep = True
+            bar.update(1)
+    bar.close()
+    if missing_dep:
+        print("Preview generation unavailable; check rawpy/Pillow installation.")
 
     analysis_dir = analysis_dir_for_input(input_dir)
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -244,9 +233,6 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="List .ARW files and basic EXIF info")
     scan.add_argument("--json", action="store_true", help="Output JSON metadata")
     scan.set_defaults(func=scan_command)
-
-    prev = sub.add_parser("previews", help="Generate quick previews")
-    prev.set_defaults(func=previews_command)
 
     analyze = sub.add_parser("analyze", help="Score images and emit JSON + HTML report")
     analyze.set_defaults(func=analyze_command)

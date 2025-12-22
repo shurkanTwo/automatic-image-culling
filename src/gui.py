@@ -210,14 +210,12 @@ class GuiApp:
 
         self.scan_btn = ttk.Button(actions, text="Discover", command=self._start_scan)
         self.scan_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 6))
-        self.previews_btn = ttk.Button(
-            actions, text="Generate previews", command=self._start_previews
-        )
-        self.previews_btn.grid(row=0, column=1, sticky="ew", padx=6, pady=(0, 6))
         self.analyze_btn = ttk.Button(
             actions, text="Analyze + report", command=self._start_analyze
         )
-        self.analyze_btn.grid(row=0, column=2, sticky="ew", padx=(6, 0), pady=(0, 6))
+        self.analyze_btn.grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0), pady=(0, 6)
+        )
 
         self.decisions_dry_btn = ttk.Button(
             actions,
@@ -579,7 +577,6 @@ class GuiApp:
         self._controls = [
             self.input_entry,
             self.scan_btn,
-            self.previews_btn,
             self.analyze_btn,
             self.decisions_dry_btn,
             self.decisions_apply_btn,
@@ -588,7 +585,6 @@ class GuiApp:
         self._controls.extend(config_controls)
         self._action_buttons = [
             self.scan_btn,
-            self.previews_btn,
             self.analyze_btn,
             self.decisions_dry_btn,
             self.decisions_apply_btn,
@@ -1177,9 +1173,6 @@ class GuiApp:
     def _start_scan(self) -> None:
         self._start_task("discover", self._run_scan)
 
-    def _start_previews(self) -> None:
-        self._start_task("preview generation", self._run_previews)
-
     def _start_analyze(self) -> None:
         self._start_task("analysis", self._run_analysis, clear_report=True)
 
@@ -1259,18 +1252,6 @@ class GuiApp:
                     return True
         return False
 
-    @staticmethod
-    def _has_preview_files(directory: pathlib.Path, fmt: str) -> bool:
-        if not directory.exists():
-            return False
-        suffix = f".{fmt.lower().lstrip('.')}" if fmt else ""
-        for entry in directory.iterdir():
-            if not entry.is_file():
-                continue
-            if not suffix or entry.suffix.lower() == suffix:
-                return True
-        return False
-
     def _refresh_action_states(self) -> None:
         self._refresh_job = None
         if self.running:
@@ -1280,13 +1261,9 @@ class GuiApp:
 
         cfg = self._read_config_for_state()
         input_dir = input_dir_from_cfg(cfg)
-        preview_dir = preview_dir_for_input(input_dir)
-        preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
-        preview_fmt = str(preview_cfg.get("format", "webp"))
 
         input_exists = input_dir.exists()
         arw_exists = input_exists and self._has_arw_files(input_dir)
-        previews_exist = self._has_preview_files(preview_dir, preview_fmt)
 
         report_path, results_path = self._resolve_analysis_paths(cfg)
         analysis_done = report_path.exists() or results_path.exists()
@@ -1295,8 +1272,7 @@ class GuiApp:
         decisions_exist = decisions_path.exists()
 
         self.scan_btn.configure(state="normal" if input_exists else "disabled")
-        self.previews_btn.configure(state="normal" if arw_exists else "disabled")
-        self.analyze_btn.configure(state="normal" if previews_exist else "disabled")
+        self.analyze_btn.configure(state="normal" if arw_exists else "disabled")
 
         decisions_state = "normal" if analysis_done and decisions_exist else "disabled"
         self.decisions_dry_btn.configure(state=decisions_state)
@@ -1377,44 +1353,6 @@ class GuiApp:
             if not cancelled:
                 pool.shutdown(wait=True)
         return missing_dep
-
-    def _run_previews(self, cfg: AppConfig) -> None:
-        try:
-            input_dir = input_dir_from_cfg(cfg)
-            files = find_arw_files(str(input_dir), exclude_dirs=_exclude_list(cfg))
-            if not files:
-                self._send("log", "No .ARW files found.")
-                self._send("done", None)
-                self._send("log", "Done with previews")
-                return
-            if self._cancel_event.is_set():
-                self._send("log", "Preview generation cancelled.")
-                self._send("done", None)
-                return
-            total = len(files)
-            self._send("log", f"Found {total} .ARW files.")
-
-            preview_cfg = _preview_config(cfg)
-            preview_dir = preview_dir_for_input(input_dir)
-            preview_dir.mkdir(parents=True, exist_ok=True)
-            workers = max(1, int(cfg.get("concurrency", 4) or 4))
-            missing_dep = self._generate_previews(
-                files, preview_dir, preview_cfg, workers, "Previews"
-            )
-            if self._cancel_event.is_set():
-                self._send("log", "Preview generation cancelled.")
-                self._send("done", None)
-                return
-            if missing_dep:
-                self._send(
-                    "log",
-                    "Preview generation unavailable; check rawpy/Pillow installation.",
-                )
-            self._send("log", f"Previews processed: {total}")
-            self._send("done", None)
-            self._send("log", "Done with previews")
-        except Exception as exc:
-            self._send("error", str(exc))
 
     def _run_decisions(self, cfg: AppConfig, apply_changes: bool) -> None:
         try:
