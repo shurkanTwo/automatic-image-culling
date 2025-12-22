@@ -387,18 +387,6 @@ ANALYSIS_FIELDS = [
         "int",
         label="Duplicate bucket bits",
     ),
-    _FieldSpec(
-        "analysis_report_path_var",
-        "report_path",
-        DEFAULT_CONFIG["analysis"]["report_path"],
-        "str",
-    ),
-    _FieldSpec(
-        "analysis_results_path_var",
-        "results_path",
-        DEFAULT_CONFIG["analysis"]["results_path"],
-        "str",
-    ),
 ]
 
 FACE_FIELDS = [
@@ -487,8 +475,6 @@ class GuiApp:
         self.analysis_duplicate_hamming_var = tk.StringVar()
         self.analysis_duplicate_window_seconds_var = tk.StringVar()
         self.analysis_duplicate_bucket_bits_var = tk.StringVar()
-        self.analysis_report_path_var = tk.StringVar()
-        self.analysis_results_path_var = tk.StringVar()
         self.analysis_face_enabled_var = tk.BooleanVar()
         self.analysis_face_backend_var = tk.StringVar()
         self.analysis_face_det_size_var = tk.StringVar()
@@ -682,6 +668,7 @@ class GuiApp:
             ),
             "duplicate_hamming": (
                 "Maximum pHash Hamming distance to group duplicates.\n"
+                "Higher values allow less similar images to be flagged.\n"
                 "Default: 6. Range: 0-64."
             ),
             "duplicate_window_seconds": (
@@ -691,14 +678,6 @@ class GuiApp:
             "duplicate_bucket_bits": (
                 "Number of pHash bits per bucket slice for candidate grouping (0 disables).\n"
                 "Default: 8. Range: 0-64."
-            ),
-            "report_path": (
-                "HTML report output path. Relative paths are under the analysis folder.\n"
-                "Default: ./report.html."
-            ),
-            "results_path": (
-                "Analysis JSON output path. Relative paths are under the analysis folder.\n"
-                "Default: ./analysis.json."
             ),
             "face_enabled": (
                 "Toggle face detection and scoring during analysis.\n" "Default: true."
@@ -865,7 +844,7 @@ class GuiApp:
         config_scrollbar.grid(row=1, column=1, sticky="ns")
         config_canvas.configure(yscrollcommand=config_scrollbar.set)
 
-        config_body = ttk.Frame(config_canvas)
+        config_body = ttk.Frame(config_canvas, padding=(0, 0, 12, 0))
         config_body_id = config_canvas.create_window(
             (0, 0), window=config_body, anchor="nw"
         )
@@ -880,19 +859,33 @@ class GuiApp:
         config_body.bind("<Configure>", _on_config_frame)
         config_canvas.bind("<Configure>", _on_config_canvas)
 
+        section_row = 0
+
+        def add_section_note(text: str) -> None:
+            nonlocal section_row
+            label = ttk.Label(
+                config_body,
+                text=text,
+                wraplength=640,
+                justify="left",
+            )
+            label.grid(row=section_row, column=0, sticky="w", pady=(0, 4))
+            section_row += 1
+
+        def add_section_spacer() -> None:
+            nonlocal section_row
+            spacer = ttk.Label(config_body, text="")
+            spacer.grid(row=section_row, column=0, sticky="ew", pady=(0, 6))
+            section_row += 1
+
+        add_section_note("Runtime settings control performance and excluded folders.")
         runtime_frame = ttk.LabelFrame(config_body, text="Runtime")
-        runtime_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        runtime_frame.grid(row=section_row, column=0, sticky="ew")
         runtime_frame.grid_columnconfigure(1, weight=1)
-        runtime_note = ttk.Label(
-            runtime_frame,
-            text="Runtime settings control performance and excluded folders.",
-            wraplength=640,
-            justify="left",
-        )
-        runtime_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        section_row += 1
         entry = self._add_config_entry(
             runtime_frame,
-            1,
+            0,
             "Concurrency",
             self.concurrency_var,
             tooltip=tooltips["concurrency"],
@@ -900,26 +893,22 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             runtime_frame,
-            2,
+            1,
             "Exclude dirs (comma-separated)",
             self.exclude_dirs_var,
             tooltip=tooltips["exclude_dirs"],
         )
         config_controls.append(entry)
+        add_section_spacer()
 
+        add_section_note("Previews are resized images used for analysis and reports.")
         preview_frame = ttk.LabelFrame(config_body, text="Preview")
-        preview_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        preview_frame.grid(row=section_row, column=0, sticky="ew")
         preview_frame.grid_columnconfigure(1, weight=1)
-        preview_note = ttk.Label(
-            preview_frame,
-            text="Previews are resized images used for analysis and reports.",
-            wraplength=640,
-            justify="left",
-        )
-        preview_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        section_row += 1
         entry = self._add_config_entry(
             preview_frame,
-            1,
+            0,
             "Long edge (px)",
             self.preview_long_edge_var,
             tooltip=tooltips["preview_long_edge"],
@@ -927,7 +916,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             preview_frame,
-            2,
+            1,
             "Format",
             self.preview_format_var,
             tooltip=tooltips["preview_format"],
@@ -935,26 +924,22 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             preview_frame,
-            3,
+            2,
             "Quality",
             self.preview_quality_var,
             tooltip=tooltips["preview_quality"],
         )
         config_controls.append(entry)
+        add_section_spacer()
 
+        add_section_note("Thresholds set the baseline values used for scoring and fails.")
         analysis_frame = ttk.LabelFrame(config_body, text="Analysis thresholds")
-        analysis_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        analysis_frame.grid(row=section_row, column=0, sticky="ew")
         analysis_frame.grid_columnconfigure(1, weight=1)
-        analysis_note = ttk.Label(
-            analysis_frame,
-            text="Thresholds set the baseline values used for scoring and fails.",
-            wraplength=640,
-            justify="left",
-        )
-        analysis_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        section_row += 1
         entry = self._add_config_entry(
             analysis_frame,
-            1,
+            0,
             "Sharpness min",
             self.analysis_sharpness_min_var,
             tooltip=tooltips["sharpness_min"],
@@ -962,7 +947,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            2,
+            1,
             "Center sharpness min (optional)",
             self.analysis_center_sharpness_min_var,
             tooltip=tooltips["center_sharpness_min"],
@@ -970,7 +955,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            3,
+            2,
             "Tenengrad min",
             self.analysis_tenengrad_min_var,
             tooltip=tooltips["tenengrad_min"],
@@ -978,7 +963,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            4,
+            3,
             "Motion ratio min",
             self.analysis_motion_ratio_min_var,
             tooltip=tooltips["motion_ratio_min"],
@@ -986,7 +971,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            5,
+            4,
             "Noise std max",
             self.analysis_noise_std_max_var,
             tooltip=tooltips["noise_std_max"],
@@ -994,7 +979,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            6,
+            5,
             "Brightness min",
             self.analysis_brightness_min_var,
             tooltip=tooltips["brightness_min"],
@@ -1002,7 +987,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            7,
+            6,
             "Brightness max",
             self.analysis_brightness_max_var,
             tooltip=tooltips["brightness_max"],
@@ -1010,7 +995,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            8,
+            7,
             "Shadows min",
             self.analysis_shadows_min_var,
             tooltip=tooltips["shadows_min"],
@@ -1018,7 +1003,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            9,
+            8,
             "Shadows max",
             self.analysis_shadows_max_var,
             tooltip=tooltips["shadows_max"],
@@ -1026,7 +1011,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            10,
+            9,
             "Highlights min",
             self.analysis_highlights_min_var,
             tooltip=tooltips["highlights_min"],
@@ -1034,7 +1019,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            11,
+            10,
             "Highlights max",
             self.analysis_highlights_max_var,
             tooltip=tooltips["highlights_max"],
@@ -1042,26 +1027,24 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             analysis_frame,
-            12,
+            11,
             "Quality score min",
             self.analysis_quality_score_min_var,
             tooltip=tooltips["quality_score_min"],
         )
         config_controls.append(entry)
+        add_section_spacer()
 
-        hard_fail_frame = ttk.LabelFrame(config_body, text="Hard-fail ratios")
-        hard_fail_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
-        hard_fail_frame.grid_columnconfigure(1, weight=1)
-        hard_fail_note = ttk.Label(
-            hard_fail_frame,
-            text="Hard-fail ratios reject frames even if the quality score is high.",
-            wraplength=640,
-            justify="left",
+        add_section_note(
+            "Hard-fail ratios reject frames even if the quality score is high."
         )
-        hard_fail_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        hard_fail_frame = ttk.LabelFrame(config_body, text="Hard-fail ratios")
+        hard_fail_frame.grid(row=section_row, column=0, sticky="ew")
+        hard_fail_frame.grid_columnconfigure(1, weight=1)
+        section_row += 1
         entry = self._add_config_entry(
             hard_fail_frame,
-            1,
+            0,
             "Sharpness ratio",
             self.analysis_hard_fail_sharp_ratio_var,
             tooltip=tooltips["hard_fail_sharp_ratio"],
@@ -1069,7 +1052,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            2,
+            1,
             "Center sharpness ratio",
             self.analysis_hard_fail_sharp_center_ratio_var,
             tooltip=tooltips["hard_fail_sharp_center_ratio"],
@@ -1077,7 +1060,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            3,
+            2,
             "Tenengrad ratio",
             self.analysis_hard_fail_teneng_ratio_var,
             tooltip=tooltips["hard_fail_teneng_ratio"],
@@ -1085,7 +1068,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            4,
+            3,
             "Motion ratio",
             self.analysis_hard_fail_motion_ratio_var,
             tooltip=tooltips["hard_fail_motion_ratio"],
@@ -1093,7 +1076,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            5,
+            4,
             "Brightness ratio",
             self.analysis_hard_fail_brightness_ratio_var,
             tooltip=tooltips["hard_fail_brightness_ratio"],
@@ -1101,7 +1084,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            6,
+            5,
             "Noise ratio",
             self.analysis_hard_fail_noise_ratio_var,
             tooltip=tooltips["hard_fail_noise_ratio"],
@@ -1109,7 +1092,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            7,
+            6,
             "Shadows ratio",
             self.analysis_hard_fail_shadows_ratio_var,
             tooltip=tooltips["hard_fail_shadows_ratio"],
@@ -1117,7 +1100,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            8,
+            7,
             "Highlights ratio",
             self.analysis_hard_fail_highlights_ratio_var,
             tooltip=tooltips["hard_fail_highlights_ratio"],
@@ -1125,35 +1108,31 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             hard_fail_frame,
-            9,
+            8,
             "Composition ratio",
             self.analysis_hard_fail_composition_ratio_var,
             tooltip=tooltips["hard_fail_composition_ratio"],
         )
         config_controls.append(entry)
+        add_section_spacer()
 
-        duplicates_frame = ttk.LabelFrame(config_body, text="Duplicates & outputs")
-        duplicates_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        add_section_note("Duplicate grouping controls how similar images are clustered.")
+        duplicates_frame = ttk.LabelFrame(config_body, text="Duplicates")
+        duplicates_frame.grid(row=section_row, column=0, sticky="ew")
         duplicates_frame.grid_columnconfigure(1, weight=1)
-        duplicates_note = ttk.Label(
-            duplicates_frame,
-            text="Duplicate grouping and output paths for analysis results.",
-            wraplength=640,
-            justify="left",
-        )
-        duplicates_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        section_row += 1
         dup_enabled_label = ttk.Label(duplicates_frame, text="Duplicate detection")
-        dup_enabled_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        dup_enabled_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         dup_enabled = ttk.Checkbutton(
             duplicates_frame, variable=self.analysis_duplicate_enabled_var
         )
-        dup_enabled.grid(row=1, column=1, sticky="w", pady=4)
+        dup_enabled.grid(row=0, column=1, sticky="w", pady=4)
         self._add_tooltip(dup_enabled_label, tooltips["duplicate_enabled"])
         self._add_tooltip(dup_enabled, tooltips["duplicate_enabled"])
         config_controls.append(dup_enabled)
         entry = self._add_config_entry(
             duplicates_frame,
-            2,
+            1,
             "Duplicate hamming",
             self.analysis_duplicate_hamming_var,
             tooltip=tooltips["duplicate_hamming"],
@@ -1161,7 +1140,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            3,
+            2,
             "Duplicate window seconds",
             self.analysis_duplicate_window_seconds_var,
             tooltip=tooltips["duplicate_window_seconds"],
@@ -1169,63 +1148,46 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             duplicates_frame,
-            4,
+            3,
             "Duplicate bucket bits",
             self.analysis_duplicate_bucket_bits_var,
             tooltip=tooltips["duplicate_bucket_bits"],
         )
         config_controls.append(entry)
-        entry = self._add_config_entry(
-            duplicates_frame,
-            5,
-            "Report path",
-            self.analysis_report_path_var,
-            tooltip=tooltips["report_path"],
-        )
-        config_controls.append(entry)
-        entry = self._add_config_entry(
-            duplicates_frame,
-            6,
-            "Results path",
-            self.analysis_results_path_var,
-            tooltip=tooltips["results_path"],
-        )
-        config_controls.append(entry)
+        add_section_spacer()
 
-        face_frame = ttk.LabelFrame(config_body, text="Face detection")
-        face_frame.grid(row=5, column=0, sticky="ew")
-        face_frame.grid_columnconfigure(1, weight=1)
-        face_note = ttk.Label(
-            face_frame,
-            text="Optional face detection settings used during analysis.",
-            wraplength=640,
-            justify="left",
+        add_section_note(
+            "Optional face detection settings used during analysis.\n"
+            "Runs locally on previews; no images are uploaded."
         )
-        face_note.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        face_frame = ttk.LabelFrame(config_body, text="Face detection")
+        face_frame.grid(row=section_row, column=0, sticky="ew")
+        face_frame.grid_columnconfigure(1, weight=1)
+        section_row += 1
         face_enabled_label = ttk.Label(face_frame, text="Enabled")
-        face_enabled_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        face_enabled_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         face_enabled = ttk.Checkbutton(
             face_frame, variable=self.analysis_face_enabled_var
         )
-        face_enabled.grid(row=1, column=1, sticky="w", pady=4)
+        face_enabled.grid(row=0, column=1, sticky="w", pady=4)
         self._add_tooltip(face_enabled_label, tooltips["face_enabled"])
         self._add_tooltip(face_enabled, tooltips["face_enabled"])
         config_controls.append(face_enabled)
         face_backend_label = ttk.Label(face_frame, text="Backend")
-        face_backend_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        face_backend_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
         face_backend = ttk.Combobox(
             face_frame,
             textvariable=self.analysis_face_backend_var,
             values=("mediapipe", "insightface"),
             state="readonly",
         )
-        face_backend.grid(row=2, column=1, sticky="ew", pady=4)
+        face_backend.grid(row=1, column=1, sticky="ew", pady=4)
         self._add_tooltip(face_backend_label, tooltips["face_backend"])
         self._add_tooltip(face_backend, tooltips["face_backend"])
         config_controls.append(face_backend)
         entry = self._add_config_entry(
             face_frame,
-            3,
+            2,
             "Detection size",
             self.analysis_face_det_size_var,
             tooltip=tooltips["face_det_size"],
@@ -1233,7 +1195,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            4,
+            3,
             "Context id",
             self.analysis_face_ctx_id_var,
             tooltip=tooltips["face_ctx_id"],
@@ -1241,7 +1203,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            5,
+            4,
             "Allowed modules (comma-separated)",
             self.analysis_face_allowed_modules_var,
             tooltip=tooltips["face_allowed_modules"],
@@ -1249,7 +1211,7 @@ class GuiApp:
         config_controls.append(entry)
         entry = self._add_config_entry(
             face_frame,
-            6,
+            5,
             "Providers (comma-separated, optional)",
             self.analysis_face_providers_var,
             tooltip=tooltips["face_providers"],
