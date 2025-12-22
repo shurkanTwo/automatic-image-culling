@@ -84,7 +84,7 @@ DEFAULT_CONFIG: AppConfig = {
         "motion_ratio_min": 0.02,
         "noise_std_max": 25.0,
         "face": {
-            "enabled": True,
+            "enabled": False,
             "backend": "mediapipe",
             "det_size": 640,
             "ctx_id": 0,

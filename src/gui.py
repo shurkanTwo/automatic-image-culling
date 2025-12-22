@@ -52,6 +52,90 @@ class _CancelError(Exception):
     pass
 
 
+class _Tooltip:
+    """Lightweight tooltip helper for Tk widgets."""
+
+    def __init__(
+        self,
+        widget: "tk.Widget",
+        text: str,
+        *,
+        delay_ms: int = 400,
+        wraplength: int = 360,
+    ) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self.wraplength = wraplength
+        self._job: Optional[str] = None
+        self._tip_window: Optional["tk.Toplevel"] = None
+        self._last_xy: Optional[Tuple[int, int]] = None
+        self.widget.bind("<Enter>", self._schedule, add="+")
+        self.widget.bind("<Leave>", self._hide, add="+")
+        self.widget.bind("<ButtonPress>", self._hide, add="+")
+        self.widget.bind("<Motion>", self._track_motion, add="+")
+
+    def _schedule(self, event: "tk.Event") -> None:
+        self._cancel()
+        self._last_xy = (event.x_root, event.y_root)
+        self._job = self.widget.after(self.delay_ms, self._show)
+
+    def _track_motion(self, event: "tk.Event") -> None:
+        self._last_xy = (event.x_root, event.y_root)
+        if self._tip_window is not None:
+            self._position_tip()
+
+    def _cancel(self) -> None:
+        if self._job is not None:
+            self.widget.after_cancel(self._job)
+            self._job = None
+
+    def _show(self) -> None:
+        if self._tip_window is not None or not self.text:
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        label = tk.Label(
+            tip,
+            text=self.text,
+            justify="left",
+            background="#ffffe0",
+            relief="solid",
+            borderwidth=1,
+            wraplength=self.wraplength,
+        )
+        label.pack(ipadx=6, ipady=3)
+        self._tip_window = tip
+        self._position_tip()
+
+    def _position_tip(self) -> None:
+        if self._tip_window is None:
+            return
+        x, y = self._last_xy or (self.widget.winfo_rootx(), self.widget.winfo_rooty())
+        x += 16
+        y += 16
+        self._tip_window.update_idletasks()
+        width = self._tip_window.winfo_width()
+        height = self._tip_window.winfo_height()
+        screen_w = self.widget.winfo_screenwidth()
+        screen_h = self.widget.winfo_screenheight()
+        if x + width > screen_w:
+            x = max(0, screen_w - width - 8)
+        if y + height > screen_h:
+            y = max(0, screen_h - height - 8)
+        self._tip_window.wm_geometry(f"+{x}+{y}")
+
+    def _hide(self, _event: Optional["tk.Event"] = None) -> None:
+        self._cancel()
+        if self._tip_window is not None:
+            self._tip_window.destroy()
+            self._tip_window = None
+
+
 def _exclude_list(cfg: AppConfig) -> list[str]:
     """Return a de-duplicated list of directories to ignore."""
     exclude_dirs = list(cfg.get("exclude_dirs", []))
@@ -152,6 +236,7 @@ class GuiApp:
         self.phase_var = tk.StringVar(value="")
         self._refresh_job: Optional[str] = None
         self._cancel_event = threading.Event()
+        self._tooltips: list[_Tooltip] = []
 
         self._build_ui()
         self._apply_startup_config()
@@ -194,12 +279,179 @@ class GuiApp:
         run_tab.grid_rowconfigure(4, weight=1)
         run_tab.grid_columnconfigure(0, weight=1)
 
+        tooltips = {
+            "input_dir": (
+                "Folder that contains RAW images to process.\n"
+                "Default: ./input."
+            ),
+            "config_file": (
+                "YAML configuration file to load/save.\n"
+                "Default: config.yaml."
+            ),
+            "concurrency": (
+                "Number of worker threads used for preview generation and analysis.\n"
+                "Default: 4. Range: >=1."
+            ),
+            "exclude_dirs": (
+                "Comma-separated folders to skip during discovery/analysis. "
+                "Analysis/output/previews are always skipped.\n"
+                "Default: analysis, output, previews."
+            ),
+            "preview_long_edge": (
+                "Maximum pixel size of the preview's long edge (keeps aspect ratio).\n"
+                "Default: 2048. Range: >=1."
+            ),
+            "preview_format": (
+                "File format for generated previews (Pillow format name).\n"
+                "Default: webp."
+            ),
+            "preview_quality": (
+                "Compression quality for previews.\n"
+                "Default: 85. Range: 0-100."
+            ),
+            "sharpness_min": (
+                "Minimum focus score (variance of Laplacian) to avoid rejection.\n"
+                "Default: 8.0. Range: >=0."
+            ),
+            "center_sharpness_min": (
+                "Minimum focus score in the center crop.\n"
+                "Leave blank to use 1.2x sharpness min.\n"
+                "Default: 1.2x sharpness min. Range: >=0."
+            ),
+            "tenengrad_min": (
+                "Minimum edge contrast score (Tenengrad).\n"
+                "Default: 200.0. Range: >=0."
+            ),
+            "motion_ratio_min": (
+                "Minimum structure-tensor ratio; lower values indicate motion blur.\n"
+                "Default: 0.02. Range: 0-1."
+            ),
+            "noise_std_max": (
+                "Maximum noise estimate (pixel intensity std dev).\n"
+                "Default: 25.0. Range: >=0."
+            ),
+            "brightness_min": (
+                "Minimum average brightness (0=black, 1=white).\n"
+                "Default: 0.08. Range: 0-1."
+            ),
+            "brightness_max": (
+                "Maximum average brightness (0=black, 1=white).\n"
+                "Default: 0.92. Range: 0-1."
+            ),
+            "shadows_min": (
+                "Minimum fraction of shadow pixels (<20% brightness).\n"
+                "Default: 0.0. Range: 0-1."
+            ),
+            "shadows_max": (
+                "Maximum fraction of shadow pixels (<20% brightness).\n"
+                "Default: 0.5. Range: 0-1."
+            ),
+            "highlights_min": (
+                "Minimum fraction of highlight pixels (>70% brightness).\n"
+                "Default: 0.0. Range: 0-1."
+            ),
+            "highlights_max": (
+                "Maximum fraction of highlight pixels (>70% brightness).\n"
+                "Default: 0.1. Range: 0-1."
+            ),
+            "quality_score_min": (
+                "Minimum overall quality score to keep a frame.\n"
+                "Default: 0.75. Range: 0-1."
+            ),
+            "hard_fail_sharp_ratio": (
+                "Minimum normalized sharpness score before hard fail.\n"
+                "Default: 0.55. Range: 0-1."
+            ),
+            "hard_fail_sharp_center_ratio": (
+                "Minimum normalized center sharpness score before hard fail.\n"
+                "Default: 0.55. Range: 0-1."
+            ),
+            "hard_fail_teneng_ratio": (
+                "Minimum normalized Tenengrad score before hard fail.\n"
+                "Default: 0.55. Range: 0-1."
+            ),
+            "hard_fail_motion_ratio": (
+                "Minimum normalized motion score before hard fail.\n"
+                "Default: 0.55. Range: 0-1."
+            ),
+            "hard_fail_brightness_ratio": (
+                "Minimum normalized brightness score before hard fail.\n"
+                "Default: 0.5. Range: 0-1."
+            ),
+            "hard_fail_noise_ratio": (
+                "Minimum normalized noise score before hard fail.\n"
+                "Default: 0.45. Range: 0-1."
+            ),
+            "hard_fail_shadows_ratio": (
+                "Minimum normalized shadows score before hard fail.\n"
+                "Default: 0.5. Range: 0-1."
+            ),
+            "hard_fail_highlights_ratio": (
+                "Minimum normalized highlights score before hard fail.\n"
+                "Default: 0.5. Range: 0-1."
+            ),
+            "hard_fail_composition_ratio": (
+                "Minimum normalized composition score before hard fail.\n"
+                "Default: 0.4. Range: 0-1."
+            ),
+            "duplicate_hamming": (
+                "Maximum pHash Hamming distance to group duplicates.\n"
+                "Default: 6. Range: 0-64."
+            ),
+            "duplicate_window_seconds": (
+                "Capture time window (seconds) for duplicate grouping.\n"
+                "Default: 8. Range: >=0."
+            ),
+            "duplicate_bucket_bits": (
+                "Number of high pHash bits to bucket comparisons (0 disables).\n"
+                "Default: 8. Range: 0-64."
+            ),
+            "report_path": (
+                "HTML report output path. Relative paths are under the analysis folder.\n"
+                "Default: ./report.html."
+            ),
+            "results_path": (
+                "Analysis JSON output path. Relative paths are under the analysis folder.\n"
+                "Default: ./analysis.json."
+            ),
+            "face_enabled": (
+                "Toggle face detection and scoring during analysis.\n"
+                "Default: true."
+            ),
+            "face_backend": (
+                "Face detection backend.\n"
+                "Default: mediapipe. Options: mediapipe, insightface."
+            ),
+            "face_det_size": (
+                "Input size for the InsightFace detector (square).\n"
+                "Default: 640. Range: >=1."
+            ),
+            "face_ctx_id": (
+                "InsightFace device index (GPU id).\n"
+                "Default: 0. Range: integer."
+            ),
+            "face_allowed_modules": (
+                "InsightFace modules to load (comma-separated).\n"
+                "Default: detection, recognition."
+            ),
+            "face_providers": (
+                "ONNX runtime providers for InsightFace (comma-separated).\n"
+                "Leave blank for CPUExecutionProvider.\n"
+                "Default: CPUExecutionProvider."
+            ),
+        }
+
         form = ttk.Frame(run_tab)
         form.grid(row=0, column=0, sticky="ew")
         form.grid_columnconfigure(1, weight=1)
 
         self._add_path_row(
-            form, 0, "Input folder", self.input_var, self._browse_input
+            form,
+            0,
+            "Input folder",
+            self.input_var,
+            self._browse_input,
+            tooltip=tooltips["input_dir"],
         )
 
         actions = ttk.Frame(run_tab)
@@ -287,6 +539,8 @@ class GuiApp:
         config_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         self.config_entry = ttk.Entry(config_file_frame, textvariable=self.config_var)
         self.config_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        self._add_tooltip(config_label, tooltips["config_file"])
+        self._add_tooltip(self.config_entry, tooltips["config_file"])
         self.config_browse_btn = ttk.Button(
             config_file_frame, text="Browse", command=self._browse_config
         )
@@ -348,7 +602,11 @@ class GuiApp:
         runtime_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         runtime_frame.grid_columnconfigure(1, weight=1)
         entry = self._add_config_entry(
-            runtime_frame, 0, "Concurrency", self.concurrency_var
+            runtime_frame,
+            0,
+            "Concurrency",
+            self.concurrency_var,
+            tooltip=tooltips["concurrency"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -356,6 +614,7 @@ class GuiApp:
             1,
             "Exclude dirs (comma-separated)",
             self.exclude_dirs_var,
+            tooltip=tooltips["exclude_dirs"],
         )
         config_controls.append(entry)
 
@@ -363,15 +622,27 @@ class GuiApp:
         preview_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         preview_frame.grid_columnconfigure(1, weight=1)
         entry = self._add_config_entry(
-            preview_frame, 0, "Long edge (px)", self.preview_long_edge_var
+            preview_frame,
+            0,
+            "Long edge (px)",
+            self.preview_long_edge_var,
+            tooltip=tooltips["preview_long_edge"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            preview_frame, 1, "Format", self.preview_format_var
+            preview_frame,
+            1,
+            "Format",
+            self.preview_format_var,
+            tooltip=tooltips["preview_format"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            preview_frame, 2, "Quality", self.preview_quality_var
+            preview_frame,
+            2,
+            "Quality",
+            self.preview_quality_var,
+            tooltip=tooltips["preview_quality"],
         )
         config_controls.append(entry)
 
@@ -379,7 +650,11 @@ class GuiApp:
         analysis_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         analysis_frame.grid_columnconfigure(1, weight=1)
         entry = self._add_config_entry(
-            analysis_frame, 0, "Sharpness min", self.analysis_sharpness_min_var
+            analysis_frame,
+            0,
+            "Sharpness min",
+            self.analysis_sharpness_min_var,
+            tooltip=tooltips["sharpness_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -387,46 +662,87 @@ class GuiApp:
             1,
             "Center sharpness min (optional)",
             self.analysis_center_sharpness_min_var,
+            tooltip=tooltips["center_sharpness_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 2, "Tenengrad min", self.analysis_tenengrad_min_var
+            analysis_frame,
+            2,
+            "Tenengrad min",
+            self.analysis_tenengrad_min_var,
+            tooltip=tooltips["tenengrad_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 3, "Motion ratio min", self.analysis_motion_ratio_min_var
+            analysis_frame,
+            3,
+            "Motion ratio min",
+            self.analysis_motion_ratio_min_var,
+            tooltip=tooltips["motion_ratio_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 4, "Noise std max", self.analysis_noise_std_max_var
+            analysis_frame,
+            4,
+            "Noise std max",
+            self.analysis_noise_std_max_var,
+            tooltip=tooltips["noise_std_max"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 5, "Brightness min", self.analysis_brightness_min_var
+            analysis_frame,
+            5,
+            "Brightness min",
+            self.analysis_brightness_min_var,
+            tooltip=tooltips["brightness_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 6, "Brightness max", self.analysis_brightness_max_var
+            analysis_frame,
+            6,
+            "Brightness max",
+            self.analysis_brightness_max_var,
+            tooltip=tooltips["brightness_max"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 7, "Shadows min", self.analysis_shadows_min_var
+            analysis_frame,
+            7,
+            "Shadows min",
+            self.analysis_shadows_min_var,
+            tooltip=tooltips["shadows_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 8, "Shadows max", self.analysis_shadows_max_var
+            analysis_frame,
+            8,
+            "Shadows max",
+            self.analysis_shadows_max_var,
+            tooltip=tooltips["shadows_max"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 9, "Highlights min", self.analysis_highlights_min_var
+            analysis_frame,
+            9,
+            "Highlights min",
+            self.analysis_highlights_min_var,
+            tooltip=tooltips["highlights_min"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 10, "Highlights max", self.analysis_highlights_max_var
+            analysis_frame,
+            10,
+            "Highlights max",
+            self.analysis_highlights_max_var,
+            tooltip=tooltips["highlights_max"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            analysis_frame, 11, "Quality score min", self.analysis_quality_score_min_var
+            analysis_frame,
+            11,
+            "Quality score min",
+            self.analysis_quality_score_min_var,
+            tooltip=tooltips["quality_score_min"],
         )
         config_controls.append(entry)
 
@@ -438,6 +754,7 @@ class GuiApp:
             0,
             "Sharpness ratio",
             self.analysis_hard_fail_sharp_ratio_var,
+            tooltip=tooltips["hard_fail_sharp_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -445,6 +762,7 @@ class GuiApp:
             1,
             "Center sharpness ratio",
             self.analysis_hard_fail_sharp_center_ratio_var,
+            tooltip=tooltips["hard_fail_sharp_center_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -452,6 +770,7 @@ class GuiApp:
             2,
             "Tenengrad ratio",
             self.analysis_hard_fail_teneng_ratio_var,
+            tooltip=tooltips["hard_fail_teneng_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -459,6 +778,7 @@ class GuiApp:
             3,
             "Motion ratio",
             self.analysis_hard_fail_motion_ratio_var,
+            tooltip=tooltips["hard_fail_motion_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -466,6 +786,7 @@ class GuiApp:
             4,
             "Brightness ratio",
             self.analysis_hard_fail_brightness_ratio_var,
+            tooltip=tooltips["hard_fail_brightness_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -473,6 +794,7 @@ class GuiApp:
             5,
             "Noise ratio",
             self.analysis_hard_fail_noise_ratio_var,
+            tooltip=tooltips["hard_fail_noise_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -480,6 +802,7 @@ class GuiApp:
             6,
             "Shadows ratio",
             self.analysis_hard_fail_shadows_ratio_var,
+            tooltip=tooltips["hard_fail_shadows_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -487,6 +810,7 @@ class GuiApp:
             7,
             "Highlights ratio",
             self.analysis_hard_fail_highlights_ratio_var,
+            tooltip=tooltips["hard_fail_highlights_ratio"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -494,6 +818,7 @@ class GuiApp:
             8,
             "Composition ratio",
             self.analysis_hard_fail_composition_ratio_var,
+            tooltip=tooltips["hard_fail_composition_ratio"],
         )
         config_controls.append(entry)
 
@@ -505,6 +830,7 @@ class GuiApp:
             0,
             "Duplicate hamming",
             self.analysis_duplicate_hamming_var,
+            tooltip=tooltips["duplicate_hamming"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -512,6 +838,7 @@ class GuiApp:
             1,
             "Duplicate window seconds",
             self.analysis_duplicate_window_seconds_var,
+            tooltip=tooltips["duplicate_window_seconds"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -519,31 +846,40 @@ class GuiApp:
             2,
             "Duplicate bucket bits",
             self.analysis_duplicate_bucket_bits_var,
+            tooltip=tooltips["duplicate_bucket_bits"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            duplicates_frame, 3, "Report path", self.analysis_report_path_var
+            duplicates_frame,
+            3,
+            "Report path",
+            self.analysis_report_path_var,
+            tooltip=tooltips["report_path"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            duplicates_frame, 4, "Results path", self.analysis_results_path_var
+            duplicates_frame,
+            4,
+            "Results path",
+            self.analysis_results_path_var,
+            tooltip=tooltips["results_path"],
         )
         config_controls.append(entry)
 
         face_frame = ttk.LabelFrame(config_body, text="Face detection")
         face_frame.grid(row=5, column=0, sticky="ew")
         face_frame.grid_columnconfigure(1, weight=1)
-        ttk.Label(face_frame, text="Enabled").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        face_enabled_label = ttk.Label(face_frame, text="Enabled")
+        face_enabled_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         face_enabled = ttk.Checkbutton(
             face_frame, variable=self.analysis_face_enabled_var
         )
         face_enabled.grid(row=0, column=1, sticky="w", pady=4)
+        self._add_tooltip(face_enabled_label, tooltips["face_enabled"])
+        self._add_tooltip(face_enabled, tooltips["face_enabled"])
         config_controls.append(face_enabled)
-        ttk.Label(face_frame, text="Backend").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        face_backend_label = ttk.Label(face_frame, text="Backend")
+        face_backend_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
         face_backend = ttk.Combobox(
             face_frame,
             textvariable=self.analysis_face_backend_var,
@@ -551,13 +887,23 @@ class GuiApp:
             state="readonly",
         )
         face_backend.grid(row=1, column=1, sticky="ew", pady=4)
+        self._add_tooltip(face_backend_label, tooltips["face_backend"])
+        self._add_tooltip(face_backend, tooltips["face_backend"])
         config_controls.append(face_backend)
         entry = self._add_config_entry(
-            face_frame, 2, "Detection size", self.analysis_face_det_size_var
+            face_frame,
+            2,
+            "Detection size",
+            self.analysis_face_det_size_var,
+            tooltip=tooltips["face_det_size"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
-            face_frame, 3, "Context id", self.analysis_face_ctx_id_var
+            face_frame,
+            3,
+            "Context id",
+            self.analysis_face_ctx_id_var,
+            tooltip=tooltips["face_ctx_id"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -565,6 +911,7 @@ class GuiApp:
             4,
             "Allowed modules (comma-separated)",
             self.analysis_face_allowed_modules_var,
+            tooltip=tooltips["face_allowed_modules"],
         )
         config_controls.append(entry)
         entry = self._add_config_entry(
@@ -572,6 +919,7 @@ class GuiApp:
             5,
             "Providers (comma-separated, optional)",
             self.analysis_face_providers_var,
+            tooltip=tooltips["face_providers"],
         )
         config_controls.append(entry)
 
@@ -747,7 +1095,7 @@ class GuiApp:
         )
 
         face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
-        self.analysis_face_enabled_var.set(bool(face_cfg.get("enabled", True)))
+        self.analysis_face_enabled_var.set(bool(face_cfg.get("enabled", False)))
         self.analysis_face_backend_var.set(str(face_cfg.get("backend", "mediapipe")))
         self.analysis_face_det_size_var.set(
             self._format_number(face_cfg.get("det_size", 640))
@@ -1024,14 +1372,18 @@ class GuiApp:
         label: str,
         variable: "tk.StringVar",
         browse_cmd: Callable[[], None],
+        *,
+        tooltip: Optional[str] = None,
     ) -> None:
-        ttk.Label(parent, text=label).grid(
-            row=row, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
         entry = ttk.Entry(parent, textvariable=variable)
         entry.grid(row=row, column=1, sticky="ew", pady=4)
         button = ttk.Button(parent, text="Browse", command=browse_cmd)
         button.grid(row=row, column=2, sticky="ew", pady=4, padx=(4, 0))
+        if tooltip:
+            self._add_tooltip(label_widget, tooltip)
+            self._add_tooltip(entry, tooltip)
 
     def _add_config_entry(
         self,
@@ -1039,13 +1391,22 @@ class GuiApp:
         row: int,
         label: str,
         variable: "tk.StringVar",
+        *,
+        tooltip: Optional[str] = None,
     ) -> "ttk.Entry":
-        ttk.Label(parent, text=label).grid(
-            row=row, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
         entry = ttk.Entry(parent, textvariable=variable)
         entry.grid(row=row, column=1, sticky="ew", pady=4)
+        if tooltip:
+            self._add_tooltip(label_widget, tooltip)
+            self._add_tooltip(entry, tooltip)
         return entry
+
+    def _add_tooltip(self, widget: "tk.Widget", text: str) -> None:
+        if not text:
+            return
+        self._tooltips.append(_Tooltip(widget, text))
 
     def _on_mousewheel(
         self, canvas: "tk.Canvas", event: "tk.Event"
