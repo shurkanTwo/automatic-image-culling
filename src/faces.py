@@ -9,6 +9,7 @@ import numpy as np
 from .config import FaceConfig
 from .metrics import variance_of_laplacian
 from .preview import open_preview_rgb
+from .orientation import rotate_array
 
 try:
     from insightface.app import FaceAnalysis
@@ -103,17 +104,6 @@ def _get_mp_face() -> Optional[Any]:
         return detector
     except Exception:
         return None
-
-
-def _rotate(arr: np.ndarray, orientation: int) -> np.ndarray:
-    """Rotate the array based on EXIF orientation code."""
-    if orientation == 3:
-        return np.rot90(arr, 2)
-    if orientation == 6:
-        return np.rot90(arr, -1)
-    if orientation == 8:
-        return np.rot90(arr, 1)
-    return arr
 
 
 def _ensure_uint8(arr: np.ndarray) -> np.ndarray:
@@ -214,8 +204,8 @@ def detect_faces(
     if rgb_full is None:
         return None
 
-    oriented_rgb = _ensure_uint8(_rotate(rgb_full, orientation))
-    oriented_gray = _rotate(gray_arr, orientation)
+    oriented_rgb = _ensure_uint8(rotate_array(rgb_full, orientation))
+    oriented_gray = rotate_array(gray_arr, orientation)
 
     faces: List[FaceDetection]
     if mp is not None and isinstance(

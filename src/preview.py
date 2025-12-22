@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
 
 from .config import PreviewConfig
 from .discovery import exif_orientation, read_exif
+from .orientation import apply_pil_orientation
 
 
 def resize_image(img: Image.Image, long_edge: int) -> Image.Image:
@@ -32,17 +33,6 @@ def resize_image(img: Image.Image, long_edge: int) -> Image.Image:
         new_height = long_edge
         new_width = int(width * (long_edge / height))
     return img.resize((new_width, new_height), Image.LANCZOS)
-
-
-def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
-    """Rotate the image based on EXIF orientation codes."""
-    if orientation == 3:
-        return img.rotate(180, expand=True)
-    if orientation == 6:
-        return img.rotate(-90, expand=True)
-    if orientation == 8:
-        return img.rotate(90, expand=True)
-    return img
 
 
 def generate_preview(
@@ -70,7 +60,7 @@ def generate_preview(
         except Exception:
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
             img = Image.fromarray(rgb)
-    img = _apply_orientation(img, orientation)
+    img = apply_pil_orientation(img, orientation)
     img = resize_image(img, long_edge)
     img.save(target, fmt.upper(), quality=quality)
     return target
