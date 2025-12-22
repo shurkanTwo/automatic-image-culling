@@ -715,8 +715,8 @@ class GuiApp:
             self.input_var,
             self._browse_input,
             tooltip=tooltips["input_dir"],
-            entry_width=60,
-            center=True,
+            entry_width=30,
+            center=False,
             center_row=True,
         )
 
