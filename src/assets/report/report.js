@@ -490,6 +490,10 @@
     elements.lightbox.classList.add("open");
   }
 
+  function isLightboxOpen() {
+    return state.lightboxPos !== null && elements.lightbox.classList.contains("open");
+  }
+
   function closeLightbox() {
     elements.lightbox.classList.remove("open");
     state.lightboxPos = null;
@@ -517,6 +521,16 @@
       e.stopPropagation();
       closeLightbox();
     };
+    document.addEventListener("keydown", (e) => {
+      if (!isLightboxOpen()) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        stepLightbox(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        stepLightbox(1);
+      }
+    });
   }
 
   function render() {
