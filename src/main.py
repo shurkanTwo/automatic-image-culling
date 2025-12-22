@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 from .analyzer import analyze_files, write_outputs
-from .config import AnalysisConfig, AppConfig, PreviewConfig, load_config
+from .config import DEFAULT_CONFIG, AnalysisConfig, AppConfig, PreviewConfig, load_config
 from .decisions import apply_decisions
 from .discovery import (
     ExifData,
@@ -58,7 +58,7 @@ class _Progress:
 
 def _exclude_list(cfg: AppConfig) -> List[str]:
     """Return a de-duplicated, deterministic list of directories to ignore."""
-    exclude_dirs = list(cfg.get("exclude_dirs", []))
+    exclude_dirs = list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
     input_dir = input_dir_from_cfg(cfg)
     exclude_dirs.extend(
         [
@@ -72,11 +72,10 @@ def _exclude_list(cfg: AppConfig) -> List[str]:
 
 def _preview_config(cfg: AppConfig) -> PreviewConfig:
     """Return a defensive copy of the preview configuration."""
-    preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
-    preview_cfg.setdefault("long_edge", 2048)
-    preview_cfg.setdefault("format", "webp")
-    preview_cfg.setdefault("quality", 85)
-    return preview_cfg
+    defaults = DEFAULT_CONFIG["preview"]
+    preview_cfg = dict(defaults)
+    preview_cfg.update(cfg.get("preview") or {})
+    return cast(PreviewConfig, preview_cfg)
 
 
 def _load_app_config(path: Optional[str]) -> AppConfig:
@@ -92,12 +91,14 @@ def _prepare_analysis_config(
     """Return analysis config with resolved output paths."""
     analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
 
-    results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+    default_results = DEFAULT_CONFIG["analysis"]["results_path"]
+    results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
     if not results_path.is_absolute():
         results_path = analysis_dir / results_path
     analysis_cfg["results_path"] = str(results_path)
 
-    report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+    default_report = DEFAULT_CONFIG["analysis"]["report_path"]
+    report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
     if not report_path.is_absolute():
         report_path = analysis_dir / report_path
     analysis_cfg["report_path"] = str(report_path)
@@ -148,7 +149,7 @@ def analyze_command(args: argparse.Namespace) -> None:
     bar = _Progress(len(files), "Previews")
     missing_dep = False
     with concurrent.futures.ThreadPoolExecutor(
-        max_workers=cfg.get("concurrency", 4)
+        max_workers=cfg.get("concurrency", DEFAULT_CONFIG["concurrency"])
     ) as pool:
         jobs = [
             pool.submit(ensure_preview, path, preview_dir, preview_cfg)

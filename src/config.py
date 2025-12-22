@@ -45,6 +45,7 @@ class AnalysisConfig(TypedDict, total=False):
     highlights_max: float
     duplicate_hamming: int
     duplicate_window_seconds: int
+    duplicate_bucket_bits: int
     quality_score_min: float
     hard_fail_sharp_ratio: float
     hard_fail_sharp_center_ratio: float
@@ -78,14 +79,30 @@ DEFAULT_CONFIG: AppConfig = {
         "sharpness_min": 8.0,
         "brightness_min": 0.08,
         "brightness_max": 0.92,
+        "shadows_min": 0.0,
+        "shadows_max": 0.5,
+        "highlights_min": 0.0,
+        "highlights_max": 0.1,
         "duplicate_hamming": 6,
         "duplicate_window_seconds": 8,
+        "duplicate_bucket_bits": 8,
         "tenengrad_min": 200.0,
         "motion_ratio_min": 0.02,
         "noise_std_max": 25.0,
+        "quality_score_min": 0.75,
+        "hard_fail_sharp_ratio": 0.55,
+        "hard_fail_sharp_center_ratio": 0.55,
+        "hard_fail_teneng_ratio": 0.55,
+        "hard_fail_motion_ratio": 0.55,
+        "hard_fail_brightness_ratio": 0.5,
+        "hard_fail_noise_ratio": 0.45,
+        "hard_fail_shadows_ratio": 0.5,
+        "hard_fail_highlights_ratio": 0.5,
+        "hard_fail_composition_ratio": 0.4,
         "face": {
             "enabled": False,
             "backend": "mediapipe",
+            "allowed_modules": ["detection", "recognition"],
             "det_size": 640,
             "ctx_id": 0,
         },

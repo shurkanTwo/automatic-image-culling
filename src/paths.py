@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 from typing import Any, Mapping, MutableMapping
 
+from .config import DEFAULT_CONFIG
 OUTPUT_SUBDIR = "output"
 PREVIEW_SUBDIR = "previews"
 ANALYSIS_SUBDIR = "analysis"
@@ -13,7 +14,8 @@ DECISIONS_FILENAME = "decisions.json"
 
 def input_dir_from_cfg(cfg: Mapping[str, Any]) -> pathlib.Path:
     """Return the input directory from config."""
-    return pathlib.Path(cfg.get("input_dir", "./input")).expanduser()
+    default_input = DEFAULT_CONFIG["input_dir"]
+    return pathlib.Path(cfg.get("input_dir", default_input)).expanduser()
 
 
 def output_dir_for_input(input_dir: pathlib.Path) -> pathlib.Path:

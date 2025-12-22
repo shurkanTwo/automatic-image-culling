@@ -6,7 +6,7 @@ from typing import Any, List, Optional, TypedDict
 
 import numpy as np
 
-from .config import FaceConfig
+from .config import DEFAULT_CONFIG, FaceConfig
 from .metrics import variance_of_laplacian
 from .preview import open_preview_rgb
 from .orientation import rotate_array
@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover
 
 _FACE_APP: Optional[Any] = None
 _THREAD_LOCAL = threading.local()
+DEFAULT_FACE_CONFIG = DEFAULT_CONFIG["analysis"]["face"]
 
 
 class FaceDetection(TypedDict, total=False):
@@ -67,7 +68,9 @@ def _get_insightface(face_cfg: FaceConfig) -> Optional[Any]:
     else:
         providers = ["CPUExecutionProvider"]
 
-    allowed_modules = face_cfg.get("allowed_modules", ["detection", "recognition"])
+    allowed_modules = face_cfg.get(
+        "allowed_modules", DEFAULT_FACE_CONFIG["allowed_modules"]
+    )
 
     def prepare_detector(provider_list: List[str]) -> Optional[Any]:
         try:
@@ -77,8 +80,11 @@ def _get_insightface(face_cfg: FaceConfig) -> Optional[Any]:
                 allowed_modules=allowed_modules,
             )
             app.prepare(
-                ctx_id=face_cfg.get("ctx_id", 0),
-                det_size=(face_cfg.get("det_size", 640), face_cfg.get("det_size", 640)),
+                ctx_id=face_cfg.get("ctx_id", DEFAULT_FACE_CONFIG["ctx_id"]),
+                det_size=(
+                    face_cfg.get("det_size", DEFAULT_FACE_CONFIG["det_size"]),
+                    face_cfg.get("det_size", DEFAULT_FACE_CONFIG["det_size"]),
+                ),
             )
             return app
         except Exception:

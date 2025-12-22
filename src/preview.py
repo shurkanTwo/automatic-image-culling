@@ -16,7 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     Image = None
 
-from .config import PreviewConfig
+from .config import DEFAULT_CONFIG, PreviewConfig
 from .discovery import exif_orientation, read_exif
 from .orientation import apply_pil_orientation
 
@@ -46,9 +46,9 @@ def generate_preview(
     if target.exists():
         return target
     orientation = exif_orientation(read_exif(path))
-    long_edge = int(cfg.get("long_edge", 2048))
-    fmt = cfg.get("format", "webp")
-    quality = int(cfg.get("quality", 85))
+    long_edge = int(cfg.get("long_edge", PREVIEW_DEFAULTS["long_edge"]))
+    fmt = cfg.get("format", PREVIEW_DEFAULTS["format"])
+    quality = int(cfg.get("quality", PREVIEW_DEFAULTS["quality"]))
     with rawpy.imread(str(path)) as raw:
         try:
             thumb = raw.extract_thumb()
@@ -98,4 +98,6 @@ def preview_path_for(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> pathlib.Path:
     """Return the expected preview path for a RAW file and preview config."""
-    return preview_dir / f"{path.stem}.{cfg.get('format', 'webp')}"
+    fmt = cfg.get("format", PREVIEW_DEFAULTS["format"])
+    return preview_dir / f"{path.stem}.{fmt}"
+PREVIEW_DEFAULTS = DEFAULT_CONFIG["preview"]

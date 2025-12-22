@@ -25,6 +25,7 @@ else:  # pragma: no cover
 
 from .analyzer import analyze_files, write_outputs
 from .config import (
+    DEFAULT_CONFIG,
     AnalysisConfig,
     AppConfig,
     FaceConfig,
@@ -138,7 +139,7 @@ class _Tooltip:
 
 def _exclude_list(cfg: AppConfig) -> list[str]:
     """Return a de-duplicated list of directories to ignore."""
-    exclude_dirs = list(cfg.get("exclude_dirs", []))
+    exclude_dirs = list(cfg.get("exclude_dirs", DEFAULT_CONFIG["exclude_dirs"]))
     input_dir = input_dir_from_cfg(cfg)
     exclude_dirs.extend(
         [
@@ -152,11 +153,10 @@ def _exclude_list(cfg: AppConfig) -> list[str]:
 
 def _preview_config(cfg: AppConfig) -> PreviewConfig:
     """Return a defensive copy of the preview configuration."""
-    preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
-    preview_cfg.setdefault("long_edge", 2048)
-    preview_cfg.setdefault("format", "webp")
-    preview_cfg.setdefault("quality", 85)
-    return preview_cfg
+    defaults = DEFAULT_CONFIG["preview"]
+    preview_cfg = dict(defaults)
+    preview_cfg.update(cfg.get("preview") or {})
+    return cast(PreviewConfig, preview_cfg)
 
 
 def _prepare_analysis_config(
@@ -165,12 +165,14 @@ def _prepare_analysis_config(
     """Return analysis config with resolved output paths."""
     analysis_cfg = cast(AnalysisConfig, dict(cfg.get("analysis") or {}))
 
-    results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+    default_results = DEFAULT_CONFIG["analysis"]["results_path"]
+    results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
     if not results_path.is_absolute():
         results_path = analysis_dir / results_path
     analysis_cfg["results_path"] = str(results_path)
 
-    report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+    default_report = DEFAULT_CONFIG["analysis"]["report_path"]
+    report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
     if not report_path.is_absolute():
         report_path = analysis_dir / report_path
     analysis_cfg["report_path"] = str(report_path)
@@ -992,118 +994,220 @@ class GuiApp:
         return items
 
     def _apply_config_to_vars(self, cfg: AppConfig) -> None:
-        self.input_var.set(cfg.get("input_dir", ""))
+        app_defaults = DEFAULT_CONFIG
+        preview_defaults = app_defaults["preview"]
+        analysis_defaults = app_defaults["analysis"]
+        face_defaults = analysis_defaults["face"]
+
+        self.input_var.set(cfg.get("input_dir", app_defaults["input_dir"]))
         self.exclude_dirs_var.set(
-            self._format_list(cfg.get("exclude_dirs", []))
+            self._format_list(cfg.get("exclude_dirs", app_defaults["exclude_dirs"]))
         )
-        self.concurrency_var.set(self._format_number(cfg.get("concurrency", 4)))
+        self.concurrency_var.set(
+            self._format_number(cfg.get("concurrency", app_defaults["concurrency"]))
+        )
 
         preview_cfg = cast(PreviewConfig, cfg.get("preview") or {})
         self.preview_long_edge_var.set(
-            self._format_number(preview_cfg.get("long_edge", 2048))
+            self._format_number(
+                preview_cfg.get("long_edge", preview_defaults["long_edge"])
+            )
         )
-        self.preview_format_var.set(str(preview_cfg.get("format", "webp")))
+        self.preview_format_var.set(
+            str(preview_cfg.get("format", preview_defaults["format"]))
+        )
         self.preview_quality_var.set(
-            self._format_number(preview_cfg.get("quality", 85))
+            self._format_number(
+                preview_cfg.get("quality", preview_defaults["quality"])
+            )
         )
 
         analysis_cfg = cast(AnalysisConfig, cfg.get("analysis") or {})
         self.analysis_sharpness_min_var.set(
-            self._format_number(analysis_cfg.get("sharpness_min", 8.0))
+            self._format_number(
+                analysis_cfg.get("sharpness_min", analysis_defaults["sharpness_min"])
+            )
         )
         center_value = analysis_cfg.get("center_sharpness_min")
         self.analysis_center_sharpness_min_var.set(
             self._format_number(center_value) if center_value is not None else ""
         )
         self.analysis_tenengrad_min_var.set(
-            self._format_number(analysis_cfg.get("tenengrad_min", 200.0))
+            self._format_number(
+                analysis_cfg.get("tenengrad_min", analysis_defaults["tenengrad_min"])
+            )
         )
         self.analysis_motion_ratio_min_var.set(
-            self._format_number(analysis_cfg.get("motion_ratio_min", 0.02))
+            self._format_number(
+                analysis_cfg.get(
+                    "motion_ratio_min", analysis_defaults["motion_ratio_min"]
+                )
+            )
         )
         self.analysis_noise_std_max_var.set(
-            self._format_number(analysis_cfg.get("noise_std_max", 25.0))
+            self._format_number(
+                analysis_cfg.get("noise_std_max", analysis_defaults["noise_std_max"])
+            )
         )
         self.analysis_brightness_min_var.set(
-            self._format_number(analysis_cfg.get("brightness_min", 0.08))
+            self._format_number(
+                analysis_cfg.get("brightness_min", analysis_defaults["brightness_min"])
+            )
         )
         self.analysis_brightness_max_var.set(
-            self._format_number(analysis_cfg.get("brightness_max", 0.92))
+            self._format_number(
+                analysis_cfg.get("brightness_max", analysis_defaults["brightness_max"])
+            )
         )
         self.analysis_shadows_min_var.set(
-            self._format_number(analysis_cfg.get("shadows_min", 0.0))
+            self._format_number(
+                analysis_cfg.get("shadows_min", analysis_defaults["shadows_min"])
+            )
         )
         self.analysis_shadows_max_var.set(
-            self._format_number(analysis_cfg.get("shadows_max", 0.5))
+            self._format_number(
+                analysis_cfg.get("shadows_max", analysis_defaults["shadows_max"])
+            )
         )
         self.analysis_highlights_min_var.set(
-            self._format_number(analysis_cfg.get("highlights_min", 0.0))
+            self._format_number(
+                analysis_cfg.get(
+                    "highlights_min", analysis_defaults["highlights_min"]
+                )
+            )
         )
         self.analysis_highlights_max_var.set(
-            self._format_number(analysis_cfg.get("highlights_max", 0.1))
+            self._format_number(
+                analysis_cfg.get(
+                    "highlights_max", analysis_defaults["highlights_max"]
+                )
+            )
         )
         self.analysis_quality_score_min_var.set(
-            self._format_number(analysis_cfg.get("quality_score_min", 0.75))
+            self._format_number(
+                analysis_cfg.get(
+                    "quality_score_min", analysis_defaults["quality_score_min"]
+                )
+            )
         )
         self.analysis_hard_fail_sharp_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_sharp_ratio", 0.55))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_sharp_ratio",
+                    analysis_defaults["hard_fail_sharp_ratio"],
+                )
+            )
         )
         self.analysis_hard_fail_sharp_center_ratio_var.set(
             self._format_number(
-                analysis_cfg.get("hard_fail_sharp_center_ratio", 0.55)
+                analysis_cfg.get(
+                    "hard_fail_sharp_center_ratio",
+                    analysis_defaults["hard_fail_sharp_center_ratio"],
+                )
             )
         )
         self.analysis_hard_fail_teneng_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_teneng_ratio", 0.55))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_teneng_ratio",
+                    analysis_defaults["hard_fail_teneng_ratio"],
+                )
+            )
         )
         self.analysis_hard_fail_motion_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_motion_ratio", 0.55))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_motion_ratio",
+                    analysis_defaults["hard_fail_motion_ratio"],
+                )
+            )
         )
         self.analysis_hard_fail_brightness_ratio_var.set(
             self._format_number(
-                analysis_cfg.get("hard_fail_brightness_ratio", 0.5)
+                analysis_cfg.get(
+                    "hard_fail_brightness_ratio",
+                    analysis_defaults["hard_fail_brightness_ratio"],
+                )
             )
         )
         self.analysis_hard_fail_noise_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_noise_ratio", 0.45))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_noise_ratio",
+                    analysis_defaults["hard_fail_noise_ratio"],
+                )
+            )
         )
         self.analysis_hard_fail_shadows_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_shadows_ratio", 0.5))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_shadows_ratio",
+                    analysis_defaults["hard_fail_shadows_ratio"],
+                )
+            )
         )
         self.analysis_hard_fail_highlights_ratio_var.set(
             self._format_number(
-                analysis_cfg.get("hard_fail_highlights_ratio", 0.5)
+                analysis_cfg.get(
+                    "hard_fail_highlights_ratio",
+                    analysis_defaults["hard_fail_highlights_ratio"],
+                )
             )
         )
         self.analysis_hard_fail_composition_ratio_var.set(
-            self._format_number(analysis_cfg.get("hard_fail_composition_ratio", 0.4))
+            self._format_number(
+                analysis_cfg.get(
+                    "hard_fail_composition_ratio",
+                    analysis_defaults["hard_fail_composition_ratio"],
+                )
+            )
         )
         self.analysis_duplicate_hamming_var.set(
-            self._format_number(analysis_cfg.get("duplicate_hamming", 6))
+            self._format_number(
+                analysis_cfg.get(
+                    "duplicate_hamming", analysis_defaults["duplicate_hamming"]
+                )
+            )
         )
         self.analysis_duplicate_window_seconds_var.set(
-            self._format_number(analysis_cfg.get("duplicate_window_seconds", 8))
+            self._format_number(
+                analysis_cfg.get(
+                    "duplicate_window_seconds",
+                    analysis_defaults["duplicate_window_seconds"],
+                )
+            )
         )
         self.analysis_duplicate_bucket_bits_var.set(
-            self._format_number(analysis_cfg.get("duplicate_bucket_bits", 8))
+            self._format_number(
+                analysis_cfg.get(
+                    "duplicate_bucket_bits",
+                    analysis_defaults["duplicate_bucket_bits"],
+                )
+            )
         )
         self.analysis_report_path_var.set(
-            str(analysis_cfg.get("report_path", "./report.html"))
+            str(analysis_cfg.get("report_path", analysis_defaults["report_path"]))
         )
         self.analysis_results_path_var.set(
-            str(analysis_cfg.get("results_path", "./analysis.json"))
+            str(analysis_cfg.get("results_path", analysis_defaults["results_path"]))
         )
 
         face_cfg = cast(FaceConfig, analysis_cfg.get("face") or {})
-        self.analysis_face_enabled_var.set(bool(face_cfg.get("enabled", False)))
-        self.analysis_face_backend_var.set(str(face_cfg.get("backend", "mediapipe")))
+        self.analysis_face_enabled_var.set(
+            bool(face_cfg.get("enabled", face_defaults["enabled"]))
+        )
+        self.analysis_face_backend_var.set(
+            str(face_cfg.get("backend", face_defaults["backend"]))
+        )
         self.analysis_face_det_size_var.set(
-            self._format_number(face_cfg.get("det_size", 640))
+            self._format_number(face_cfg.get("det_size", face_defaults["det_size"]))
         )
         self.analysis_face_ctx_id_var.set(
-            self._format_number(face_cfg.get("ctx_id", 0))
+            self._format_number(face_cfg.get("ctx_id", face_defaults["ctx_id"]))
         )
-        allowed_modules = face_cfg.get("allowed_modules", ["detection", "recognition"])
+        allowed_modules = face_cfg.get(
+            "allowed_modules", face_defaults["allowed_modules"]
+        )
         self.analysis_face_allowed_modules_var.set(
             self._format_list(allowed_modules)
         )
@@ -1593,11 +1697,13 @@ class GuiApp:
         input_dir = input_dir_from_cfg(cfg)
         analysis_dir = analysis_dir_for_input(input_dir)
 
-        report_path = pathlib.Path(analysis_cfg.get("report_path", "report.html"))
+        default_report = DEFAULT_CONFIG["analysis"]["report_path"]
+        report_path = pathlib.Path(analysis_cfg.get("report_path", default_report))
         if not report_path.is_absolute():
             report_path = analysis_dir / report_path
 
-        results_path = pathlib.Path(analysis_cfg.get("results_path", "analysis.json"))
+        default_results = DEFAULT_CONFIG["analysis"]["results_path"]
+        results_path = pathlib.Path(analysis_cfg.get("results_path", default_results))
         if not results_path.is_absolute():
             results_path = analysis_dir / results_path
 
@@ -1792,7 +1898,13 @@ class GuiApp:
             preview_cfg = _preview_config(cfg)
             preview_dir = preview_dir_for_input(input_dir)
             preview_dir.mkdir(parents=True, exist_ok=True)
-            workers = max(1, int(cfg.get("concurrency", 4) or 4))
+            workers = max(
+                1,
+                int(
+                    cfg.get("concurrency", DEFAULT_CONFIG["concurrency"])
+                    or DEFAULT_CONFIG["concurrency"]
+                ),
+            )
             missing_dep = self._generate_previews(
                 files, preview_dir, preview_cfg, workers, "Previews"
             )
