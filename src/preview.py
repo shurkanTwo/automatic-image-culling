@@ -45,11 +45,6 @@ def _apply_orientation(img: Image.Image, orientation: int) -> Image.Image:
     return img
 
 
-def _preview_format(cfg: PreviewConfig) -> str:
-    """Return the desired preview format with a safe default."""
-    return cfg.get("format", "webp")
-
-
 def generate_preview(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> Optional[pathlib.Path]:
@@ -62,7 +57,7 @@ def generate_preview(
         return target
     orientation = exif_orientation(read_exif(path))
     long_edge = int(cfg.get("long_edge", 2048))
-    fmt = _preview_format(cfg)
+    fmt = cfg.get("format", "webp")
     quality = int(cfg.get("quality", 85))
     with rawpy.imread(str(path)) as raw:
         try:
@@ -113,4 +108,4 @@ def preview_path_for(
     path: pathlib.Path, preview_dir: pathlib.Path, cfg: PreviewConfig
 ) -> pathlib.Path:
     """Return the expected preview path for a RAW file and preview config."""
-    return preview_dir / f"{path.stem}.{_preview_format(cfg)}"
+    return preview_dir / f"{path.stem}.{cfg.get('format', 'webp')}"
