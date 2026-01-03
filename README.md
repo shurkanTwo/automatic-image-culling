@@ -2,6 +2,8 @@
 
 Small toolchain to scan input directory for Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
 
+Proprietary — no copying, redistribution, or derivative works without permission.
+
 ## What it does
 
 - Scans the input directory for `.ARW` files, excluding output folders.
