@@ -27,7 +27,8 @@ jobs:
             --name AutomaticImageCulling `
             --add-data "src/assets;src/assets" `
             --collect-all rawpy --collect-all mediapipe --collect-all insightface --collect-all onnxruntime `
-            src/gui.py
+            --paths . `
+            --module src.gui
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
