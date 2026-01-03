@@ -97,6 +97,7 @@ th.sortable .sort-indicator { margin-left: 0.25rem; opacity: 0.6; font-size: 0.7
 .duplicate-link { color: #0b5ed7; text-decoration: underline; }
 .duplicate-link:hover { color: #06357a; }
 .row-highlight td { animation: rowFlash 1.2s ease; }
+#table-wrap { overflow: visible; }
 @keyframes rowFlash {
   0% { background-color: #fff3bf; }
   60% { background-color: #ffe8a3; }
