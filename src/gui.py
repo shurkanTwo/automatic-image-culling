@@ -37,12 +37,15 @@ from .analyzer import analyze_files, write_outputs
 from .app_config import exclude_list, prepare_analysis_config, preview_config
 from .config import (
     DEFAULT_CONFIG,
+    DEFAULT_MODE_NAME,
     AnalysisConfig,
     AppConfig,
     FaceConfig,
     PreviewConfig,
+    available_modes,
     default_config,
     load_config,
+    resolve_config,
     save_config,
 )
 from .paths import (
@@ -445,6 +448,10 @@ class GuiApp:
 
         self.input_var = tk.StringVar()
         self.config_var = tk.StringVar()
+        self.config_source_var = tk.StringVar(value="file")
+        self.mode_var = tk.StringVar(
+            value=DEFAULT_CONFIG.get("mode", DEFAULT_MODE_NAME)
+        )
         self.preview_long_edge_var = tk.StringVar()
         self.preview_format_var = tk.StringVar()
         self.preview_quality_var = tk.StringVar()
@@ -536,6 +543,14 @@ class GuiApp:
             ),
             "config_file": (
                 "YAML configuration file to load/save.\n" "Default: config.yaml."
+            ),
+            "config_source": (
+                "Select whether to run with built-in defaults or values from the config file.\n"
+                "Defaults ignore the file; saving still writes to the chosen path."
+            ),
+            "mode": (
+                "Switch thresholds between presets (balanced, outdoor bright/action, indoor mixed light, indoor night mixed flash, low light handheld, flash).\n"
+                "Changing the mode updates the fields; you can still tweak them afterward."
             ),
             "concurrency": (
                 "Number of worker threads used for preview generation and analysis.\n"
@@ -680,7 +695,8 @@ class GuiApp:
                 "Default: 8. Range: 0-64."
             ),
             "face_enabled": (
-                "Toggle face detection and scoring during analysis.\n" "Default: true."
+                "Toggle face detection and scoring during analysis.\n"
+                "Default: false."
             ),
             "face_backend": (
                 "Face detection backend.\n"
@@ -835,6 +851,44 @@ class GuiApp:
                 self.config_reset_btn,
             ]
         )
+
+        source_label = ttk.Label(config_file_frame, text="Config source")
+        source_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        use_file = ttk.Radiobutton(
+            config_file_frame,
+            text="Config file",
+            variable=self.config_source_var,
+            value="file",
+            command=self._on_config_source_change,
+        )
+        use_file.grid(row=1, column=1, sticky="w", pady=4)
+        use_default = ttk.Radiobutton(
+            config_file_frame,
+            text="Built-in defaults",
+            variable=self.config_source_var,
+            value="default",
+            command=self._on_config_source_change,
+        )
+        use_default.grid(row=1, column=2, sticky="w", pady=4)
+        self._add_tooltip(source_label, tooltips["config_source"])
+        self._add_tooltip(use_file, tooltips["config_source"])
+        self._add_tooltip(use_default, tooltips["config_source"])
+        config_controls.extend([use_file, use_default])
+
+        mode_label = ttk.Label(config_file_frame, text="Mode")
+        mode_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.mode_combo = ttk.Combobox(
+            config_file_frame,
+            textvariable=self.mode_var,
+            state="readonly",
+            width=20,
+            values=(),
+        )
+        self.mode_combo.grid(row=2, column=1, sticky="w", pady=4)
+        self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_change)
+        self._add_tooltip(mode_label, tooltips["mode"])
+        self._add_tooltip(self.mode_combo, tooltips["mode"])
+        config_controls.append(self.mode_combo)
 
         config_canvas = tk.Canvas(config_tab, highlightthickness=0)
         config_scrollbar = ttk.Scrollbar(
@@ -1354,9 +1408,7 @@ class GuiApp:
         self._apply_field_specs(face_cfg, FACE_FIELDS)
 
     def _collect_config(self) -> AppConfig:
-        cfg_path = self.config_var.get().strip()
-        cfg = load_config(cfg_path or None)
-        drop_path_config(cfg)
+        cfg = self._load_source_config()
         self._collect_field_specs(cfg, APP_FIELDS)
 
         preview_cfg = cast(PreviewConfig, dict(cfg.get("preview") or {}))
@@ -1371,16 +1423,15 @@ class GuiApp:
         analysis_cfg["face"] = face_cfg
         cfg["analysis"] = analysis_cfg
 
-        return cfg
+        mode_name = self.mode_var.get().strip() or self._current_mode_name(cfg)
+        cfg["mode"] = mode_name or DEFAULT_MODE_NAME
+        return resolve_config(cfg, mode=mode_name)
 
     def _apply_startup_config(self) -> None:
         """Populate fields from config.yaml when available; otherwise defaults."""
         if not self.config_var.get():
             self.config_var.set("config.yaml")
-        cfg_path = self.config_var.get().strip()
-        cfg = load_config(cfg_path or None)
-        drop_path_config(cfg)
-        self._apply_config_to_vars(cfg)
+        self._apply_resolved_config()
 
     def _bind_state_refresh(self) -> None:
         for var in (
@@ -1394,6 +1445,50 @@ class GuiApp:
         if self._refresh_job is not None:
             return
         self._refresh_job = self.root.after(250, self._refresh_action_states)
+
+    @staticmethod
+    def _current_mode_name(cfg: Optional[AppConfig] = None) -> str:
+        value = (cfg or {}).get("mode") or ""
+        return value or DEFAULT_MODE_NAME
+
+    def _load_source_config(self) -> AppConfig:
+        cfg_path = self.config_var.get().strip()
+        source = self.config_source_var.get()
+        if source == "default":
+            cfg = default_config()
+        else:
+            cfg = load_config(cfg_path or None)
+        drop_path_config(cfg)
+        return cfg
+
+    def _update_mode_options(
+        self, presets: Mapping[str, AppConfig], selected: str
+    ) -> str:
+        options = list(presets.keys())
+        if selected not in presets and options:
+            selected = options[0]
+        self.mode_combo.configure(values=options)
+        self.mode_var.set(selected)
+        return selected
+
+    def _apply_resolved_config(
+        self,
+        cfg: Optional[AppConfig] = None,
+        *,
+        mode_override: Optional[str] = None,
+    ) -> None:
+        base_cfg = cfg or self._load_source_config()
+        mode_name = (
+            mode_override
+            or base_cfg.get("mode")
+            or self.mode_var.get().strip()
+            or DEFAULT_MODE_NAME
+        )
+        presets = available_modes(base_cfg)
+        mode_name = self._update_mode_options(presets, mode_name)
+        resolved = resolve_config(base_cfg, mode=mode_name)
+        self._apply_config_to_vars(resolved)
+        self._schedule_state_refresh()
 
     @staticmethod
     def _entry_by_var(var: "tk.StringVar", parent: "tk.Widget") -> "ttk.Entry":
@@ -1549,14 +1644,22 @@ class GuiApp:
         if not cfg_path.exists():
             self._show_message(f"Config not found: {cfg_path}")
             return
+        self.config_source_var.set("file")
         cfg = load_config(str(cfg_path))
         drop_path_config(cfg)
-        self._apply_config_to_vars(cfg)
+        self._apply_resolved_config(cfg)
         self._append_log(f"Loaded config from {cfg_path}")
+
+    def _on_config_source_change(self) -> None:
+        self._apply_resolved_config()
+
+    def _on_mode_change(self, _event: Optional["tk.Event"] = None) -> None:
+        self._apply_resolved_config(mode_override=self.mode_var.get().strip())
 
     def _reset_config(self) -> None:
         cfg = default_config()
-        self._apply_config_to_vars(cfg)
+        self.config_source_var.set("default")
+        self._apply_resolved_config(cfg)
         self._append_log("Reset config to defaults (not saved).")
 
     def _save_config(self) -> None:
@@ -1670,9 +1773,7 @@ class GuiApp:
         return cfg
 
     def _read_config_for_state(self) -> AppConfig:
-        cfg_path = self.config_var.get().strip()
-        cfg = load_config(cfg_path or None)
-        drop_path_config(cfg)
+        cfg = self._load_source_config()
 
         input_dir = self.input_var.get().strip()
 
@@ -1685,7 +1786,9 @@ class GuiApp:
             preview_cfg["format"] = preview_format
         cfg["preview"] = preview_cfg
 
-        return cfg
+        mode_name = self.mode_var.get().strip() or self._current_mode_name(cfg)
+        cfg["mode"] = mode_name or DEFAULT_MODE_NAME
+        return resolve_config(cfg, mode=mode_name)
 
     @staticmethod
     def _resolve_analysis_paths(cfg: AppConfig) -> Tuple[pathlib.Path, pathlib.Path]:

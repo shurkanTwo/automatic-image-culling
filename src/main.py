@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .analyzer import analyze_files, write_outputs
 from .app_config import exclude_list, prepare_analysis_config, preview_config
-from .config import AppConfig, load_config
+from .config import AppConfig, load_config, resolve_config
 from .decisions import apply_decisions
 from .discovery import (
     ExifData,
@@ -60,7 +60,7 @@ def _load_app_config(path: Optional[str]) -> AppConfig:
     """Load config and drop legacy path overrides."""
     cfg = load_config(path)
     drop_path_config(cfg)
-    return cfg
+    return resolve_config(cfg)
 
 
 def scan_command(args: argparse.Namespace) -> None:

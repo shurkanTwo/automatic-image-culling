@@ -101,15 +101,23 @@
         return max / Math.max(value || 0, 1e-6);
       }
       case "brightness": {
+        const val = safe(value);
         const lo = safe(thresholds.brightnessMin);
         const hi = safe(thresholds.brightnessMax);
-        if (lo === null || hi === null || value === undefined || value === null || Number.isNaN(value)) {
-          return null;
+        if (val === null || lo === null || hi === null) return null;
+        const span = hi - lo;
+        if (span <= 0) return null;
+        if (val < lo) {
+          const severity = clamp01((lo - val) / Math.max(span, 1e-6));
+          return 1 - severity;
         }
-        const mid = (lo + hi) / 2;
-        const half = (hi - lo) / 2;
-        if (half <= 0) return null;
-        return clamp01(1 - Math.abs(value - mid) / Math.max(half, 1e-6));
+        if (val > hi) {
+          const severity = clamp01((val - hi) / Math.max(span, 1e-6));
+          return 1 - severity;
+        }
+        const mid = lo + span / 2;
+        const proximity = clamp01(1 - Math.abs(val - mid) / Math.max(span / 2, 1e-6));
+        return 1.2 + proximity * 0.8;
       }
       case "quality_score": {
         const min = safe(thresholds.qualityScoreMin);
