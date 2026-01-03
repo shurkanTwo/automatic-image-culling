@@ -28,7 +28,7 @@ jobs:
             --add-data "src/assets;src/assets" `
             --collect-all rawpy --collect-all mediapipe --collect-all insightface --collect-all onnxruntime `
             --paths . `
-            --module src.gui
+            gui_entry.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
