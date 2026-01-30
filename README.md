@@ -39,17 +39,17 @@ open directly in a browser.
 5. `uv pip install -r requirements.txt`
 6. Run `python -m src.gui`, open the Configuration tab, set `input_dir`, and Save (writes `config.yaml`)
 7. `python -m src.main analyze --config config.yaml`
-   - Outputs land in `input_dir\\analysis` (`analysis.json`, `report.html`, `report.css`, `report.js`), with Windows paths for opening from the host.
+   - Outputs land in `input_dir\\analysis` (`analysis.json`, `report.html`, `report.css`, `report.js`).
 
-### Linux / WSL (Ubuntu)
+### WSL2 (dev only, Windows run-time)
+
+Use WSL2 for development tasks (linting, formatting, tests). Run the app itself from Windows.
 
 1. `sudo apt update && sudo apt install python3.12 python3.12-venv build-essential python3.12-dev`
 2. `python3.12 -m venv .venv-3.12 && source .venv-3.12/bin/activate`
 3. Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh` then `source ~/.profile`
 4. `uv pip install -r requirements.txt`
-5. Run `python -m src.gui`, open the Configuration tab, set `input_dir` (use `/mnt/c/...` for Windows storage), and Save (writes `config.yaml`)
-6. `python -m src.main analyze --config config.yaml`
-   - Outputs land in `input_dir/analysis`; paths in the report are converted to Windows form for host opening.
+5. Dev checks: `python -m compileall src` and `black src`
 
 ## Commands
 
@@ -78,7 +78,7 @@ By default, outputs are stored under `input_dir`:
 - Defaults live in the app/GUI; use the Configuration tab to save `config.yaml`.
 - `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
-- Under WSL, set `input_dir` to the host path (`C:\...`); the analyzer writes Windows-style paths into outputs so you can open `report.html` from the host.
+- Set `input_dir` to a Windows path (for example, `D:\photos\shoot1`).
 
 ## Face detection (optional)
 

@@ -44,10 +44,6 @@ _WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
 def _normalize_decision_path(path_value: str) -> pathlib.Path:
     """Normalize a decision path string to a local filesystem Path."""
     raw = str(path_value).strip()
-    if os.name != "nt" and _WINDOWS_DRIVE.match(raw):
-        drive = raw[0].lower()
-        rest = raw[2:].lstrip("\\/").replace("\\", "/")
-        return pathlib.Path("/mnt") / drive / rest
     return pathlib.Path(raw).expanduser()
 
 
