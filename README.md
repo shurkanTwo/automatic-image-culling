@@ -2,7 +2,11 @@
 
 Small toolchain to scan input directory for Sony `.ARW` photos, generate previews automatically, and score/flag keepers with an HTML report.
 
-Proprietary — no copying, redistribution, or derivative works without permission.
+Source-available, proprietary — unmodified use is permitted; copying, modification, redistribution, or derivative works require permission.
+
+## License
+
+This project is source-available and proprietary. See `LICENSE` for details.
 
 ## What it does
 
