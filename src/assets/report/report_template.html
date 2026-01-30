@@ -11,8 +11,12 @@
     <h1 class="mb-1">ARW Analysis Report</h1>
     <p class="mb-3">Toggle decisions per photo and export as JSON.</p>
     <div id="summary" class="summary"></div>
-    <div class="mb-3">
+    <div class="d-flex align-items-center flex-wrap gap-3 mb-3">
       <button id="export" class="btn btn-primary btn-sm">Download decisions JSON</button>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="discard-highlight-toggle" />
+        <label class="form-check-label" for="discard-highlight-toggle">Highlight discard metrics</label>
+      </div>
     </div>
     <div id="loading" class="d-flex align-items-center justify-content-center py-3">
       <div class="spinner-border text-primary me-2" role="status" aria-hidden="true"></div>

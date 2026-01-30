@@ -65,6 +65,7 @@ class AnalysisResult(TypedDict, total=False):
     duplicate_of: str
     duplicate_reason: str
     quality_score: float
+    discard_metrics: List[str]
     suggest_keep: bool
     decision: str
     reasons: List[str]
@@ -171,6 +172,20 @@ class ScoreBreakdown:
 
     scores: Dict[str, float]
     quality_score: float
+
+
+DISCARD_METRIC_MAP = {
+    "sharp": "sharpness",
+    "sharp_center": "sharpness_center",
+    "teneng": "tenengrad",
+    "motion": "motion_ratio",
+    "noise": "noise",
+    "brightness": "brightness",
+    "shadows": "shadows",
+    "highlights": "highlights",
+    "composition": "composition",
+    "quality_score": "quality_score",
+}
 
 
 def _parse_iso(exif: ExifData) -> Optional[float]:
@@ -503,13 +518,14 @@ def _evaluate_metrics(
     thresholds: Thresholds,
     hard_cfg: Dict[str, float],
     cutoff: float,
-) -> Tuple[ScoreBreakdown, List[str], bool, bool]:
+) -> Tuple[ScoreBreakdown, List[str], bool, bool, List[str]]:
     scores: Dict[str, float] = {}
     weighted_sum = 0.0
     total_weights = 0.0
     evaluations: List[Tuple[MetricRule, bool, bool]] = []
     threshold_failed_keys: List[str] = []
     hard_failed_keys: List[str] = []
+    failed_metrics: Set[str] = set()
 
     for rule in METRIC_RULES:
         score = rule.score_fn(metrics, thresholds)
@@ -523,6 +539,8 @@ def _evaluate_metrics(
             hard_failed_keys.append(rule.key)
         if threshold_fail:
             threshold_failed_keys.append(rule.key)
+        if hard_fail or threshold_fail:
+            failed_metrics.add(rule.key)
 
     quality_score = weighted_sum / total_weights if total_weights else 0.0
     score_breakdown = ScoreBreakdown(scores=scores, quality_score=quality_score)
@@ -568,7 +586,13 @@ def _evaluate_metrics(
         if unique_labels:
             reasons.append(f"{prefix}: {', '.join(unique_labels)}")
 
-    return score_breakdown, reasons, hard_fail_any, threshold_fail_any
+    return (
+        score_breakdown,
+        reasons,
+        hard_fail_any,
+        threshold_fail_any,
+        sorted(failed_metrics),
+    )
 
 
 def _frame_metrics_from_result(result: AnalysisResult) -> FrameMetrics:
@@ -589,23 +613,33 @@ def _frame_metrics_from_result(result: AnalysisResult) -> FrameMetrics:
 
 def _suggest_keep(
     metrics: FrameMetrics, duplicate: bool, cfg: AnalysisConfig, exif: ExifData
-) -> Tuple[bool, List[str], float]:
+) -> Tuple[bool, List[str], float, List[str]]:
     """Return keep/discard suggestion, reasons, and quality score for a frame."""
     thresholds = Thresholds.from_config(cfg, exif)
     hard_cfg = _hard_fail_thresholds(cfg)
     cutoff = float(
         cfg.get("quality_score_min", DEFAULT_CONFIG["analysis"]["quality_score_min"])
     )
-    score_breakdown, reasons, hard_fail, threshold_fail = _evaluate_metrics(
-        metrics, thresholds, hard_cfg, cutoff
-    )
+    (
+        score_breakdown,
+        reasons,
+        hard_fail,
+        threshold_fail,
+        failed_metrics,
+    ) = _evaluate_metrics(metrics, thresholds, hard_cfg, cutoff)
+    discard_metric_keys: Set[str] = set(failed_metrics)
+    if score_breakdown.quality_score < cutoff:
+        discard_metric_keys.add("quality_score")
     keep = (
         score_breakdown.quality_score >= cutoff and not hard_fail and not threshold_fail
     )
     if duplicate:
         reasons.append("duplicate")
         keep = False
-    return keep, reasons, score_breakdown.quality_score
+    discard_metrics = [
+        DISCARD_METRIC_MAP.get(key, key) for key in sorted(discard_metric_keys)
+    ]
+    return keep, reasons, score_breakdown.quality_score, discard_metrics
 
 
 def _load_preview_arrays(
@@ -1010,7 +1044,7 @@ def _apply_quality_decisions(
         is_duplicate = idx in duplicate_indexes
         metrics = _frame_metrics_from_result(result)
         exif = result.get("exif", {})
-        keep, reasons, quality_score = _suggest_keep(
+        keep, reasons, quality_score, discard_metrics = _suggest_keep(
             metrics,
             is_duplicate,
             analysis_cfg,
@@ -1029,6 +1063,7 @@ def _apply_quality_decisions(
         result["suggest_keep"] = keep
         result["decision"] = "keep" if keep else "discard"
         result["reasons"] = reasons
+        result["discard_metrics"] = discard_metrics
 
     groups_by_root: Dict[int, List[int]] = {}
     for idx, result in enumerate(results):

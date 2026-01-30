@@ -17,6 +17,8 @@ img.preview {
 .decision-discard { background-color: #f8d7da !important; color: #842029 !important; }
 .table-alt tr:hover td.decision-keep { background-color: #cfe8d4 !important; }
 .table-alt tr:hover td.decision-discard { background-color: #f3cfd2 !important; }
+.discard-metric-cell { background-color: #fff3cd !important; }
+.table-alt tr:hover td.discard-metric-cell { background-color: #ffe8a3 !important; }
 .content-wrap { padding: 2rem 2.5rem; }
 .metric-badge {
   display: inline-block;

@@ -11,6 +11,7 @@
     loadingText: document.getElementById("loading-text"),
     tableWrap: document.getElementById("table-wrap"),
     exportBtn: document.getElementById("export"),
+    discardHighlightToggle: document.getElementById("discard-highlight-toggle"),
     lightbox: document.getElementById("lightbox"),
     lightboxImg: document.getElementById("lightbox-img"),
     lightboxPrev: document.getElementById("lightbox-prev"),
@@ -32,6 +33,7 @@
     pendingHighlight: null,
     highlightRowId: null,
     highlightUntil: 0,
+    highlightDiscardMetrics: false,
     requestRender: null,
     scrollHandler: null,
     resizeHandler: null,
@@ -55,6 +57,13 @@
 
   const hasValue = (value) =>
     value !== undefined && value !== null && !Number.isNaN(value);
+
+  function shouldHighlightMetricCell(item, metricKey, discardMetrics) {
+    if (!state.highlightDiscardMetrics) return false;
+    if (!metricKey || item.decision !== "discard") return false;
+    if (!discardMetrics) return false;
+    return discardMetrics.has(metricKey);
+  }
 
   function buildDuplicateGroups(items) {
     const map = new Map();
@@ -190,19 +199,19 @@
       sortable: true,
       type: "number",
       metric: "quality_score",
-      format: (v) => v.toFixed(2),
+      format: (v) => v.toFixed(3),
     },
-    { key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) },
-    { key: "sharpness_center", label: "Center sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(1) },
-    { key: "tenengrad", label: "Contrast", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(0) },
-    { key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(2) },
+    { key: "sharpness", label: "Sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(2) },
+    { key: "sharpness_center", label: "Center sharpness", sortable: true, type: "number", metric: "sharpness", format: (v) => v.toFixed(2) },
+    { key: "tenengrad", label: "Contrast", sortable: true, type: "number", metric: "tenengrad", format: (v) => v.toFixed(1) },
+    { key: "motion_ratio", label: "Motion ratio", sortable: true, type: "number", metric: "motion_ratio", format: (v) => v.toFixed(3) },
     {
       key: "noise",
       label: "Noise",
       sortable: true,
       type: "number",
       metric: "noise",
-      format: (v) => v.toFixed(1),
+      format: (v) => v.toFixed(2),
     },
     {
       key: "brightness",
@@ -211,7 +220,7 @@
       type: "number",
       metric: "brightness",
       getter: (item) => item.brightness?.mean,
-      format: (v) => v.toFixed(2),
+      format: (v) => v.toFixed(3),
     },
     {
       key: "shadows",
@@ -220,7 +229,7 @@
       type: "number",
       metric: "shadows",
       getter: (item) => item.brightness?.shadows,
-      format: (v) => `${(v * 100).toFixed(0)}%`,
+      format: (v) => `${(v * 100).toFixed(1)}%`,
     },
     {
       key: "highlights",
@@ -229,11 +238,11 @@
       type: "number",
       metric: "highlights",
       getter: (item) => item.brightness?.highlights,
-      format: (v) => `${(v * 100).toFixed(0)}%`,
+      format: (v) => `${(v * 100).toFixed(1)}%`,
     },
-    { key: "composition", label: "Composition", sortable: true, type: "number", format: (v) => v.toFixed(2) },
+    { key: "composition", label: "Composition", sortable: true, type: "number", format: (v) => v.toFixed(3) },
     { key: "faces", label: "Faces", sortable: true, type: "number", getter: (item) => item.faces?.count ?? 0 },
-    { key: "face_sharpness", label: "Face sharpness", sortable: true, type: "number", getter: (item) => item.faces?.best_sharpness, format: (v) => v.toFixed(1) },
+    { key: "face_sharpness", label: "Face sharpness", sortable: true, type: "number", getter: (item) => item.faces?.best_sharpness, format: (v) => v.toFixed(2) },
   ];
 
   const columnsByKey = Object.fromEntries(columns.map((c) => [c.key, c]));
@@ -383,8 +392,13 @@
       tr.classList.add("row-highlight");
     }
 
+    const discardMetrics = Array.isArray(item.discard_metrics)
+      ? new Set(item.discard_metrics)
+      : null;
+
     columns.forEach((col) => {
       const td = document.createElement("td");
+      const metricKey = col.metric || col.key;
       switch (col.key) {
         case "preview": {
           const img = document.createElement("img");
@@ -462,6 +476,9 @@
             td.textContent = display;
           }
         }
+      }
+      if (shouldHighlightMetricCell(item, metricKey, discardMetrics)) {
+        td.classList.add("discard-metric-cell");
       }
       tr.appendChild(td);
     });
@@ -707,7 +724,22 @@
     };
   }
 
+  function bindDiscardHighlightToggle() {
+    if (!elements.discardHighlightToggle) return;
+    state.highlightDiscardMetrics = elements.discardHighlightToggle.checked;
+    elements.discardHighlightToggle.onchange = () => {
+      state.highlightDiscardMetrics = elements.discardHighlightToggle.checked;
+      if (state.requestRender) {
+        state.visibleRange = null;
+        state.requestRender();
+      } else {
+        render();
+      }
+    };
+  }
+
   bindLightbox();
   bindExport();
+  bindDiscardHighlightToggle();
   render();
 })();
