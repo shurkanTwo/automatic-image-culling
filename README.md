@@ -4,6 +4,14 @@ Small toolchain to scan input directory for Sony `.ARW` photos, generate preview
 
 Source-available, proprietary — unmodified use is permitted; copying, modification, redistribution, or derivative works require permission.
 
+## Demo
+
+Desktop GUI walkthrough.
+![Desktop GUI GIF](docs/screenshots/desktop_gui.gif)
+
+Analysis report walkthrough.
+![Analysis report GIF](docs/screenshots/analysis_report_view.gif)
+
 ## License
 
 This project is source-available and proprietary. See `LICENSE` for details.
@@ -62,6 +70,16 @@ By default, outputs are stored under `input_dir`:
 - `preview` block controls preview size/format; `analysis` block tunes thresholds.
 - Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
 - Set `input_dir` to a Windows path (for example, `D:\photos\shoot1`).
+- Use `mode` to select a preset that adjusts analysis thresholds (default: `balanced_general`).
+- Built-in modes include:
+  - `balanced_general`
+  - `outdoor_bright_action`
+  - `indoor_mixed_light`
+  - `low_light_handheld`
+  - `flash_direct_bounce`
+  - `indoor_night_mixed_flash`
+  - `night_fireworks`
+- Add custom presets under `modes` to override or extend the built-ins.
 
 ### Face detection (optional)
 
