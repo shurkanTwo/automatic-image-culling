@@ -28,7 +28,53 @@ This project is source-available and proprietary. See `LICENSE` for details.
 The HTML report is static and self-contained with local assets. It is safe to
 open directly in a browser.
 
-## Quick start
+## Quick start (Windows)
+
+Prebuilt Windows `.exe` releases are generated automatically via a GitHub Action.
+
+## CLI usage
+
+### Commands
+
+- `python -m src.main scan --config config.yaml` — scan input directory for `.ARW` files (+EXIF if `--json`).
+- `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
+- `python -m src.main decisions --apply` — move files into keep/discard subfolders based on `analysis/decisions.json`.
+
+### Outputs
+
+By default, outputs are stored under `input_dir`:
+
+- `analysis/analysis.json` — full analysis data per frame.
+- `analysis/report.html` — static report with sortable tables and previews.
+- `analysis/report.css`, `analysis/report.js` — report assets.
+- `analysis/decisions.json` — editable decisions file used by the `decisions` command.
+- `previews/` — generated preview images.
+- `output/keep` and `output/discard` — results of applying decisions.
+
+### GUI (optional)
+
+- `python -m src.gui` — launch a simple desktop UI to run scan input directory, analyze, and decisions steps (analysis generates previews automatically).
+- Use the Configuration tab to edit settings (thresholds, face detection, etc.) and Save to `config.yaml`.
+
+### Configuration
+
+- Defaults live in the app/GUI; use the Configuration tab to save `config.yaml`.
+- `preview` block controls preview size/format; `analysis` block tunes thresholds.
+- Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
+- Set `input_dir` to a Windows path (for example, `D:\photos\shoot1`).
+
+### Face detection (optional)
+
+- Mediapipe (default) and InsightFace are installed via `requirements.txt`; enable with `analysis.face.enabled: true`.
+
+## Dependencies and optional features
+
+- `rawpy`, `Pillow` — preview generation (required for analysis).
+- `exifread` — EXIF parsing for timestamps and orientation.
+- `scikit-image` — optional SSIM/PSNR similarity details in duplicate reasons.
+- `mediapipe` or `insightface` — optional face detection backend.
+
+## Development notes
 
 ### Windows (PowerShell)
 
@@ -51,52 +97,11 @@ Use WSL2 for development tasks (linting, formatting, tests). Run the app itself 
 4. `uv pip install -r requirements.txt`
 5. Dev checks: `python -m compileall src` and `black src`
 
-## Commands
-
-- `python -m src.main scan --config config.yaml` — scan input directory for `.ARW` files (+EXIF if `--json`).
-- `python -m src.main analyze --config config.yaml` — score frames, mark duplicates, and write the report.
-- `python -m src.main decisions --apply` — move files into keep/discard subfolders based on `analysis/decisions.json`.
-
-## Outputs
-
-By default, outputs are stored under `input_dir`:
-
-- `analysis/analysis.json` — full analysis data per frame.
-- `analysis/report.html` — static report with sortable tables and previews.
-- `analysis/report.css`, `analysis/report.js` — report assets.
-- `analysis/decisions.json` — editable decisions file used by the `decisions` command.
-- `previews/` — generated preview images.
-- `output/keep` and `output/discard` — results of applying decisions.
-
-## GUI (optional)
-
-- `python -m src.gui` — launch a simple desktop UI to run scan input directory, analyze, and decisions steps (analysis generates previews automatically).
-- Use the Configuration tab to edit settings (thresholds, face detection, etc.) and Save to `config.yaml`.
-
-## Configuration
-
-- Defaults live in the app/GUI; use the Configuration tab to save `config.yaml`.
-- `preview` block controls preview size/format; `analysis` block tunes thresholds.
-- Analysis outputs are written under `input_dir/analysis`; previews under `input_dir/previews` and keep/discard moves under `input_dir/output`.
-- Set `input_dir` to a Windows path (for example, `D:\photos\shoot1`).
-
-## Face detection (optional)
-
-- Mediapipe (default) and InsightFace are installed via `requirements.txt`; enable with `analysis.face.enabled: true`.
-- GPU users on Windows may need CUDA/CUDNN on `PATH` (e.g., `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.2\bin` and CUDNN `bin`).
-
-## Dependencies and optional features
-
-- `rawpy`, `Pillow` — preview generation (required for analysis).
-- `exifread` — EXIF parsing for timestamps and orientation.
-- `scikit-image` — optional SSIM/PSNR similarity details in duplicate reasons.
-- `mediapipe` or `insightface` — optional face detection backend.
-
-## Style and testing
+### Style and testing
 
 - Follow `CODING_STANDARDS.md`; format with `black src`.
 - Fast sanity check: `python3 -m compileall src`.
 
 ## Credits
 
-- Built collaboratively with OpenAI GPT-5.1-Codex-Max via vibe coding sessions.
+- Built collaboratively with OpenAI GPT-5.1-Codex-Max and GPT-5.2-Codex via vibe coding sessions.
