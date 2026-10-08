@@ -123,6 +123,28 @@ async function openWorkspace() {
   return rendered;
 }
 describe("whole application review flows", () => {
+  it("ignores stale recommendations for failed photos when reopening an older project", async () => {
+    stored.photos[0].analysisError = "Preview generation failed";
+    stored.photos[0].previewPath = "";
+    stored.photos[0].thumbnailPath = "";
+    stored.groups = [
+      {
+        id: "older-moment",
+        label: "Older moment",
+        photoIds: ["photo-0", "photo-1"],
+        recommendedPhotoIds: ["photo-0", "photo-1", "removed-photo"],
+      },
+    ];
+    await openWorkspace();
+    const failed = screen.getByRole("button", { name: "DSC_0.jpg, undecided" });
+    const eligible = screen.getByRole("button", {
+      name: "DSC_1.jpg, undecided",
+    });
+    expect(failed.querySelector(".recommendation-badge")).toBeNull();
+    expect(eligible.querySelector(".recommendation-badge")).not.toBeNull();
+    expect(stored.photos[0].decision).toBe("undecided");
+    expect(api.updatePhotos).not.toHaveBeenCalled();
+  });
   it("saves a focused tag draft before returning to Projects", async () => {
     await openWorkspace();
     const tags = screen.getByLabelText("Tags");

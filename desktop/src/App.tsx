@@ -156,10 +156,18 @@ export default function App() {
     () => project?.groups.filter((group) => group.photoIds.length > 1) ?? [],
     [project?.groups],
   );
-  const recommended = useMemo(
-    () => new Set(similarGroups.flatMap((group) => group.recommendedPhotoIds)),
-    [similarGroups],
-  );
+  const recommended = useMemo(() => {
+    const eligible = new Set(
+      project?.photos
+        .filter((photo) => !photo.analysisError)
+        .map((photo) => photo.id),
+    );
+    return new Set(
+      similarGroups
+        .flatMap((group) => group.recommendedPhotoIds)
+        .filter((id) => eligible.has(id)),
+    );
+  }, [similarGroups, project?.photos]);
   const comparePhotos = comparisonPhotos(photos, selected, activeId);
   const scopeId = options.scope.type === "all" ? null : options.scope.id;
   const scopeCollection =
