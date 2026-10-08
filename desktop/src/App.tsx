@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Aperture,
   ArrowLeft,
@@ -33,6 +34,7 @@ import {
   exportPath,
   isAvailable,
   isDemo,
+  isNative,
   progressLabel,
   revealPath,
 } from "./api";
@@ -67,12 +69,47 @@ export default function App() {
     error,
     setError,
     saving,
+    hasPendingSaves,
+    waitForSaves,
     undoLabel,
     edit,
     undo,
     createCollection,
     collectionEdit,
   } = workspace;
+  useEffect(() => {
+    if (!isNative) return;
+    let disposed = false;
+    let closing = false;
+    let unlisten: (() => void) | undefined;
+    const window = getCurrentWindow();
+    void window
+      .onCloseRequested(async (event) => {
+        if (!closing && !hasPendingSaves()) return;
+        event.preventDefault();
+        if (closing) return;
+        closing = true;
+        try {
+          const saved = await waitForSaves();
+          closing = false;
+          if (saved && !disposed) await window.close();
+        } catch (reason) {
+          closing = false;
+          setError(`Could not finish closing Photo Select: ${String(reason)}`);
+        }
+      })
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch((reason) =>
+        setError(`Could not protect pending saves on close: ${String(reason)}`),
+      );
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [hasPendingSaves, waitForSaves, setError]);
   const [state, setState] = useState<AppState | null>(null);
   const [loading, setLoading] = useState(isAvailable);
   const [options, setOptions] = useState<BrowseOptions>({

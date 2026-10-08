@@ -54,6 +54,55 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 describe("durable manual review", () => {
+  it("drains saves added during closing and reports a write failure instead of allowing close", async () => {
+    const first = deferred<Photo[]>();
+    const second = deferred<Photo[]>();
+    vi.mocked(api.updatePhotos)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { result } = renderHook(() => useProject());
+    act(() => {
+      result.current.load(structuredClone(project));
+    });
+    let drained!: Promise<boolean>;
+    act(() => {
+      void result.current.edit(["photo"], { rating: 3 }, "Rating");
+      drained = result.current.waitForSaves();
+    });
+    await waitFor(() => expect(api.updatePhotos).toHaveBeenCalledTimes(1));
+    let resolved = false;
+    void drained.then(() => {
+      resolved = true;
+    });
+    act(() => {
+      void result.current.edit(["photo"], { rating: 5 }, "Rating");
+    });
+    await act(async () => {
+      first.resolve([{ ...original, rating: 3, ratingTouched: true }]);
+      await first.promise;
+    });
+    await waitFor(() => expect(api.updatePhotos).toHaveBeenCalledTimes(2));
+    expect(resolved).toBe(false);
+    expect(result.current.hasPendingSaves()).toBe(true);
+    let saved!: boolean;
+    await act(async () => {
+      second.resolve([{ ...original, rating: 5, ratingTouched: true }]);
+      saved = await drained;
+    });
+    expect(saved).toBe(true);
+    expect(result.current.project?.photos[0].rating).toBe(5);
+    expect(result.current.hasPendingSaves()).toBe(false);
+    vi.mocked(api.updatePhotos).mockRejectedValueOnce(
+      new Error("Cannot write project"),
+    );
+    await act(async () => {
+      void result.current.edit(["photo"], { rating: 1 }, "Rating");
+      saved = await result.current.waitForSaves();
+    });
+    expect(saved).toBe(false);
+    expect(result.current.error).toContain("Cannot write project");
+    expect(result.current.project?.photos[0].rating).toBe(5);
+  });
   it("ignores a refresh that was requested before a completed manual save", async () => {
     const oldSnapshot = deferred<Project>();
     vi.mocked(api.project).mockReturnValueOnce(oldSnapshot.promise);

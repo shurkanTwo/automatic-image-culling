@@ -20,6 +20,7 @@ export function useProject() {
   const pending = useRef(0);
   const editRevision = useRef(0);
   const queue = useRef(Promise.resolve());
+  const saveFailures = useRef(0);
   const undoRef = useRef<UndoEntry[]>([]);
   const [undoLabel, setUndoLabel] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
@@ -108,6 +109,7 @@ export function useProject() {
         if (projectRef.current?.id === intendedProjectId) await action();
       })
       .catch((reason) => {
+        saveFailures.current += 1;
         if (projectRef.current?.id === intendedProjectId)
           setError(String(reason));
       })
@@ -118,6 +120,13 @@ export function useProject() {
     queue.current = task;
     return task;
   }
+  const hasPendingSaves = useCallback(() => pending.current > 0, []);
+  const waitForSaves = useCallback(async (): Promise<boolean> => {
+    const initialFailures = saveFailures.current;
+    // Check the live queue again after each drain in case another edit was added while saving.
+    while (pending.current > 0) await queue.current;
+    return saveFailures.current === initialFailures;
+  }, []);
   function pushUndo(entry: UndoEntry) {
     undoRef.current = [...undoRef.current.slice(-49), entry];
     setUndoLabel(entry.label);
@@ -246,6 +255,8 @@ export function useProject() {
     error,
     setError,
     saving,
+    hasPendingSaves,
+    waitForSaves,
     undoLabel,
     edit,
     undo,

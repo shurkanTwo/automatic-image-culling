@@ -2,6 +2,32 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
   "description": "Native folder and save dialogs and explicit opening of exported files or the bundled Lightroom plugin.",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save", "opener:allow-reveal-item-in-dir", { "identifier": "opener:allow-open-path", "allow": [{ "path": "$APPLOCALDATA/**" }, { "path": "$RESOURCE/resources/lightroom/**" }, { "path": "**/*.json" }, { "path": "**/*.lrplugin" }] }]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "$APPLOCALDATA/**"
+        },
+        {
+          "path": "$RESOURCE/resources/lightroom/**"
+        },
+        {
+          "path": "**/*.json"
+        },
+        {
+          "path": "**/*.lrplugin"
+        }
+      ]
+    }
+  ]
 }
