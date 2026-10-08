@@ -31,6 +31,20 @@ def _visually_related(first: dict[str, Any], second: dict[str, Any]) -> bool:
     second_signature = second.get("visualSignature")
     if not first_signature or not second_signature:
         return False
+    # A flat dark/blue/white frame has no reliable visual structure. Its DCT
+    # hash alone must not manufacture a moment from unrelated blank photos.
+    for signature in (first_signature, second_signature):
+        spatial_ranges = (
+            max(signature[channel::3]) - min(signature[channel::3])
+            for channel in range(3)
+        )
+        if max(spatial_ranges) < 0.035:
+            return False
+    if all(first.get(key) and second.get(key) for key in ("width", "height")):
+        first_ratio = first["width"] / first["height"]
+        second_ratio = second["width"] / second["height"]
+        if max(first_ratio, second_ratio) / min(first_ratio, second_ratio) > 1.2:
+            return False
     distance = sum(abs(a - b) for a, b in zip(first_signature, second_signature))
     return distance / len(first_signature) <= 0.12
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -76,16 +77,74 @@ class SourceIdentity:
     size: int
     mtime_ns: int
     cache_key: str
+    device: int
+    inode: int
+
+
+def display_path(path: Path) -> str:
+    """Only diagnostics may replace undecodable filesystem name bytes."""
+    return str(path).encode("utf-8", errors="replace").decode("utf-8")
 
 
 def source_identity(path: Path, *, config_version: str) -> SourceIdentity:
     resolved = path.resolve(strict=True)
     normalized = os.path.normcase(str(resolved))
     stat = resolved.stat()
-    photo_id = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
-    identity = f"{normalized}\0{stat.st_size}\0{stat.st_mtime_ns}\0{config_version}"
+    try:
+        path_bytes = normalized.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError(
+            f"Filename cannot be represented as Unicode: {resolved!r}"
+        ) from error
+    photo_id = hashlib.sha256(path_bytes).hexdigest()[:24]
+    identity = (
+        f"{normalized}\0{stat.st_size}\0{stat.st_mtime_ns}"
+        f"\0{stat.st_dev}\0{stat.st_ino}\0{config_version}"
+    )
     cache_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return SourceIdentity(resolved, photo_id, stat.st_size, stat.st_mtime_ns, cache_key)
+    return SourceIdentity(
+        resolved,
+        photo_id,
+        stat.st_size,
+        stat.st_mtime_ns,
+        cache_key,
+        stat.st_dev,
+        stat.st_ino,
+    )
+
+
+def _is_directory_link(path: Path) -> bool:
+    # Windows junctions are not reported as symbolic links. Python 3.12 adds
+    # the dedicated check; canonical containment also protects older Python.
+    junction_check = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(junction_check and junction_check())
+
+
+def _raise_directory_error(error: OSError) -> None:
+    # An incomplete walk must not be reported as an empty/successful rescan.
+    raise error
+
+
+def _is_generated_detail(path: Path) -> bool:
+    marker = path.with_suffix(path.suffix + ".photo-select-detail.json")
+    try:
+        with marker.open(encoding="utf-8") as stream:
+            record = json.loads(stream.read(4096))
+        if not isinstance(record, dict):
+            return False
+        source_id = record.get("sourcePhotoId")
+        cache_key = record.get("sourceCacheKey")
+        return (
+            isinstance(source_id, str)
+            and len(source_id) == 24
+            and isinstance(cache_key, str)
+            and len(cache_key) == 64
+            and all(
+                character in "0123456789abcdef" for character in source_id + cache_key
+            )
+        )
+    except (OSError, ValueError):
+        return False
 
 
 def discover_images(source: Path, cache: Path) -> list[Path]:
@@ -107,14 +166,17 @@ def discover_images(source: Path, cache: Path) -> list[Path]:
         else set()
     )
     found: list[Path] = []
-    for directory, names, files in os.walk(source, followlinks=False):
+    for directory, names, files in os.walk(
+        source, followlinks=False, onerror=_raise_directory_error
+    ):
         base = Path(directory)
         names[:] = sorted(
             name
             for name in names
             if name.casefold() not in PRODUCT_DIRECTORIES
-            and not (base / name).is_symlink()
+            and not _is_directory_link(base / name)
             and (base / name) not in legacy_directories
+            and (base / name).resolve().is_relative_to(source)
             and not (base / name).resolve().is_relative_to(cache)
         )
         for name in sorted(files):
@@ -122,6 +184,8 @@ def discover_images(source: Path, cache: Path) -> list[Path]:
             if path.suffix.lower() not in IMAGE_EXTENSIONS or path.is_symlink():
                 continue
             if path.resolve().is_relative_to(cache):
+                continue
+            if not path.resolve().is_relative_to(source) or _is_generated_detail(path):
                 continue
             found.append(path)
     return sorted(found, key=lambda item: os.path.normcase(str(item)))
@@ -183,8 +247,10 @@ def read_metadata(path: Path) -> dict[str, Any]:
 def tag_text(tags: dict[str, Any], *names: str) -> str | None:
     for name in names:
         value = tags.get(name)
-        if value is not None and str(value).strip():
-            return str(value).strip().strip("\x00")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if value is not None and str(value).strip(" \x00"):
+            return str(value).strip(" \x00")
     return None
 
 
@@ -233,8 +299,12 @@ def capture_time(tags: dict[str, Any], path: Path) -> str:
                 moment = moment.replace(microsecond=int((fraction + "000000")[:6]))
             offset = tag_text(tags, offset_tag)
             if offset:
-                moment = datetime.fromisoformat(moment.isoformat() + offset)
-                moment = moment.astimezone(timezone.utc)
+                try:
+                    with_offset = datetime.fromisoformat(moment.isoformat() + offset)
+                    moment = with_offset.astimezone(timezone.utc)
+                except ValueError:
+                    # A damaged optional zone must not discard valid capture time.
+                    _LOGGER.debug("Invalid EXIF capture offset %r for %s", offset, path)
             return moment.isoformat().replace("+00:00", "Z")
         except (ValueError, OverflowError):
             continue

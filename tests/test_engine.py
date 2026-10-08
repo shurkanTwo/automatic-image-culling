@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,14 +17,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageCms
 
 from culling_engine.analysis import analyze_image
 from culling_engine.cli import self_test
 from culling_engine.discovery import capture_time, discover_images, source_identity
 from culling_engine.engine import analyze_photo, generate_detail, scan
 from culling_engine.grouping import group_photos
-from culling_engine.imaging import decode_image
+from culling_engine.imaging import decode_image, resize_to_edge
 
 
 def patterned_image(size: tuple[int, int] = (120, 80)) -> Image.Image:
@@ -96,6 +97,58 @@ class EngineTests(unittest.TestCase):
         with Image.open(second["previewPath"]) as image:
             image.verify()
 
+    def test_truncated_jpeg_scan_data_is_rebuilt(self) -> None:
+        path = self.save_photo("photo.jpg")
+        first = analyze_photo(path, self.cache)
+        preview = Path(first["previewPath"])
+        original = preview.read_bytes()
+        preview.write_bytes(original[:-100])
+        with Image.open(preview) as header:
+            header.verify()  # JPEG verify does not notice missing compressed scan data.
+        second = analyze_photo(path, self.cache)
+        self.assertIsNone(second["analysisError"])
+        with Image.open(second["previewPath"]) as decoded:
+            decoded.load()
+
+    def test_invalid_cached_photo_metadata_is_rebuilt(self) -> None:
+        path = self.save_photo("photo.jpg")
+        for field, value in (
+            ("camera", 4),
+            ("captureTime", 123),
+            ("width", "120"),
+            ("width", 2**40),
+            ("captureTime", "not a timestamp"),
+        ):
+            with self.subTest(field=field, value=value):
+                first = analyze_photo(path, self.cache)
+                record = Path(first["previewPath"]).with_name("analysis.json")
+                metadata = json.loads(record.read_text(encoding="utf-8"))
+                metadata[field] = value
+                record.write_text(json.dumps(metadata), encoding="utf-8")
+                records = []
+                summary = scan(self.source, self.cache, records.append, workers=1)
+                self.assertEqual(summary["failed"], 0)
+                refreshed = next(
+                    item["photo"] for item in records if item["type"] == "photo"
+                )
+                self.assertNotEqual(refreshed[field], value)
+
+    def test_replaced_source_invalidates_cache_even_when_size_and_time_match(
+        self,
+    ) -> None:
+        source = self.save_photo("photo.jpg")
+        old_stat = source.stat()
+        first = analyze_photo(source, self.cache)
+        replacement = self.source / "replacement.tmp"
+        replacement.write_bytes(source.read_bytes())
+        os.utime(replacement, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+        replacement.replace(source)
+        updated = analyze_photo(source, self.cache)
+        self.assertEqual(source.stat().st_size, old_stat.st_size)
+        self.assertEqual(source.stat().st_mtime_ns, old_stat.st_mtime_ns)
+        self.assertEqual(updated["id"], first["id"])
+        self.assertNotEqual(updated["previewPath"], first["previewPath"])
+
     def test_corrupt_image_is_isolated_and_counted(self) -> None:
         self.save_photo("valid.jpg")
         (self.source / "corrupt.jpg").write_bytes(b"damaged")
@@ -159,6 +212,233 @@ class EngineTests(unittest.TestCase):
         other_original = self.save_photo("other.jpg")
         with self.assertRaises(ValueError):
             generate_detail(source, other_original)
+
+    def test_generated_detail_in_source_is_not_imported_as_an_original(self) -> None:
+        source = self.save_photo("source.jpg")
+        generate_detail(source, self.source / "generated-detail.jpg")
+        self.assertEqual(discover_images(self.source, self.cache), [source])
+
+    def test_source_changes_during_decode_do_not_publish_previews_or_details(
+        self,
+    ) -> None:
+        source = self.save_photo("source.jpg")
+
+        def changing_decode(path, tags, *, full_resolution=False):
+            image = decode_image(path, tags, full_resolution=full_resolution)
+            stat = source.stat()
+            os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+            return image
+
+        with patch("culling_engine.engine.decode_image", side_effect=changing_decode):
+            photo = analyze_photo(source, self.cache)
+            self.assertIn("Original changed", photo["analysisError"])
+            self.assertEqual(photo["previewPath"], "")
+            with self.assertRaisesRegex(RuntimeError, "Original changed"):
+                generate_detail(source, self.cache / "changed.jpg")
+        self.assertFalse((self.cache / "changed.jpg").exists())
+        self.assertEqual(list(self.cache.rglob("analysis.json")), [])
+
+    def test_source_changes_during_detail_encoding_do_not_replace_cached_detail(
+        self,
+    ) -> None:
+        source = self.save_photo("source.jpg")
+        destination = self.cache / "detail.jpg"
+        generate_detail(source, destination)
+        previous_bytes = destination.read_bytes()
+        stat = source.stat()
+        os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+        original_save = Image.Image.save
+
+        def changing_save(image, filename, *args, **kwargs):
+            original_save(image, filename, *args, **kwargs)
+            current = source.stat()
+            os.utime(source, ns=(current.st_atime_ns, current.st_mtime_ns + 1_000_000))
+
+        with patch.object(Image.Image, "save", changing_save), self.assertRaisesRegex(
+            RuntimeError, "Original changed"
+        ):
+            generate_detail(source, destination)
+        self.assertEqual(destination.read_bytes(), previous_bytes)
+        self.assertEqual(list(destination.parent.glob(".preview-*")), [])
+
+    def test_source_changes_while_reading_cached_detail_are_detected(self) -> None:
+        source = self.save_photo("source.jpg")
+        destination = self.cache / "detail.jpg"
+        generate_detail(source, destination)
+        original_open = Image.open
+
+        def changing_open(path, *args, **kwargs):
+            image = original_open(path, *args, **kwargs)
+            if Path(path) == destination:
+                current = source.stat()
+                os.utime(
+                    source, ns=(current.st_atime_ns, current.st_mtime_ns + 1_000_000)
+                )
+            return image
+
+        with patch(
+            "culling_engine.engine.Image.open", side_effect=changing_open
+        ), self.assertRaisesRegex(RuntimeError, "Original changed"):
+            generate_detail(source, destination)
+
+    def test_failed_detail_encoding_does_not_label_old_pixels_as_new_source(
+        self,
+    ) -> None:
+        source = self.save_photo("source.jpg")
+        destination = self.cache / "detail.jpg"
+        generate_detail(source, destination)
+        Image.new("RGB", (60, 100), (100, 150, 200)).save(source)
+        with patch.object(
+            Image.Image, "save", side_effect=OSError("Disk full")
+        ), self.assertRaises(OSError):
+            generate_detail(source, destination)
+        result = generate_detail(source, destination)
+        self.assertEqual((result["width"], result["height"]), (60, 100))
+
+    def test_unreadable_folder_is_not_reported_as_successful_empty_scan(self) -> None:
+        def unreadable_walk(source, *, followlinks, onerror):
+            onerror(PermissionError(13, "Permission denied", str(source)))
+            return []
+
+        records = []
+        with patch(
+            "culling_engine.discovery.os.walk", side_effect=unreadable_walk
+        ), self.assertRaises(PermissionError):
+            scan(self.source, self.cache, records.append, workers=1)
+        self.assertFalse(any(record["type"] == "complete" for record in records))
+
+    def test_missing_file_during_scan_is_isolated(self) -> None:
+        present = self.save_photo("present.jpg")
+        missing = self.source / "missing.jpg"
+        records = []
+        with patch(
+            "culling_engine.engine.discover_images", return_value=[missing, present]
+        ):
+            summary = scan(self.source, self.cache, records.append, workers=1)
+        self.assertEqual(summary["processed"], 2)
+        self.assertEqual(summary["failed"], 1)
+        self.assertTrue(
+            any(
+                record["type"] == "error" and record["path"] == str(missing)
+                for record in records
+            )
+        )
+        self.assertTrue(
+            any(
+                record["type"] == "photo"
+                and record["photo"]["filename"] == "present.jpg"
+                for record in records
+            )
+        )
+
+    def test_directory_links_and_cache_links_cannot_escape_owned_roots(self) -> None:
+        source = self.save_photo("source.jpg")
+        external = self.root / "external"
+        external.mkdir()
+        patterned_image().save(external / "external.jpg")
+        try:
+            (self.source / "link").symlink_to(external, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"Directory symlinks unavailable: {error}")
+        self.assertEqual(discover_images(self.source, self.cache), [source])
+        photo = analyze_photo(source, self.cache)
+        directory = Path(photo["previewPath"]).parent
+        shutil.rmtree(directory)
+        directory.symlink_to(external, target_is_directory=True)
+        before = sorted(path.name for path in external.iterdir())
+        records = []
+        summary = scan(self.source, self.cache, records.append, workers=1)
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(sorted(path.name for path in external.iterdir()), before)
+
+    def test_sixteen_bit_grayscale_tiff_keeps_tonal_range(self) -> None:
+        path = self.source / "gray.tiff"
+        pixels = np.tile(np.array([0, 32768, 65535], dtype=np.uint16), (10, 1))
+        Image.fromarray(pixels).save(path)
+        decoded = np.asarray(decode_image(path, {}))
+        np.testing.assert_allclose(decoded[0, :, 0], [0, 127, 255], atol=1)
+
+    def test_icc_color_conversion_preserves_transparent_pixels(self) -> None:
+        path = self.source / "transparent.png"
+        image = Image.new("RGBA", (10, 10), (255, 0, 0, 0))
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        image.save(path, icc_profile=profile)
+        decoded = np.asarray(decode_image(path, {}))
+        np.testing.assert_array_equal(decoded[0, 0], [235, 235, 235])
+
+    def test_missing_source_cli_reports_fatal_json_error(self) -> None:
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "culling_engine",
+                "scan",
+                "--source",
+                str(self.source / "missing"),
+                "--cache",
+                str(self.cache),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertEqual(process.returncode, 1)
+        records = [json.loads(line) for line in process.stdout.splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["type"], "error")
+        self.assertNotIn("path", records[0])
+        self.assertIn("FileNotFoundError", records[0]["message"])
+
+    @unittest.skipIf(
+        os.name == "nt", "Windows paths use Unicode rather than arbitrary bytes"
+    )
+    def test_non_utf8_filename_is_isolated_without_breaking_json_protocol(self) -> None:
+        self.save_photo("valid.jpg")
+        malformed_path = os.fsencode(self.source) + b"/invalid-\xff.jpg"
+        with open(malformed_path, "wb") as stream:
+            patterned_image().save(stream, format="JPEG")
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "culling_engine",
+                "scan",
+                "--source",
+                str(self.source),
+                "--cache",
+                str(self.cache),
+                "--workers",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        records = [json.loads(line) for line in process.stdout.splitlines()]
+        self.assertEqual(records[-1]["failed"], 1)
+        self.assertEqual(records[-1]["processed"], 2)
+        error = next(record for record in records if record["type"] == "error")
+        self.assertIn("cannot be represented as Unicode", error["message"])
+        for record in records:
+            # serde_json String rejects lone surrogates even when escaped.
+            for value in record.values():
+                if isinstance(value, str):
+                    value.encode("utf-8", errors="strict")
+        photo = next(record["photo"] for record in records if record["type"] == "photo")
+        self.assertEqual(photo["filename"], "valid.jpg")
+
+    def test_resizing_does_not_make_full_size_pixel_copies(self) -> None:
+        image = patterned_image((1000, 600))
+        with patch.object(
+            Image.Image, "copy", side_effect=AssertionError("Unexpected full-size copy")
+        ):
+            resized = resize_to_edge(image, 640)
+            unchanged = resize_to_edge(image, 2048)
+        self.assertEqual(resized.size, (640, 384))
+        self.assertIs(unchanged, image)
 
     def test_legacy_product_directories_excluded_only_when_marked(self) -> None:
         self.save_photo("previews/old-preview.jpg")
@@ -242,6 +522,14 @@ class EngineTests(unittest.TestCase):
         fallback = datetime.fromisoformat(capture_time({}, path).replace("Z", "+00:00"))
         self.assertEqual(fallback.tzinfo, timezone.utc)
 
+    def test_invalid_offset_preserves_valid_camera_capture_time(self) -> None:
+        path = self.save_photo("photo.jpg")
+        tags = {
+            "EXIF DateTimeOriginal": b"2024:07:05 14:03:02\x00",
+            "EXIF OffsetTimeOriginal": "bad offset",
+        }
+        self.assertEqual(capture_time(tags, path), "2024-07-05T14:03:02")
+
     def test_mean_brightness_does_not_claim_highlight_clipping(self) -> None:
         bright = analyze_image(Image.new("RGB", (100, 100), (230, 230, 230)))
         clipped = analyze_image(Image.new("RGB", (100, 100), (255, 255, 255)))
@@ -284,7 +572,11 @@ class GroupingTests(unittest.TestCase):
             "captureTime": f"2024-01-01T12:00:{second:02d}" + ("Z" if aware else ""),
             "phash": f"{hash_value:016x}",
             "qualityScore": score,
-            "visualSignature": [0.4] * 48,
+            "visualSignature": [
+                0.2 + position / 50 + channel / 50
+                for position in range(16)
+                for channel in range(3)
+            ],
             "analysisError": None,
         }
 
@@ -335,8 +627,71 @@ class GroupingTests(unittest.TestCase):
         photo["phash"] = None
         self.assertEqual(group_photos([photo])[0]["recommendedPhotoIds"], [])
 
+    def test_flat_frames_and_different_aspect_ratios_are_not_moments(self) -> None:
+        photos = [self.photo("a", 0), self.photo("b", 1)]
+        for photo in photos:
+            photo["visualSignature"] = [0.4] * 48
+        self.assertEqual(len(group_photos(photos)), 2)
+        photos = [self.photo("a", 0), self.photo("b", 1)]
+        photos[0].update(width=120, height=80)
+        photos[1].update(width=80, height=120)
+        self.assertEqual(len(group_photos(photos)), 2)
+
+    def test_large_burst_groups_stay_bounded(self) -> None:
+        photos = [self.photo(f"photo-{index:03d}", 0) for index in range(150)]
+        groups = group_photos(photos)
+        self.assertTrue(all(len(group["photoIds"]) <= 48 for group in groups))
+        self.assertEqual(sum(len(group["photoIds"]) for group in groups), 150)
+
 
 class RawDecodeTests(unittest.TestCase):
+    def test_full_raw_detail_applies_all_exif_orientations_once(self) -> None:
+        pixels = np.asarray(patterned_image((30, 20)))
+        test_case = self
+
+        class FakeRaw:
+            sizes = SimpleNamespace(flip=6, width=30, height=20)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exception):
+                return False
+
+            def postprocess(self, **options):
+                test_case.assertEqual(options["user_flip"], 0)
+                test_case.assertFalse(options["half_size"])
+                return pixels
+
+        rawpy = SimpleNamespace(
+            imread=lambda path: FakeRaw(), ColorSpace=SimpleNamespace(sRGB=1)
+        )
+        transforms = {
+            1: None,
+            2: Image.Transpose.FLIP_LEFT_RIGHT,
+            3: Image.Transpose.ROTATE_180,
+            4: Image.Transpose.FLIP_TOP_BOTTOM,
+            5: Image.Transpose.TRANSPOSE,
+            6: Image.Transpose.ROTATE_270,
+            7: Image.Transpose.TRANSVERSE,
+            8: Image.Transpose.ROTATE_90,
+        }
+        original = Image.fromarray(pixels)
+        with patch.dict(sys.modules, {"rawpy": rawpy}):
+            for orientation, transform in transforms.items():
+                with self.subTest(orientation=orientation):
+                    actual = decode_image(
+                        Path("photo.arw"),
+                        {"Image Orientation": orientation},
+                        full_resolution=True,
+                    )
+                    expected = (
+                        original if transform is None else original.transpose(transform)
+                    )
+                    np.testing.assert_array_equal(
+                        np.asarray(actual), np.asarray(expected)
+                    )
+
     def test_raw_fallback_requests_unrotated_half_size_camera_white_balance(
         self,
     ) -> None:
@@ -375,10 +730,10 @@ class RawDecodeTests(unittest.TestCase):
 
     def test_already_oriented_raw_jpeg_preview_not_rotated_twice(self) -> None:
         stream = io.BytesIO()
-        patterned_image((80, 120)).save(stream, format="JPEG")
+        patterned_image((800, 1200)).save(stream, format="JPEG")
 
         class FakeRaw:
-            sizes = SimpleNamespace(flip=6, width=120, height=80)
+            sizes = SimpleNamespace(flip=6, width=1200, height=800)
 
             def __enter__(self):
                 return self
@@ -394,7 +749,69 @@ class RawDecodeTests(unittest.TestCase):
         )
         with patch.dict(sys.modules, {"rawpy": rawpy}):
             image = decode_image(Path("portrait.arw"), {})
-        self.assertEqual(image.size, (80, 120))
+        self.assertEqual(image.size, (800, 1200))
+
+    def test_tiny_raw_thumbnail_falls_back_to_half_size_sensor_data(self) -> None:
+        stream = io.BytesIO()
+        patterned_image((160, 120)).save(stream, format="JPEG")
+        calls = []
+
+        class FakeRaw:
+            sizes = SimpleNamespace(flip=0, width=1200, height=800)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exception):
+                return False
+
+            def extract_thumb(self):
+                return SimpleNamespace(format=1, data=stream.getvalue())
+
+            def postprocess(self, **options):
+                calls.append(options)
+                return np.zeros((400, 600, 3), dtype=np.uint8)
+
+        rawpy = SimpleNamespace(
+            imread=lambda path: FakeRaw(),
+            ThumbFormat=SimpleNamespace(JPEG=1, BITMAP=2),
+            ColorSpace=SimpleNamespace(sRGB=1),
+        )
+        with patch.dict(sys.modules, {"rawpy": rawpy}):
+            image = decode_image(Path("tiny-thumbnail.arw"), {})
+        self.assertEqual(image.size, (600, 400))
+        self.assertTrue(calls[0]["half_size"])
+
+    def test_raw_orientation_uses_pixels_when_thumbnail_exif_is_stale(self) -> None:
+        for pixel_size, thumbnail_orientation in (((1200, 800), 1), ((800, 1200), 6)):
+            with self.subTest(
+                pixel_size=pixel_size, thumbnail_orientation=thumbnail_orientation
+            ):
+                stream = io.BytesIO()
+                exif = Image.Exif()
+                exif[274] = thumbnail_orientation
+                patterned_image(pixel_size).save(stream, format="JPEG", exif=exif)
+
+                class FakeRaw:
+                    sizes = SimpleNamespace(flip=6, width=1200, height=800)
+                    thumbnail_data = stream.getvalue()
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *exception):
+                        return False
+
+                    def extract_thumb(self):
+                        return SimpleNamespace(format=1, data=self.thumbnail_data)
+
+                rawpy = SimpleNamespace(
+                    imread=lambda path: FakeRaw(),
+                    ThumbFormat=SimpleNamespace(JPEG=1, BITMAP=2),
+                )
+                with patch.dict(sys.modules, {"rawpy": rawpy}):
+                    image = decode_image(Path("portrait.arw"), {})
+                self.assertEqual(image.size, (800, 1200))
 
 
 if __name__ == "__main__":
