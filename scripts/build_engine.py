@@ -13,6 +13,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def validate_self_test(records: list[dict]) -> None:
+    expected = json.loads((ROOT / "desktop/package.json").read_text())["version"]
+    probes = [record for record in records if record.get("type") == "self-test"]
+    required = {"decode", "orientation", "cache", "detail", "json", "heif"}
+    if len(probes) != 1:
+        raise RuntimeError("The bundled worker did not produce one self-test result")
+    probe = probes[0]
+    capabilities = probe.get("capabilities", {})
+    if (
+        probe.get("success") is not True
+        or probe.get("version") != expected
+        or not required.issubset(probe.get("checks", []))
+        or any(
+            capabilities.get(name) is not True
+            for name in ("rawpy", "pillow_heif", "exifread")
+        )
+    ):
+        raise RuntimeError(f"The bundled worker failed its capability checks: {probe}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-smoke-test", action="store_true")
@@ -60,8 +80,7 @@ def main() -> None:
                 check=True,
             )
             records = [json.loads(line) for line in result.stdout.splitlines() if line]
-            if not records:
-                raise RuntimeError("The bundled worker produced no self-test result")
+            validate_self_test(records)
             print(json.dumps({"bundleSmokeTest": records}, ensure_ascii=False))
     plugin_source = ROOT / "lightroom" / "PhotoSelect.lrplugin"
     plugin_destination = (

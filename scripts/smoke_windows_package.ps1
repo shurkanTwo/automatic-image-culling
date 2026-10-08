@@ -3,28 +3,32 @@ $ErrorActionPreference = 'Stop'
 function Test-NativeApplication([string] $Executable, [string] $Report) {
     Remove-Item -LiteralPath $Report -ErrorAction SilentlyContinue
     $env:PHOTO_SELECT_SMOKE_TEST_OUTPUT = $Report
-    $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path $Executable) -PassThru
-    if (-not $process.WaitForExit(60000)) {
-        Stop-Process -Id $process.Id -Force
-        throw "Application installation probe timed out: $Executable"
+    try {
+        $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path $Executable) -PassThru
+        if (-not $process.WaitForExit(60000)) {
+            Stop-Process -Id $process.Id -Force
+            throw "Application installation probe timed out: $Executable"
+        }
+        $process.Refresh()
+        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Report)) {
+            throw "Application installation probe failed: $Executable (exit $($process.ExitCode))"
+        }
+        $result = Get-Content -LiteralPath $Report -Raw | ConvertFrom-Json
+        if (-not $result.engineAvailable -or $result.version -ne $manifest.version) {
+            throw "Packaged engine was unavailable or the application version was wrong."
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $result.lightroomPluginPath 'Info.lua'))) {
+            throw "Bundled Lightroom plugin was missing."
+        }
+        Write-Output ($result | ConvertTo-Json)
+    } finally {
+        Remove-Item Env:PHOTO_SELECT_SMOKE_TEST_OUTPUT -ErrorAction SilentlyContinue
     }
-    $process.Refresh()
-    if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Report)) {
-        throw "Application installation probe failed: $Executable (exit $($process.ExitCode))"
-    }
-    $result = Get-Content -LiteralPath $Report -Raw | ConvertFrom-Json
-    if (-not $result.engineAvailable -or $result.version -ne '0.2.0') {
-        throw "Packaged engine was unavailable or the application version was wrong."
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $result.lightroomPluginPath 'Info.lua'))) {
-        throw "Bundled Lightroom plugin was missing."
-    }
-    Write-Output ($result | ConvertTo-Json)
-    Remove-Item Env:PHOTO_SELECT_SMOKE_TEST_OUTPUT
 }
 
 $repository = Split-Path $PSScriptRoot
 $packages = Join-Path $repository 'artifacts/windows'
+$manifest = Get-Content -LiteralPath (Join-Path $packages 'manifest.json') -Raw | ConvertFrom-Json
 $temporaryRoot = Join-Path $env:RUNNER_TEMP 'Photo Select package verification'
 New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
 $portable = Get-ChildItem -LiteralPath $packages -Filter '*-Portable.zip'

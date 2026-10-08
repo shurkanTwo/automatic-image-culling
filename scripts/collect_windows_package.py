@@ -4,12 +4,38 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "0.2.0"
+
+
+def release_version() -> str:
+    """Refuse to bundle an application whose components disagree on version."""
+    version = json.loads((ROOT / "desktop/package.json").read_text())["version"]
+    components = {
+        "Tauri": json.loads((ROOT / "desktop/src-tauri/tauri.conf.json").read_text())[
+            "version"
+        ],
+        "contract": json.loads((ROOT / "contracts/app-v1.json").read_text())["app"][
+            "version"
+        ],
+    }
+    for name, path, pattern in (
+        ("worker", "culling_engine/__init__.py", r'__version__ = "([^"]+)"'),
+        ("Rust", "desktop/src-tauri/Cargo.toml", r'(?m)^version = "([^"]+)"'),
+    ):
+        match = re.search(pattern, (ROOT / path).read_text())
+        components[name] = match.group(1) if match else None
+    plugin = (ROOT / "lightroom/PhotoSelect.lrplugin/Info.lua").read_text()
+    numbers = re.search(r"major = (\d+), minor = (\d+), revision = (\d+)", plugin)
+    components["Lightroom"] = ".".join(numbers.groups()) if numbers else None
+    if any(value != version for value in components.values()):
+        raise RuntimeError(f"Component versions disagree with {version}: {components}")
+    return version
 
 
 def zip_directory(source: Path, destination: Path, prefix: str) -> None:
@@ -20,13 +46,17 @@ def zip_directory(source: Path, destination: Path, prefix: str) -> None:
 
 
 def main() -> None:
+    version = release_version()
     release = ROOT / "desktop" / "src-tauri" / "target" / "release"
-    installers = list((release / "bundle" / "nsis").glob("*-setup.exe"))
+    installers = list((release / "bundle" / "nsis").glob(f"*_{version}_*-setup.exe"))
     if len(installers) != 1:
         raise RuntimeError(f"Expected one NSIS installer, found {installers}")
     output = ROOT / "artifacts" / "windows"
+    # This directory contains generated packages only. Never mix stale builds in a manifest.
+    if output.exists():
+        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
-    name = f"Photo-Select-{VERSION}-Windows-x64"
+    name = f"Photo-Select-{version}-Windows-x64"
     shutil.copy2(installers[0], output / f"{name}-Setup.exe")
     portable = ROOT / "build" / name
     if portable.exists():
@@ -45,13 +75,13 @@ def main() -> None:
     zip_directory(portable, output / f"{name}-Portable.zip", name)
     zip_directory(
         ROOT / "lightroom" / "PhotoSelect.lrplugin",
-        output / f"Photo-Select-{VERSION}-Lightroom-Plugin.zip",
+        output / f"Photo-Select-{version}-Lightroom-Plugin.zip",
         "PhotoSelect.lrplugin",
     )
     shutil.copy2(ROOT / "scripts" / "WINDOWS-TESTING.txt", output / "START-HERE.txt")
     manifest = {
         "application": "Photo Select",
-        "version": VERSION,
+        "version": version,
         "platform": "windows-x64",
         "files": {
             path.name: {
@@ -63,6 +93,9 @@ def main() -> None:
         },
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as github_output:
+            github_output.write(f"artifact-name={name}\n")
     print(json.dumps(manifest, indent=2))
 
 

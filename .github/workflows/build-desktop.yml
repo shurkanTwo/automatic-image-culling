@@ -86,14 +86,17 @@ jobs:
         working-directory: desktop
         run: npm run tauri -- build --bundles nsis
       - name: Assemble test packages
+        id: package
         run: python scripts/collect_windows_package.py
+      - name: Verify bundled RAW decoding and Unicode paths
+        run: python scripts/check_bundled_raw.py --worker desktop/src-tauri/resources/engine/photo-select-engine.exe --report artifacts/windows/raw-report.json
       - name: Verify portable application and installed application
         shell: pwsh
         run: ./scripts/smoke_windows_package.ps1
       - name: Upload Windows test package
         uses: actions/upload-artifact@v4
         with:
-          name: Photo-Select-0.2.0-Windows-x64
+          name: ${{ steps.package.outputs.artifact-name }}
           path: artifacts/windows/*
           if-no-files-found: error
           retention-days: 30
