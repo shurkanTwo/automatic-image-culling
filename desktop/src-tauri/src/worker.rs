@@ -1,12 +1,13 @@
 use crate::core::{path_string, Group, Photo, Result, Store};
+use crate::process::ManagedChild;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -46,13 +47,19 @@ impl Engine {
                 working_dir: None,
             };
         }
+        if !cfg!(debug_assertions) && std::env::var_os("PHOTO_SELECT_PYTHON").is_none() {
+            return Self::executable(executable);
+        }
         let python = std::env::var_os("PHOTO_SELECT_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
         Self {
             executable: python,
             python: true,
-            working_dir: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")),
+            working_dir: {
+                let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+                repo.join("culling_engine").is_dir().then_some(repo)
+            },
         }
     }
     pub fn executable(path: PathBuf) -> Self {
@@ -85,23 +92,42 @@ impl Engine {
         command
     }
     pub fn available(&self) -> bool {
-        let Ok(mut child) = self.command("self-test").spawn() else {
+        self.probe(Duration::from_secs(30))
+    }
+    pub fn probe(&self, timeout: Duration) -> bool {
+        let Ok(mut child) = ManagedChild::spawn(&mut self.command("self-test")) else {
             return false;
         };
-        let start = Instant::now();
-        loop {
+        let Some(stdout) = child.stdout.take() else {
+            return false;
+        };
+        let Some(stderr) = child.stderr.take() else {
+            return false;
+        };
+        let output = thread::spawn(move || read_diagnostics(stdout));
+        let diagnostics = thread::spawn(move || read_diagnostics(stderr));
+        let started = Instant::now();
+        let success = loop {
             match child.try_wait() {
-                Ok(Some(status)) => return status.success(),
-                Err(_) => return false,
+                Ok(Some(status)) => break status.success(),
+                Err(_) => break false,
                 Ok(None) => {}
             }
-            if start.elapsed() > Duration::from_secs(10) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
+            if started.elapsed() > timeout {
+                break false;
             }
-            thread::sleep(Duration::from_millis(30));
-        }
+            thread::sleep(Duration::from_millis(20));
+        };
+        // Close inherited handles held by descendants too, even when the parent has already exited.
+        let _ = child.kill_tree();
+        let _ = child.wait();
+        let stdout = output.join().unwrap_or_default();
+        let _ = diagnostics.join();
+        success
+            && stdout.lines().any(|line| {
+                serde_json::from_str::<Value>(line)
+                    .is_ok_and(|v| v["type"] == "self-test" && v["success"] == true)
+            })
     }
 }
 #[derive(Clone, Debug, Serialize)]
@@ -124,10 +150,46 @@ pub struct Detail {
     pub height: u32,
 }
 pub type Emitter = Arc<dyn Fn(&str, Value) + Send + Sync>;
+struct ScanSummary {
+    processed: u64,
+    total: u64,
+    failed: u64,
+    seen: HashSet<String>,
+}
 struct Job {
     id: String,
     cancelled: AtomicBool,
-    child: Mutex<Child>,
+    child: Mutex<ManagedChild>,
+    finished: AtomicBool,
+    timed_out: AtomicBool,
+    last_activity: Mutex<Instant>,
+}
+impl Job {
+    fn watchdog(self: &Arc<Self>, timeout: Duration) {
+        let job = self.clone();
+        thread::spawn(move || {
+            while !job.finished.load(Ordering::SeqCst) {
+                let expired = job
+                    .last_activity
+                    .lock()
+                    .map(|v| v.elapsed() > timeout)
+                    .unwrap_or(true);
+                if expired {
+                    job.timed_out.store(true, Ordering::SeqCst);
+                    if let Ok(mut child) = job.child.lock() {
+                        let _ = child.kill_tree();
+                    }
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+    }
+    fn activity(&self) {
+        if let Ok(mut last) = self.last_activity.lock() {
+            *last = Instant::now();
+        }
+    }
 }
 #[derive(Clone)]
 pub struct Workers {
@@ -135,6 +197,7 @@ pub struct Workers {
     pub engine: Engine,
     jobs: Arc<Mutex<HashMap<String, Arc<Job>>>>,
     emit: Emitter,
+    inactivity_timeout: Duration,
 }
 impl Workers {
     pub fn new(store: Store, engine: Engine, emit: Emitter) -> Self {
@@ -143,14 +206,28 @@ impl Workers {
             engine,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             emit,
+            inactivity_timeout: Duration::from_secs(300),
         }
+    }
+    pub fn with_inactivity_timeout(mut self, timeout: Duration) -> Self {
+        self.inactivity_timeout = timeout;
+        self
     }
     pub fn start(&self, project_id: &str) -> Result<String> {
         let mut jobs = self.jobs.lock().map_err(|e| e.to_string())?;
         if jobs.contains_key(project_id) {
             return Err("An import is already running for this project".into());
         }
+        if jobs
+            .keys()
+            .any(|key| key.starts_with(&format!("detail:{project_id}:")))
+        {
+            return Err(
+                "Wait for detailed previews to finish before reimporting this project".into(),
+            );
+        }
         let project = self.store.project(project_id)?;
+        self.store.validate_source_dir(&project.source_dir)?;
         let cache = self.store.prepare_cache(project_id)?;
         let mut command = self.engine.command("scan");
         command
@@ -158,13 +235,12 @@ impl Workers {
             .arg(&project.source_dir)
             .arg("--cache")
             .arg(path_string(&cache));
-        let mut child = command
-            .spawn()
+        let mut child = ManagedChild::spawn(&mut command)
             .map_err(|e| format!("Cannot start analysis engine: {e}"))?;
         let stdout = child.stdout.take().ok_or("Engine stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("Engine stderr unavailable")?;
         if let Err(e) = self.store.set_status(project_id, "running", None) {
-            let _ = child.kill();
+            let _ = child.kill_tree();
             let _ = child.wait();
             return Err(e);
         }
@@ -172,29 +248,48 @@ impl Workers {
             id: Uuid::new_v4().to_string(),
             cancelled: AtomicBool::new(false),
             child: Mutex::new(child),
+            finished: AtomicBool::new(false),
+            timed_out: AtomicBool::new(false),
+            last_activity: Mutex::new(Instant::now()),
         });
         jobs.insert(project_id.into(), job.clone());
         let id = job.id.clone();
         let workers = self.clone();
         let project_id = project_id.to_string();
         thread::spawn(move || {
+            job.watchdog(workers.inactivity_timeout);
             let diagnostics = thread::spawn(move || read_diagnostics(stderr));
             let result = workers.consume(&project_id, &job, BufReader::new(stdout));
             // A malformed record must not leave a subprocess writing into a closed pipe indefinitely.
             if result.is_err() {
                 if let Ok(mut child) = job.child.lock() {
-                    let _ = child.kill();
+                    let _ = child.kill_tree();
                 }
             }
             let status = wait_for_child(&job);
             let diagnostic = diagnostics.join().unwrap_or_default();
-            let counts = result.as_ref().ok().copied().unwrap_or((0, 0, 0));
+            job.finished.store(true, Ordering::SeqCst);
+            let result = if job.timed_out.load(Ordering::SeqCst) {
+                Err("Analysis engine stopped responding; import timed out. You can retry the import.".into())
+            } else {
+                result
+            };
+            let counts = result
+                .as_ref()
+                .ok()
+                .map(|summary| (summary.processed, summary.total, summary.failed))
+                .unwrap_or((0, 0, 0));
             let cancelled = job.cancelled.load(Ordering::SeqCst);
             let (mut phase, reason) = if cancelled {
                 ("cancelled", None)
             } else {
                 match (result, status) {
-                    (Ok(_), Ok(s)) if s.success() => ("complete", None),
+                    (Ok(summary), Ok(s)) if s.success() => {
+                        match workers.store.finish_scan(&project_id, &summary.seen) {
+                            Ok(()) => ("complete", None),
+                            Err(error) => ("error", Some(error)),
+                        }
+                    }
                     (Err(e), _) => ("error", Some(attach_diagnostic(e, &diagnostic))),
                     (_, Ok(s)) => (
                         "error",
@@ -243,20 +338,26 @@ impl Workers {
         project_id: &str,
         job: &Job,
         mut reader: impl BufRead,
-    ) -> Result<(u64, u64, u64)> {
-        let mut line = String::new();
+    ) -> Result<ScanSummary> {
+        let mut line;
         let mut total = 0;
         let mut processed = 0;
         let mut failed = 0;
         let mut complete = false;
+        let mut seen = HashSet::new();
         let mut last_update = Instant::now() - Duration::from_secs(1);
         loop {
-            line.clear();
-            if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-                break;
+            match read_record(&mut reader)? {
+                Some(value) => line = value,
+                None => break,
             }
             if job.cancelled.load(Ordering::SeqCst) {
-                return Ok((processed, total, failed));
+                return Ok(ScanSummary {
+                    processed,
+                    total,
+                    failed,
+                    seen,
+                });
             }
             if line.trim().is_empty() {
                 continue;
@@ -267,6 +368,10 @@ impl Workers {
                 .get("type")
                 .and_then(Value::as_str)
                 .ok_or("Engine record has no type")?;
+            job.activity();
+            if complete {
+                return Err("Engine sent records after completing the import".into());
+            }
             let mut phase = None;
             let mut message = None;
             match kind {
@@ -279,7 +384,9 @@ impl Workers {
                         record.get("photo").cloned().ok_or("Missing photo")?,
                     )
                     .map_err(|e| e.to_string())?;
+                    let photo_id = photo.id.clone();
                     self.store.ingest_photo(project_id, photo)?;
+                    seen.insert(photo_id);
                 }
                 "progress" => {
                     processed = number(&record, "processed")?;
@@ -344,7 +451,23 @@ impl Workers {
         if !complete && !job.cancelled.load(Ordering::SeqCst) {
             return Err("Analysis engine stopped before completing the import".into());
         }
-        Ok((processed, total, failed))
+        Ok(ScanSummary {
+            processed,
+            total,
+            failed,
+            seen,
+        })
+    }
+    pub fn open_project(&self, path: &str) -> Result<crate::core::Project> {
+        let id = self.store.identify_project(path)?;
+        let jobs = self.jobs.lock().map_err(|error| error.to_string())?;
+        if jobs
+            .keys()
+            .any(|key| key == &id || key.starts_with(&format!("detail:{id}:")))
+        {
+            return Err("Wait for this project's import or detailed previews to finish before reopening its file".into());
+        }
+        self.store.open(path)
     }
     pub fn is_running(&self, id: &str) -> bool {
         self.jobs.lock().map(|v| v.contains_key(id)).unwrap_or(true)
@@ -355,7 +478,7 @@ impl Workers {
             job.cancelled.store(true, Ordering::SeqCst);
             let mut child = job.child.lock().map_err(|e| e.to_string())?;
             if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-                child.kill().map_err(|e| e.to_string())?;
+                child.kill_tree().map_err(|e| e.to_string())?;
             }
         }
         Ok(())
@@ -365,7 +488,7 @@ impl Workers {
             for job in jobs.values() {
                 job.cancelled.store(true, Ordering::SeqCst);
                 if let Ok(mut child) = job.child.lock() {
-                    let _ = child.kill();
+                    let _ = child.kill_tree();
                 }
             }
         }
@@ -373,6 +496,12 @@ impl Workers {
     pub fn detail(&self, project_id: &str, photo_id: &str) -> Result<Detail> {
         let key = format!("detail:{project_id}:{photo_id}");
         let mut jobs = self.jobs.lock().map_err(|e| e.to_string())?;
+        if jobs.contains_key(project_id) {
+            return Err(
+                "Wait for this project's import to finish before generating detailed previews"
+                    .into(),
+            );
+        }
         if jobs.contains_key(&key) {
             return Err("Detailed preview is already being generated".into());
         }
@@ -404,8 +533,7 @@ impl Workers {
             .arg(&photo.path)
             .arg("--output")
             .arg(&output);
-        let mut child = command
-            .spawn()
+        let mut child = ManagedChild::spawn(&mut command)
             .map_err(|e| format!("Cannot start detailed preview: {e}"))?;
         let stdout = child.stdout.take().ok_or("Engine stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("Engine stderr unavailable")?;
@@ -413,16 +541,28 @@ impl Workers {
             id: Uuid::new_v4().to_string(),
             cancelled: AtomicBool::new(false),
             child: Mutex::new(child),
+            finished: AtomicBool::new(false),
+            timed_out: AtomicBool::new(false),
+            last_activity: Mutex::new(Instant::now()),
         });
         jobs.insert(key.clone(), job.clone());
         drop(jobs);
+        job.watchdog(self.inactivity_timeout);
         let diagnostics = thread::spawn(move || read_diagnostics(stderr));
         let mut detail = None;
         let mut failure = None;
-        for line in BufReader::new(stdout).lines() {
-            let record = line
-                .map_err(|e| e.to_string())
-                .and_then(|v| serde_json::from_str::<Value>(&v).map_err(|e| e.to_string()));
+        let mut reader = BufReader::new(stdout);
+        loop {
+            let line = match read_record(&mut reader) {
+                Ok(Some(value)) => value,
+                Ok(None) => break,
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            };
+            job.activity();
+            let record = serde_json::from_str::<Value>(&line).map_err(|error| error.to_string());
             match record {
                 Ok(v) if v.get("type").and_then(Value::as_str) == Some("detail") => {
                     match serde_json::from_value::<Detail>(v) {
@@ -450,12 +590,19 @@ impl Workers {
         }
         if failure.is_some() {
             if let Ok(mut child) = job.child.lock() {
-                let _ = child.kill();
+                let _ = child.kill_tree();
             }
         }
         let status = wait_for_child(&job);
         let diagnostic = diagnostics.join().unwrap_or_default();
+        job.finished.store(true, Ordering::SeqCst);
         let result = (|| {
+            if job.timed_out.load(Ordering::SeqCst) {
+                return Err("Detailed preview generation stopped responding and timed out".into());
+            }
+            if job.cancelled.load(Ordering::SeqCst) {
+                return Err("Detailed preview generation was cancelled".into());
+            }
             if let Some(e) = failure {
                 return Err(attach_diagnostic(e, &diagnostic));
             }
@@ -534,4 +681,35 @@ fn wait_for_child(job: &Job) -> Result<std::process::ExitStatus> {
         }
         thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn read_record(reader: &mut impl BufRead) -> Result<Option<String>> {
+    const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        let available = reader.fill_buf().map_err(|error| error.to_string())?;
+        if available.is_empty() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let count = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|position| position + 1)
+            .unwrap_or(available.len());
+        if bytes.len() + count > MAX_RECORD_BYTES {
+            return Err("Engine response exceeded the maximum record size".into());
+        }
+        let ended = available[count - 1] == b'\n';
+        bytes.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if ended {
+            break;
+        }
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|error| format!("Engine response was not valid UTF-8: {error}"))
 }

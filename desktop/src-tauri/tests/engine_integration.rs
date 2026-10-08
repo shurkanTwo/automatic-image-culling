@@ -107,4 +107,32 @@ fn real_engine_import_detail_and_rescan_preserve_originals_and_review() {
     for (path, bytes) in originals {
         assert_eq!(fs::read(path).unwrap(), bytes);
     }
+    fs::remove_file(source.join("a.jpg")).unwrap();
+    workers.start(&project.id).unwrap();
+    wait();
+    let unavailable = store.project(&project.id).unwrap();
+    assert_eq!(unavailable.import_status, "completed");
+    assert_eq!(unavailable.photos.len(), 3);
+    let retained = unavailable
+        .photos
+        .iter()
+        .find(|candidate| candidate.id == photo.id)
+        .unwrap();
+    assert_eq!(retained.rating, 3);
+    assert_eq!(retained.decision, "favorite");
+    assert!(retained
+        .analysis_error
+        .as_ref()
+        .unwrap()
+        .contains("unavailable"));
+    assert!(retained.group_id.is_none());
+    assert!(PathBuf::from(&retained.preview_path).is_file());
+    fs::remove_dir_all(&source).unwrap();
+    assert_eq!(
+        store
+            .export(&project.id, destination.to_str().unwrap(), None, true)
+            .unwrap()
+            .count,
+        1
+    );
 }

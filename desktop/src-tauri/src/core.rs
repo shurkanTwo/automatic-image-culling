@@ -104,6 +104,12 @@ pub struct PhotoPatch {
     pub reviewed: Option<bool>,
     pub tags: Option<Vec<String>>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PhotoUpdate {
+    pub photo_id: String,
+    pub patch: PhotoPatch,
+}
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportResult {
@@ -137,7 +143,13 @@ impl Store {
         } else {
             HashMap::new()
         };
-        paths.retain(|id, path| Uuid::parse_str(id).is_ok() && path.is_absolute());
+        paths.retain(|id, path| {
+            valid_project_id(id).is_ok()
+                && path.is_absolute()
+                && Self::connection_at(path)
+                    .and_then(|db| read_meta(&db))
+                    .is_ok_and(|project| project.id == *id)
+        });
         for entry in fs::read_dir(root.join("projects")).map_err(error)? {
             let entry = entry.map_err(error)?;
             let Some(id) = entry.file_name().to_str().map(String::from) else {
@@ -190,9 +202,16 @@ impl Store {
         db.busy_timeout(Duration::from_secs(10)).map_err(error)?;
         db.pragma_update(None, "foreign_keys", "ON")
             .map_err(error)?;
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .map_err(error)?;
+        if version != 1 {
+            return Err("Unsupported project format".into());
+        }
         Ok(db)
     }
     pub fn connection(&self, id: &str) -> Result<Connection> {
+        valid_project_id(id)?;
         let path = self
             .paths
             .lock()
@@ -200,7 +219,11 @@ impl Store {
             .get(id)
             .cloned()
             .ok_or("Unknown project")?;
-        Self::connection_at(&path)
+        let db = Self::connection_at(&path)?;
+        if read_meta(&db)?.id != id {
+            return Err("Project identity does not match its registered file".into());
+        }
+        Ok(db)
     }
     fn register(&self, id: String, path: PathBuf) -> Result<()> {
         let mut paths = self.paths.lock().map_err(error)?;
@@ -251,9 +274,35 @@ impl Store {
         self.register(id, path)?;
         Ok(p)
     }
+    pub fn identify_project(&self, path: &str) -> Result<String> {
+        let path = fs::canonicalize(path).map_err(error)?;
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| !value.eq_ignore_ascii_case("cullproj"))
+            .unwrap_or(true)
+        {
+            return Err("Choose a .cullproj project file".into());
+        }
+        read_meta(&Self::connection_at(&path)?).map(|project| project.id)
+    }
+    pub fn validate_source_dir(&self, source: &str) -> Result<()> {
+        let source = canonical_or_lexical(Path::new(source))?;
+        if path_is_within(&source, &self.root) || path_is_within(&self.root, &source) {
+            return Err(
+                "Choose a photo folder separate from the application's project storage".into(),
+            );
+        }
+        Ok(())
+    }
     pub fn open(&self, path: &str) -> Result<Project> {
         let path = fs::canonicalize(path).map_err(error)?;
-        if path.extension().and_then(|v| v.to_str()) != Some("cullproj") {
+        if path
+            .extension()
+            .and_then(|v| v.to_str())
+            .map(|v| !v.eq_ignore_ascii_case("cullproj"))
+            .unwrap_or(true)
+        {
             return Err("Choose a .cullproj project file".into());
         }
         let mut db = Self::connection_at(&path)?;
@@ -267,7 +316,9 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(error)?;
         let mut p = read_meta(&tx)?;
-        Uuid::parse_str(&p.id).map_err(|_| "Invalid project identity".to_string())?;
+        valid_project_id(&p.id)?;
+        validate_rows(&tx, &p)?;
+        self.validate_source_dir(&p.source_dir)?;
         let registered = self.paths.lock().map_err(error)?.get(&p.id).cloned();
         if registered
             .as_ref()
@@ -290,6 +341,9 @@ impl Store {
         let mut db = self.connection(id)?;
         let tx = db.transaction().map_err(error)?;
         let mut p = read_meta(&tx)?;
+        p.project_path = path_string(Path::new(
+            tx.path().ok_or("Project database has no file path")?,
+        ));
         p.photos = read_items(&tx, "photos")?;
         p.photos.sort_by(|a, b| {
             a.capture_time
@@ -298,6 +352,7 @@ impl Store {
         });
         p.groups = read_items(&tx, "groups_data")?;
         p.collections = read_items(&tx, "collections")?;
+        validate_project_rows(&p)?;
         tx.commit().map_err(error)?;
         Ok(p)
     }
@@ -324,7 +379,7 @@ impl Store {
         self.root.join("projects").join(id).join("cache")
     }
     pub fn prepare_cache(&self, id: &str) -> Result<PathBuf> {
-        Uuid::parse_str(id).map_err(|_| "Invalid project identity".to_string())?;
+        valid_project_id(id)?;
         let dir = self.root.join("projects").join(id);
         ensure_within(&dir, &self.root)?;
         fs::create_dir_all(&dir).map_err(error)?;
@@ -469,20 +524,36 @@ impl Store {
         photo_ids: &[String],
         patch: &PhotoPatch,
     ) -> Result<Vec<Photo>> {
-        validate_patch(patch)?;
-        if photo_ids.is_empty() {
+        let mut seen = HashSet::new();
+        let updates: Vec<_> = photo_ids
+            .iter()
+            .filter(|photo_id| seen.insert(*photo_id))
+            .map(|photo_id| PhotoUpdate {
+                photo_id: photo_id.clone(),
+                patch: patch.clone(),
+            })
+            .collect();
+        self.update_photo_patches(id, &updates)
+    }
+    pub fn update_photo_patches(&self, id: &str, updates: &[PhotoUpdate]) -> Result<Vec<Photo>> {
+        if updates.is_empty() {
             return Err("Choose at least one photo".into());
+        }
+        let mut unique = HashSet::new();
+        for update in updates {
+            validate_patch(&update.patch)?;
+            if !unique.insert(&update.photo_id) {
+                return Err("Each photo may appear only once in a batch update".into());
+            }
         }
         let mut db = self.connection(id)?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(error)?;
         let mut output = Vec::new();
-        let mut seen = HashSet::new();
-        for photo_id in photo_ids {
-            if !seen.insert(photo_id) {
-                continue;
-            }
+        for update in updates {
+            let photo_id = &update.photo_id;
+            let patch = &update.patch;
             let mut photo: Photo = read_item(&tx, "photos", photo_id)?.ok_or("Unknown photo")?;
             if let Some(rating) = patch.rating {
                 photo.rating = rating;
@@ -512,6 +583,35 @@ impl Store {
         touch(&tx)?;
         tx.commit().map_err(error)?;
         Ok(output)
+    }
+    pub fn finish_scan(&self, id: &str, seen: &HashSet<String>) -> Result<()> {
+        let mut db = self.connection(id)?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
+        let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
+        for photo in &mut photos {
+            if !seen.contains(&photo.id) {
+                photo.analysis_error=Some("Original file was unavailable during the latest import (missing, unreadable, or unsupported). Cached previews and review decisions are preserved.".into());
+                photo.group_id = None;
+                write_item(&tx, "photos", &photo.id, photo)?;
+            }
+        }
+        let groups: Vec<Group> = read_items(&tx, "groups_data")?;
+        for mut group in groups {
+            group.photo_ids.retain(|photo_id| seen.contains(photo_id));
+            group
+                .recommended_photo_ids
+                .retain(|photo_id| seen.contains(photo_id));
+            if group.photo_ids.is_empty() {
+                tx.execute("DELETE FROM groups_data WHERE id=?1", [&group.id])
+                    .map_err(error)?;
+            } else {
+                write_item(&tx, "groups_data", &group.id, &group)?;
+            }
+        }
+        touch(&tx)?;
+        tx.commit().map_err(error)
     }
     pub fn create_collection(&self, id: &str, name: &str) -> Result<Collection> {
         let collection = Collection {
@@ -609,15 +709,16 @@ impl Store {
         let parent =
             fs::canonicalize(destination.parent().ok_or("Invalid export path")?).map_err(error)?;
         let resolved = parent.join(destination.file_name().ok_or("Invalid export path")?);
-        if resolved.starts_with(fs::canonicalize(&p.source_dir).map_err(error)?) {
+        let source = canonical_or_lexical(Path::new(&p.source_dir))?;
+        if path_is_within(&resolved, &source)
+            || path_is_within(destination, Path::new(&p.source_dir))
+        {
             return Err("Save the manifest outside the original photo folder".into());
         }
-        if destination.exists()
-            && fs::symlink_metadata(destination)
-                .map_err(error)?
-                .file_type()
-                .is_symlink()
-        {
+        if path_is_within(&resolved, &self.root) {
+            return Err("Save the manifest outside the application's project storage".into());
+        }
+        if fs::symlink_metadata(destination).is_ok_and(|meta| meta.file_type().is_symlink()) {
             return Err("Export destination cannot be a symbolic link".into());
         }
         let collection = collection_id
@@ -681,7 +782,20 @@ fn read_meta(db: &Connection) -> Result<Project> {
     let data: String = db
         .query_row("SELECT data FROM meta WHERE singleton=1", [], |r| r.get(0))
         .map_err(error)?;
-    serde_json::from_str(&data).map_err(error)
+    let project: Project = serde_json::from_str(&data).map_err(error)?;
+    valid_project_id(&project.id)?;
+    valid_name(&project.name)?;
+    chrono::DateTime::parse_from_rfc3339(&project.created_at)
+        .map_err(|_| "Invalid saved project creation time".to_string())?;
+    chrono::DateTime::parse_from_rfc3339(&project.updated_at)
+        .map_err(|_| "Invalid saved project update time".to_string())?;
+    valid_absolute_path(Path::new(&project.source_dir))?;
+    if !["idle", "running", "completed", "cancelled", "failed"]
+        .contains(&project.import_status.as_str())
+    {
+        return Err("Invalid saved import status".into());
+    }
+    Ok(project)
 }
 fn write_meta(db: &Connection, p: &Project) -> Result<()> {
     db.execute("INSERT INTO meta(singleton,data) VALUES(1,?1) ON CONFLICT(singleton) DO UPDATE SET data=excluded.data",[serde_json::to_string(p).map_err(error)?]).map_err(error)?;
@@ -693,14 +807,19 @@ fn touch(db: &Connection) -> Result<()> {
     write_meta(db, &p)
 }
 fn read_items<T: serde::de::DeserializeOwned>(db: &Connection, table: &str) -> Result<Vec<T>> {
-    let mut stmt = db
-        .prepare(&format!("SELECT data FROM {table} ORDER BY id"))
+    let mut statement = db
+        .prepare(&format!("SELECT id,data FROM {table} ORDER BY id"))
         .map_err(error)?;
-    let rows = stmt
-        .query_map([], |r| r.get::<_, String>(0))
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(error)?;
-    rows.map(|row| serde_json::from_str(&row.map_err(error)?).map_err(error))
-        .collect()
+    rows.map(|row| {
+        let (id, data) = row.map_err(error)?;
+        decode_item(&id, &data)
+    })
+    .collect()
 }
 fn read_item<T: serde::de::DeserializeOwned>(
     db: &Connection,
@@ -711,12 +830,167 @@ fn read_item<T: serde::de::DeserializeOwned>(
         .query_row(
             &format!("SELECT data FROM {table} WHERE id=?1"),
             [id],
-            |r| r.get(0),
+            |row| row.get(0),
         )
         .optional()
         .map_err(error)?;
-    data.map(|v| serde_json::from_str(&v).map_err(error))
-        .transpose()
+    data.map(|data| decode_item(id, &data)).transpose()
+}
+fn decode_item<T: serde::de::DeserializeOwned>(id: &str, data: &str) -> Result<T> {
+    let value: serde_json::Value = serde_json::from_str(data).map_err(error)?;
+    if value.get("id").and_then(serde_json::Value::as_str) != Some(id) {
+        return Err("Saved row identity does not match its database key".into());
+    }
+    serde_json::from_value(value).map_err(error)
+}
+fn validate_rows(db: &Connection, meta: &Project) -> Result<()> {
+    let mut project = meta.clone();
+    project.photos = read_items(db, "photos")?;
+    project.groups = read_items(db, "groups_data")?;
+    project.collections = read_items(db, "collections")?;
+    validate_project_rows(&project)
+}
+fn validate_project_rows(project: &Project) -> Result<()> {
+    let mut photos = HashSet::new();
+    let mut original_paths = HashSet::new();
+    for photo in &project.photos {
+        if photo.id.len() != 24
+            || !photo.id.bytes().all(|ch| ch.is_ascii_hexdigit())
+            || !photos.insert(&photo.id)
+        {
+            return Err("Invalid saved photo identity".into());
+        }
+        valid_absolute_path(Path::new(&photo.path))?;
+        let original = if cfg!(windows) {
+            path_string(Path::new(&photo.path)).to_lowercase()
+        } else {
+            photo.path.clone()
+        };
+        if !original_paths.insert(original) {
+            return Err("Saved project contains duplicate original paths".into());
+        }
+        if Path::new(&photo.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(photo.filename.as_str())
+        {
+            return Err("Saved photo filename does not match its original path".into());
+        }
+        if !path_is_within(Path::new(&photo.path), Path::new(&project.source_dir)) {
+            return Err("Saved photo lies outside its source folder".into());
+        }
+        if !photo.quality_score.is_finite() || !(0.0..=100.0).contains(&photo.quality_score) {
+            return Err("Invalid saved technical score".into());
+        }
+        validate_patch(&PhotoPatch {
+            rating: Some(photo.rating),
+            decision: Some(photo.decision.clone()),
+            tags: Some(photo.tags.clone()),
+            ..Default::default()
+        })?;
+        for cached in [&photo.preview_path, &photo.thumbnail_path] {
+            if !cached.is_empty() {
+                valid_absolute_path(Path::new(cached))?;
+            }
+        }
+        if let Some(detail) = &photo.detail_path {
+            valid_absolute_path(Path::new(detail))?;
+        }
+    }
+    let mut grouped = HashSet::new();
+    let group_ids: HashSet<_> = project
+        .groups
+        .iter()
+        .map(|group| group.id.as_str())
+        .collect();
+    for group in &project.groups {
+        if group.id.is_empty()
+            || group.photo_ids.is_empty()
+            || group
+                .photo_ids
+                .iter()
+                .any(|id| !photos.contains(id) || !grouped.insert(id))
+            || group
+                .recommended_photo_ids
+                .iter()
+                .any(|id| !group.photo_ids.contains(id))
+        {
+            return Err("Invalid saved group membership".into());
+        }
+    }
+    for photo in &project.photos {
+        if let Some(group_id) = &photo.group_id {
+            if !group_ids.contains(group_id.as_str())
+                || !project
+                    .groups
+                    .iter()
+                    .any(|group| group.id == *group_id && group.photo_ids.contains(&photo.id))
+            {
+                return Err("Saved photo references an invalid group".into());
+            }
+        }
+    }
+    for collection in &project.collections {
+        valid_name(&collection.name)?;
+        let mut members = HashSet::new();
+        if collection.id.is_empty()
+            || collection
+                .photo_ids
+                .iter()
+                .any(|id| !photos.contains(id) || !members.insert(id))
+        {
+            return Err("Invalid saved collection membership".into());
+        }
+    }
+    Ok(())
+}
+fn valid_project_id(id: &str) -> Result<()> {
+    let parsed = Uuid::parse_str(id).map_err(|_| "Invalid project identity".to_string())?;
+    if parsed.to_string() != id {
+        return Err("Project identity must use its canonical UUID form".into());
+    }
+    Ok(())
+}
+fn valid_absolute_path(path: &Path) -> Result<()> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("Saved paths must be absolute and cannot contain parent traversal".into());
+    }
+    Ok(())
+}
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let path = path_string(path);
+    let root = path_string(root);
+    if cfg!(windows) {
+        Path::new(&path.to_lowercase()).starts_with(Path::new(&root.to_lowercase()))
+    } else {
+        Path::new(&path).starts_with(Path::new(&root))
+    }
+}
+fn canonical_or_lexical(path: &Path) -> Result<PathBuf> {
+    valid_absolute_path(path)?;
+    let mut ancestor = path.to_path_buf();
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        missing.push(
+            ancestor
+                .file_name()
+                .ok_or("Invalid source folder path")?
+                .to_owned(),
+        );
+        ancestor = ancestor
+            .parent()
+            .ok_or("Invalid source folder path")?
+            .to_path_buf();
+    }
+    let mut resolved = fs::canonicalize(ancestor).map_err(error)?;
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
 }
 fn write_item<T: Serialize>(db: &Connection, table: &str, id: &str, item: &T) -> Result<()> {
     db.execute(&format!("INSERT INTO {table}(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data"),params![id,serde_json::to_string(item).map_err(error)?]).map_err(error)?;

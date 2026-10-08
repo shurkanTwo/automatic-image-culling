@@ -1,5 +1,8 @@
 use crate::{
-    core::{Collection, ExportResult, Photo, PhotoPatch, Project, ProjectSummary, Result, Store},
+    core::{
+        Collection, ExportResult, Photo, PhotoPatch, PhotoUpdate, Project, ProjectSummary, Result,
+        Store,
+    },
     worker::{Detail, Engine, Workers},
 };
 use serde::Serialize;
@@ -37,15 +40,7 @@ fn create_project(state: State<'_, Workers>, name: String, source_dir: String) -
 }
 #[tauri::command]
 fn open_project(state: State<'_, Workers>, project_path: String) -> Result<Project> {
-    if state
-        .store
-        .summaries()?
-        .iter()
-        .any(|p| p.project_path == project_path && state.is_running(&p.id))
-    {
-        return Err("Project is currently importing; use its open review window".into());
-    }
-    state.store.open(&project_path)
+    state.open_project(&project_path)
 }
 #[tauri::command]
 fn get_project(state: State<'_, Workers>, project_id: String) -> Result<Project> {
@@ -83,6 +78,16 @@ fn update_photos(
     patch: PhotoPatch,
 ) -> Result<Vec<Photo>> {
     let photos = state.store.update_photos(&project_id, &photo_ids, &patch)?;
+    state.updated(&project_id);
+    Ok(photos)
+}
+#[tauri::command]
+fn update_photo_patches(
+    state: State<'_, Workers>,
+    project_id: String,
+    updates: Vec<PhotoUpdate>,
+) -> Result<Vec<Photo>> {
+    let photos = state.store.update_photo_patches(&project_id, &updates)?;
     state.updated(&project_id);
     Ok(photos)
 }
@@ -217,6 +222,7 @@ pub fn run() {
             cancel_import,
             update_photo,
             update_photos,
+            update_photo_patches,
             create_collection,
             update_collection,
             delete_collection,

@@ -481,3 +481,201 @@ fn canonical_windows_paths_are_emitted_in_lightroom_compatible_notation() {
         r"\\server\share\image.jpg"
     );
 }
+
+#[test]
+fn heterogeneous_review_updates_commit_or_roll_back_as_one_unit() {
+    use photo_select::core::PhotoUpdate;
+    let f = Fixture::new();
+    let a = f.add("a");
+    let b = f.add("b");
+    let updates = vec![
+        PhotoUpdate {
+            photo_id: a.id.clone(),
+            patch: PhotoPatch {
+                rating: Some(5),
+                tags: Some(vec!["Album".into()]),
+                ..Default::default()
+            },
+        },
+        PhotoUpdate {
+            photo_id: b.id.clone(),
+            patch: PhotoPatch {
+                decision: Some("pass".into()),
+                ..Default::default()
+            },
+        },
+    ];
+    f.store.update_photo_patches(&f.id, &updates).unwrap();
+    let before = f.store.project(&f.id).unwrap();
+    assert_eq!(before.photos[0].rating, 5);
+    assert_eq!(before.photos[1].decision, "pass");
+    let invalid = vec![
+        PhotoUpdate {
+            photo_id: a.id.clone(),
+            patch: PhotoPatch {
+                rating: Some(0),
+                rating_touched: Some(false),
+                ..Default::default()
+            },
+        },
+        PhotoUpdate {
+            photo_id: "missing".into(),
+            patch: PhotoPatch::default(),
+        },
+    ];
+    assert!(f.store.update_photo_patches(&f.id, &invalid).is_err());
+    assert_eq!(f.store.project(&f.id).unwrap().photos[0].rating, 5);
+    assert!(f
+        .store
+        .update_photo_patches(&f.id, &[updates[0].clone(), updates[0].clone()])
+        .is_err());
+    let undo = vec![
+        PhotoUpdate {
+            photo_id: a.id.clone(),
+            patch: PhotoPatch {
+                rating: Some(0),
+                rating_touched: Some(false),
+                tags: Some(vec![]),
+                ..Default::default()
+            },
+        },
+        PhotoUpdate {
+            photo_id: b.id,
+            patch: PhotoPatch {
+                decision: Some("undecided".into()),
+                ..Default::default()
+            },
+        },
+    ];
+    f.store.update_photo_patches(&f.id, &undo).unwrap();
+    let result = f.store.project(&f.id).unwrap();
+    assert!(!result.photos[0].rating_touched);
+    assert!(result.photos[0].tags.is_empty());
+    assert_eq!(result.photos[1].decision, "undecided");
+}
+
+#[test]
+fn unavailable_originals_keep_review_and_cached_previews_and_export_offline() {
+    let f = Fixture::new();
+    let photo = f.add("a");
+    f.store
+        .update_photos(
+            &f.id,
+            &[photo.id.clone()],
+            &PhotoPatch {
+                decision: Some("favorite".into()),
+                rating: Some(4),
+                tags: Some(vec!["Album".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let collection = f.store.create_collection(&f.id, "Album").unwrap();
+    f.store
+        .update_collection(&f.id, &collection.id, None, Some(vec![photo.id.clone()]))
+        .unwrap();
+    f.store
+        .ingest_groups(
+            &f.id,
+            vec![Group {
+                id: "burst".into(),
+                label: "Burst".into(),
+                photo_ids: vec![photo.id.clone()],
+                recommended_photo_ids: vec![photo.id.clone()],
+            }],
+        )
+        .unwrap();
+    let detail = f.store.cache(&f.id).join("offline-detail.jpg");
+    fs::write(&detail, b"full-resolution cache").unwrap();
+    f.store
+        .set_detail(&f.id, &photo.id, detail.to_str().unwrap())
+        .unwrap();
+    fs::remove_dir_all(&f.source).unwrap();
+    f.store.finish_scan(&f.id, &Default::default()).unwrap();
+    let project = f.store.project(&f.id).unwrap();
+    let retained = &project.photos[0];
+    assert_eq!(retained.rating, 4);
+    assert_eq!(retained.decision, "favorite");
+    assert_eq!(retained.tags, vec!["Album"]);
+    assert!(Path::new(&retained.preview_path).is_file());
+    assert!(retained
+        .analysis_error
+        .as_ref()
+        .unwrap()
+        .contains("unavailable"));
+    assert_eq!(retained.detail_path.as_deref(), detail.to_str());
+    assert_eq!(fs::read(&detail).unwrap(), b"full-resolution cache");
+    assert!(retained.group_id.is_none());
+    assert!(project.groups.is_empty());
+    assert_eq!(project.collections[0].photo_ids, vec![photo.id]);
+    let destination = f.temp.path().join("offline.json");
+    assert_eq!(
+        f.store
+            .export(
+                &f.id,
+                destination.to_str().unwrap(),
+                Some(&collection.id),
+                false
+            )
+            .unwrap()
+            .count,
+        1
+    );
+}
+
+#[test]
+fn manifest_cannot_overwrite_application_state_or_dangling_symlinks() {
+    let f = Fixture::new();
+    let _ = f.add("a");
+    let index = f.store.root.join("recent-projects.json");
+    let before = fs::read(&index).unwrap();
+    assert!(f
+        .store
+        .export(&f.id, index.to_str().unwrap(), None, false)
+        .is_err());
+    assert_eq!(fs::read(index).unwrap(), before);
+    #[cfg(unix)]
+    {
+        let destination = f.temp.path().join("linked.json");
+        let missing = f.temp.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &destination).unwrap();
+        assert!(f
+            .store
+            .export(&f.id, destination.to_str().unwrap(), None, false)
+            .is_err());
+        assert!(fs::symlink_metadata(destination)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}
+
+#[test]
+fn forged_registry_identity_and_mismatched_database_rows_are_rejected() {
+    let f = Fixture::new();
+    let photo = f.add("a");
+    let project = f.store.project(&f.id).unwrap();
+    let db = rusqlite::Connection::open(&project.project_path).unwrap();
+    let mut row = serde_json::to_value(&photo).unwrap();
+    row["id"] = serde_json::json!("b00000000000000000000000");
+    db.execute(
+        "UPDATE photos SET data=?1 WHERE id=?2",
+        rusqlite::params![row.to_string(), photo.id],
+    )
+    .unwrap();
+    assert!(f.store.project(&f.id).is_err());
+    assert!(f.store.open(&project.project_path).is_err());
+    db.execute("DELETE FROM photos", []).unwrap();
+    let mut metadata: serde_json::Value = serde_json::from_str(
+        &db.query_row::<String, _, _>("SELECT data FROM meta", [], |row| row.get(0))
+            .unwrap(),
+    )
+    .unwrap();
+    metadata["id"] = serde_json::json!(uuid::Uuid::new_v4().to_string());
+    db.execute("UPDATE meta SET data=?1", [metadata.to_string()])
+        .unwrap();
+    assert!(f.store.project(&f.id).is_err());
+    let restarted = Store::new(f.store.root.clone()).unwrap();
+    assert!(restarted.summaries().unwrap().is_empty());
+    assert!(restarted.project("../../outside").is_err());
+}

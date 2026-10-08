@@ -110,6 +110,13 @@
       },
       "returns": "Photo[]"
     },
+    "update_photo_patches": {
+      "args": {
+        "projectId": "string",
+        "updates": "[{photoId:string,patch:PhotoPatch}]"
+      },
+      "returns": "Photo[]; all patches commit atomically or none commit"
+    },
     "create_collection": {
       "args": {
         "projectId": "string",
@@ -169,7 +176,7 @@
       "progress": "{type:progress,processed:number,total:number,currentFile:string,failed:number}",
       "groups": "{type:groups,groups:Group[]}",
       "complete": "{type:complete,processed:number,total:number,failed:number}",
-      "error": "{type:error,message:string,path?:string}",
+      "error": "{type:error,message:string,path?:string}; path-bearing records are recoverable file/directory failures, no path is a fatal scan failure",
       "detail": "{type:detail,detailPath:string,width:number,height:number}"
     }
   },
