@@ -410,9 +410,18 @@ impl Store {
         Ok(())
     }
     pub fn ingest_photo(&self, id: &str, mut photo: Photo) -> Result<()> {
-        photo.path = path_string(Path::new(&photo.path));
-        photo.preview_path = path_string(Path::new(&photo.preview_path));
-        photo.thumbnail_path = path_string(Path::new(&photo.thumbnail_path));
+        // Store one ordinary long-path notation, even when the caller uses Windows 8.3 aliases.
+        photo.path = path_string(&canonical_or_lexical(Path::new(&photo.path))?);
+        photo.filename = Path::new(&photo.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid original filename")?
+            .to_string();
+        for image in [&mut photo.preview_path, &mut photo.thumbnail_path] {
+            if !image.is_empty() {
+                *image = path_string(&canonical_or_lexical(Path::new(image))?);
+            }
+        }
         if photo.id.len() != 24 || !photo.id.bytes().all(|v| v.is_ascii_hexdigit()) {
             return Err("Invalid engine photo identity".into());
         }
@@ -449,6 +458,19 @@ impl Store {
             photo.detail_path = None;
             photo.group_id = old.group_id;
         }
+        // A prior recommendation belongs to the prior analysis. Keep moment membership stable,
+        // but only a fresh grouping pass may recommend this reanalyzed photo again.
+        if let Some(group_id) = &photo.group_id {
+            if let Some(mut group) = read_item::<Group>(&tx, "groups_data", group_id)? {
+                let before = group.recommended_photo_ids.len();
+                group
+                    .recommended_photo_ids
+                    .retain(|recommended_id| recommended_id != &photo.id);
+                if group.recommended_photo_ids.len() != before {
+                    write_item(&tx, "groups_data", group_id, &group)?;
+                }
+            }
+        }
         write_item(&tx, "photos", &photo.id, &photo)?;
         touch(&tx)?;
         tx.commit().map_err(error)
@@ -461,6 +483,11 @@ impl Store {
         let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
         let old_groups: Vec<Group> = read_items(&tx, "groups_data")?;
         let known: HashSet<_> = photos.iter().map(|v| v.id.clone()).collect();
+        let successfully_analyzed: HashSet<_> = photos
+            .iter()
+            .filter(|photo| photo.analysis_error.is_none())
+            .map(|photo| photo.id.clone())
+            .collect();
         let mut assigned = HashSet::new();
         let mut group_ids = HashSet::new();
         let mut prepared = Vec::new();
@@ -480,6 +507,9 @@ impl Store {
             {
                 return Err("Recommendation outside group".into());
             }
+            group
+                .recommended_photo_ids
+                .retain(|photo_id| successfully_analyzed.contains(photo_id));
             // Reuse the group with the greatest overlap, so an added photo does not destroy stable UI identities.
             if let Some(old) = old_groups
                 .iter()
@@ -861,23 +891,37 @@ fn validate_project_rows(project: &Project) -> Result<()> {
             return Err("Invalid saved photo identity".into());
         }
         valid_absolute_path(Path::new(&photo.path))?;
-        let original = if cfg!(windows) {
-            path_string(Path::new(&photo.path)).to_lowercase()
+        let saved_path = Path::new(&photo.path);
+        let source = Path::new(&project.source_dir);
+        let filename_matches =
+            saved_path.file_name().and_then(|name| name.to_str()) == Some(photo.filename.as_str());
+        // Normalized persisted paths need no source I/O, including a disconnected drive/share.
+        // Legacy alias mismatches must resolve before they can establish containment.
+        let resolved = if path_is_within(saved_path, source) && filename_matches {
+            None
         } else {
-            photo.path.clone()
+            Some(canonical_or_lexical(saved_path)?)
         };
-        if !original_paths.insert(original) {
-            return Err("Saved project contains duplicate original paths".into());
+        let original_path = resolved.as_deref().unwrap_or(saved_path);
+        let resolved_source = if resolved.is_some() {
+            Some(canonical_or_lexical(source)?)
+        } else {
+            None
+        };
+        if !path_is_within(original_path, resolved_source.as_deref().unwrap_or(source)) {
+            return Err("Saved photo lies outside its source folder".into());
         }
-        if Path::new(&photo.path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            != Some(photo.filename.as_str())
+        if original_path.file_name().and_then(|name| name.to_str()) != Some(photo.filename.as_str())
         {
             return Err("Saved photo filename does not match its original path".into());
         }
-        if !path_is_within(Path::new(&photo.path), Path::new(&project.source_dir)) {
-            return Err("Saved photo lies outside its source folder".into());
+        let original = if cfg!(windows) {
+            path_string(original_path).to_lowercase()
+        } else {
+            path_string(original_path)
+        };
+        if !original_paths.insert(original) {
+            return Err("Saved project contains duplicate original paths".into());
         }
         if !photo.quality_score.is_finite() || !(0.0..=100.0).contains(&photo.quality_score) {
             return Err("Invalid saved technical score".into());
@@ -975,16 +1019,13 @@ fn canonical_or_lexical(path: &Path) -> Result<PathBuf> {
     let mut ancestor = path.to_path_buf();
     let mut missing = Vec::new();
     while !ancestor.exists() {
-        missing.push(
-            ancestor
-                .file_name()
-                .ok_or("Invalid source folder path")?
-                .to_owned(),
-        );
-        ancestor = ancestor
-            .parent()
-            .ok_or("Invalid source folder path")?
-            .to_path_buf();
+        let (Some(name), Some(parent)) = (ancestor.file_name(), ancestor.parent()) else {
+            // An unavailable drive/share has no accessible ancestor. Already normalized absolute
+            // paths remain usable for cached review and manifest export without touching originals.
+            return Ok(PathBuf::from(path_string(path)));
+        };
+        missing.push(name.to_owned());
+        ancestor = parent.to_path_buf();
     }
     let mut resolved = fs::canonicalize(ancestor).map_err(error)?;
     for component in missing.into_iter().rev() {
@@ -992,6 +1033,7 @@ fn canonical_or_lexical(path: &Path) -> Result<PathBuf> {
     }
     Ok(resolved)
 }
+
 fn write_item<T: Serialize>(db: &Connection, table: &str, id: &str, item: &T) -> Result<()> {
     db.execute(&format!("INSERT INTO {table}(id,data) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET data=excluded.data"),params![id,serde_json::to_string(item).map_err(error)?]).map_err(error)?;
     Ok(())

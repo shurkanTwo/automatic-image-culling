@@ -679,3 +679,201 @@ fn forged_registry_identity_and_mismatched_database_rows_are_rejected() {
     assert!(restarted.summaries().unwrap().is_empty());
     assert!(restarted.project("../../outside").is_err());
 }
+
+#[test]
+fn reanalysis_cancellation_invalidates_recommendations_without_losing_review_or_moments() {
+    for failed in [false, true] {
+        let f = Fixture::new();
+        let a = f.add("a");
+        let b = f.add("b");
+        let group = Group {
+            id: "stable-moment".into(),
+            label: "Moment".into(),
+            photo_ids: vec![a.id.clone(), b.id.clone()],
+            recommended_photo_ids: vec![a.id.clone(), b.id.clone()],
+        };
+        f.store.ingest_groups(&f.id, vec![group.clone()]).unwrap();
+        f.store
+            .update_photos(
+                &f.id,
+                &[a.id.clone()],
+                &PhotoPatch {
+                    rating: Some(4),
+                    decision: Some("favorite".into()),
+                    reviewed: Some(true),
+                    tags: Some(vec!["Album".into()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        f.store.set_status(&f.id, "running", None).unwrap();
+        let mut changed = a.clone();
+        changed.quality_score = 20.;
+        if failed {
+            changed.analysis_error = Some("Cannot decode changed original".into());
+            changed.preview_path.clear();
+            changed.thumbnail_path.clear();
+        }
+        f.store.ingest_photo(&f.id, changed).unwrap();
+        f.store.set_status(&f.id, "cancelled", None).unwrap();
+        let reopened = Store::new(f.store.root.clone()).unwrap();
+        let cancelled = reopened.project(&f.id).unwrap();
+        let reviewed = cancelled
+            .photos
+            .iter()
+            .find(|photo| photo.id == a.id)
+            .unwrap();
+        assert_eq!(cancelled.import_status, "cancelled");
+        assert_eq!(cancelled.groups[0].id, group.id);
+        assert_eq!(cancelled.groups[0].photo_ids, group.photo_ids);
+        assert_eq!(
+            cancelled.groups[0].recommended_photo_ids,
+            vec![b.id.clone()]
+        );
+        assert_eq!(reviewed.group_id.as_deref(), Some("stable-moment"));
+        assert_eq!(reviewed.rating, 4);
+        assert_eq!(reviewed.decision, "favorite");
+        assert!(reviewed.reviewed);
+        assert_eq!(reviewed.tags, vec!["Album"]);
+        reopened
+            .ingest_groups(
+                &f.id,
+                vec![Group {
+                    id: "new-group-id".into(),
+                    ..group.clone()
+                }],
+            )
+            .unwrap();
+        let regrouped = reopened.project(&f.id).unwrap();
+        let expected = if failed {
+            vec![b.id.clone()]
+        } else {
+            vec![a.id.clone(), b.id.clone()]
+        };
+        assert_eq!(regrouped.groups[0].recommended_photo_ids, expected);
+        assert_eq!(regrouped.groups[0].id, "stable-moment");
+        if failed {
+            reopened.ingest_photo(&f.id, a.clone()).unwrap();
+            reopened.ingest_groups(&f.id, vec![group.clone()]).unwrap();
+            let recovered = reopened.project(&f.id).unwrap();
+            assert_eq!(
+                recovered.groups[0].recommended_photo_ids,
+                vec![a.id.clone(), b.id.clone()]
+            );
+            assert_eq!(
+                recovered
+                    .photos
+                    .iter()
+                    .find(|photo| photo.id == a.id)
+                    .unwrap()
+                    .rating,
+                4
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_aliases_are_normalized_on_ingestion_and_legacy_alias_rows_remain_readable() {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetShortPathNameW(long: *const u16, short: *mut u16, length: u32) -> u32;
+    }
+    fn short_path(path: &Path) -> String {
+        let input: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let length = unsafe { GetShortPathNameW(input.as_ptr(), std::ptr::null_mut(), 0) };
+        assert!(length > 0, "{}", std::io::Error::last_os_error());
+        let mut output = vec![0u16; length as usize];
+        let written = unsafe { GetShortPathNameW(input.as_ptr(), output.as_mut_ptr(), length) };
+        assert!(written > 0 && written < length);
+        String::from_utf16(&output[..written as usize]).unwrap()
+    }
+    let f = Fixture::new();
+    let mut photo = f.photo("a");
+    let long = Path::new(&f.source).join("photo with spaces.jpg");
+    fs::rename(&photo.path, &long).unwrap();
+    let alias = short_path(&long);
+    photo.path = alias.clone();
+    photo.filename = "photo with spaces.jpg".into();
+    photo.preview_path = short_path(Path::new(&photo.preview_path));
+    photo.thumbnail_path = photo.preview_path.clone();
+    f.store.ingest_photo(&f.id, photo.clone()).unwrap();
+    let project = f.store.project(&f.id).unwrap();
+    let stored = &project.photos[0];
+    assert_eq!(
+        stored.path,
+        photo_select::core::path_string(&fs::canonicalize(&long).unwrap())
+    );
+    assert_eq!(stored.filename, "photo with spaces.jpg");
+    assert_eq!(
+        stored.preview_path,
+        photo_select::core::path_string(&fs::canonicalize(&stored.preview_path).unwrap())
+    );
+    let mut legacy = stored.clone();
+    legacy.path = alias;
+    let db = f.store.connection(&f.id).unwrap();
+    db.execute(
+        "UPDATE photos SET data=?1 WHERE id=?2",
+        rusqlite::params![serde_json::to_string(&legacy).unwrap(), legacy.id],
+    )
+    .unwrap();
+    assert!(f.store.project(&f.id).is_ok());
+}
+
+#[cfg(windows)]
+#[test]
+fn wholly_disconnected_source_drive_keeps_cached_review_reopen_and_export_available() {
+    let unavailable = (b'D'..=b'Z')
+        .rev()
+        .map(|letter| format!("{}:\\", letter as char))
+        .find(|drive| !Path::new(drive).exists())
+        .expect("Windows fixture needs an unmounted drive letter");
+    let f = Fixture::new();
+    let photo = f.add("a");
+    f.store
+        .update_photos(
+            &f.id,
+            &[photo.id.clone()],
+            &PhotoPatch {
+                rating: Some(4),
+                decision: Some("favorite".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let project = f.store.project(&f.id).unwrap();
+    let mut offline = project.photos[0].clone();
+    let source = Path::new(&unavailable).join("Photo Select offline originals");
+    offline.path = photo_select::core::path_string(&source.join("a.jpg"));
+    let db = f.store.connection(&f.id).unwrap();
+    let mut metadata: serde_json::Value = serde_json::from_str(
+        &db.query_row::<String, _, _>("SELECT data FROM meta", [], |row| row.get(0))
+            .unwrap(),
+    )
+    .unwrap();
+    metadata["sourceDir"] = serde_json::json!(source);
+    db.execute("UPDATE meta SET data=?1", [metadata.to_string()])
+        .unwrap();
+    db.execute(
+        "UPDATE photos SET data=?1 WHERE id=?2",
+        rusqlite::params![serde_json::to_string(&offline).unwrap(), offline.id],
+    )
+    .unwrap();
+    let loaded = f.store.project(&f.id).unwrap();
+    assert_eq!(loaded.photos[0].rating, 4);
+    assert!(Path::new(&loaded.photos[0].preview_path).is_file());
+    f.store.open(&project.project_path).unwrap();
+    let destination = f.temp.path().join("offline-drive.json");
+    assert_eq!(
+        f.store
+            .export(&f.id, destination.to_str().unwrap(), None, true)
+            .unwrap()
+            .count,
+        1
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(destination).unwrap()).unwrap();
+    assert_eq!(manifest["photos"][0]["path"], offline.path);
+}

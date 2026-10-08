@@ -511,6 +511,12 @@ impl Workers {
             .iter()
             .find(|v| v.id == photo_id)
             .ok_or("Unknown photo")?;
+        // Saved offline paths are validated lexically; before reading an available original,
+        // re-check physical containment to reject a directory replaced by an external junction.
+        crate::core::ensure_within(
+            std::path::Path::new(&photo.path),
+            std::path::Path::new(&p.source_dir),
+        )?;
         let output = PathBuf::from(path_string(
             &self
                 .store
