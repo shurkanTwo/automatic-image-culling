@@ -1,0 +1,9 @@
+.git
+desktop/node_modules
+desktop/dist
+desktop/src-tauri/target
+desktop/src-tauri/resources/engine
+build
+artifacts
+__pycache__
+.venv*

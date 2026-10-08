@@ -1,7 +1,7 @@
 name: Build Windows EXE
 
 on:
-  push:
+  workflow_dispatch:
 
 jobs:
   build-windows:

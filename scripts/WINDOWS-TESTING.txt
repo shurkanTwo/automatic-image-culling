@@ -1,0 +1,55 @@
+PHOTO SELECT 0.2.0 - WINDOWS TEST BUILD
+
+GET STARTED
+Run Photo-Select-0.2.0-Windows-x64-Setup.exe to install for your current user.
+The installer includes the image engine; no Python or Node installation is needed.
+It checks for Microsoft Edge WebView2 and installs the runtime if it is missing
+(an internet connection is needed only for that first runtime installation).
+This test build is unsigned, so Windows may show an unknown-publisher prompt.
+
+Alternatively, extract the entire Portable.zip and run Photo Select.exe. Keep the
+resources directory beside it. The portable app requires WebView2 already installed.
+
+YOUR FIRST TRIP
+Create a project and choose a folder containing your photographs. Subfolders are
+included. You can browse while previews and technical hints are generated.
+Use favorites, stars, tags, comparison, and purpose collections to make a shortlist.
+Every review change is saved to a local project database. You can close and reopen
+the app, or rescan the folder later, without losing confirmed review decisions.
+Original photographs are read-only: no moving, deleting, or rewriting originals.
+
+LIGHTROOM CLASSIC
+Export Favorites or a collection from Photo Select to a selection JSON.
+The app's Lightroom instructions reveal the bundled PhotoSelect.lrplugin folder.
+In Lightroom, open File > Plug-in Manager > Add and choose that folder. A separate
+Lightroom-Plugin.zip is also provided if you prefer to keep the plug-in elsewhere.
+Choose Library > Plug-in Extras > Import Photo Select shortlist, select the JSON,
+review the import summary, and apply it.
+The photographs must already be in the active Lightroom catalog at matching paths.
+The import adds a collection, applies only explicitly changed ratings, adds your
+tags, and gives Favorites a Pick flag. Existing keywords and Develop settings are
+preserved. Passed photos never receive a Reject flag. Import is one-way.
+
+WHAT THE SUGGESTIONS MEAN
+This version provides conservative similarity groups and technical preview hints.
+Recommendations compare detail within a moment. They do not assess artistic merit,
+recognize faces, judge expressions, or understand a photobook topic.
+RAW previews use embedded camera JPEGs where possible. They reflect camera rendering,
+not your Lightroom edits. Load the detailed preview when judging fine focus.
+
+PROJECT DATA
+Windows stores projects and image caches under:
+%LOCALAPPDATA%\com.shurkantwo.photoselect\projects
+The app does not upload photographs or call a cloud image service.
+
+USEFUL FIRST TESTS
+- Import a folder with nested folders and repeated camera filenames.
+- Favorite and rate a few photographs, restart, then verify those choices persist.
+- Compare alternatives and load a detailed preview.
+- Create a photobook collection, export it, and import it into Lightroom.
+- Rescan after adding a photograph and check existing decisions remain intact.
+- Stop analysis midway and resume with Rescan.
+
+When reporting an issue, include the action, the file format and camera if relevant,
+and the error text shown by the app. Real-photo selection accuracy still needs your
+feedback; synthetic and RAW decode checks cannot establish your personal preferences.
