@@ -96,3 +96,51 @@ fn successful_import_emits_completion_and_is_repeatable() {
         assert_eq!(store.project(&p.id).unwrap().import_status, "completed");
     }
 }
+
+#[test]
+fn file_error_is_recoverable_while_batch_error_is_fatal() {
+    for (error, expected) in [
+        (
+            r#"{"type":"error","message":"Photo disappeared","path":"/photos/missing.jpg"}"#,
+            "completed",
+        ),
+        (
+            r#"{"type":"error","message":"Cannot scan folder"}"#,
+            "failed",
+        ),
+    ] {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("photos")).unwrap();
+        let store = Store::new(temp.path().join("data")).unwrap();
+        let p = store
+            .create("Errors", temp.path().join("photos").to_str().unwrap())
+            .unwrap();
+        let body = format!(
+            r#"printf '%s\n' '{{"type":"scan","total":1}}' '{error}' '{{"type":"progress","processed":1,"total":1,"failed":1,"currentFile":"/photos/missing.jpg"}}' '{{"type":"complete","processed":1,"total":1,"failed":1}}'"#
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let capture = events.clone();
+        let worker = Workers::new(
+            store.clone(),
+            fake_engine(temp.path(), &body),
+            Arc::new(move |name, value| capture.lock().unwrap().push((name.to_string(), value))),
+        );
+        worker.start(&p.id).unwrap();
+        wait_done(&worker, &p.id);
+        let result = store.project(&p.id).unwrap();
+        assert_eq!(result.import_status, expected);
+        assert!(result.photos.is_empty());
+        if expected == "completed" {
+            assert!(result.import_error.is_none());
+            let events = events.lock().unwrap();
+            assert!(events.iter().any(|(name, v)| name == "import-progress"
+                && v["phase"] == "analysis"
+                && v["message"] == "Photo disappeared"));
+            assert!(events.iter().any(|(name, v)| name == "import-progress"
+                && v["phase"] == "complete"
+                && v["failed"] == 1));
+        } else {
+            assert!(result.import_error.unwrap().contains("Cannot scan folder"));
+        }
+    }
+}

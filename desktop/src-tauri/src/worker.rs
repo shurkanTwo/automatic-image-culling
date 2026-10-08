@@ -268,6 +268,7 @@ impl Workers {
                 .and_then(Value::as_str)
                 .ok_or("Engine record has no type")?;
             let mut phase = None;
+            let mut message = None;
             match kind {
                 "scan" => {
                     total = number(&record, "total")?;
@@ -301,11 +302,21 @@ impl Workers {
                     failed = number(&record, "failed")?;
                 }
                 "error" => {
-                    return Err(record
+                    let reason = record
                         .get("message")
                         .and_then(Value::as_str)
-                        .unwrap_or("Unknown engine error")
-                        .into())
+                        .unwrap_or("Unknown engine error");
+                    let file = record
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .filter(|path| !path.trim().is_empty());
+                    if file.is_none() {
+                        return Err(reason.into());
+                    }
+                    // A file can disappear between discovery and stat. The engine continues the batch.
+                    failed = failed.saturating_add(1);
+                    phase = Some("analysis");
+                    message = Some(reason.to_string());
                 }
                 _ => return Err(format!("Unknown engine record: {kind}")),
             }
@@ -318,10 +329,11 @@ impl Workers {
                     total,
                     current_file: record
                         .get("currentFile")
+                        .or_else(|| record.get("path"))
                         .and_then(Value::as_str)
                         .map(String::from),
                     failed,
-                    message: None,
+                    message,
                 })?;
             }
             if last_update.elapsed() > Duration::from_millis(350) {
