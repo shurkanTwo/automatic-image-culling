@@ -1938,3 +1938,8 @@ kbd {
     transition: none !important;
   }
 }
+.resolution-status {
+  color: #8b9d7e;
+  font-size: 8px;
+  white-space: nowrap;
+}

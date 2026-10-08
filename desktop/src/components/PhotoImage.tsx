@@ -5,10 +5,14 @@ export default function PhotoImage({
   path,
   alt,
   thumbnail = false,
+  onLoad,
+  onError,
 }: {
   path: string | null;
   alt: string;
   thumbnail?: boolean;
+  onLoad?: (image: HTMLImageElement) => void;
+  onError?: () => void;
 }) {
   const [failedPath, setFailedPath] = useState<string | null>(null);
   if (!path || path === failedPath)
@@ -25,7 +29,11 @@ export default function PhotoImage({
       loading={thumbnail ? "lazy" : "eager"}
       decoding="async"
       draggable={false}
-      onError={() => setFailedPath(path)}
+      onLoad={(event) => onLoad?.(event.currentTarget)}
+      onError={() => {
+        setFailedPath(path);
+        onError?.();
+      }}
     />
   );
 }

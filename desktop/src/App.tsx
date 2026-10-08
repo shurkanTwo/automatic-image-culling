@@ -338,7 +338,7 @@ export default function App() {
     }
   }
   async function detail(values: Photo[]) {
-    if (!project) return;
+    if (!project) return false;
     setDetailLoading(true);
     try {
       for (const photo of values) await api.detail(project.id, photo.id);
@@ -346,8 +346,10 @@ export default function App() {
       setToast(
         "Full-resolution previews ready. Use 100% to check fine detail.",
       );
+      return true;
     } catch (reason) {
       report(reason);
+      return false;
     } finally {
       setDetailLoading(false);
     }
@@ -1027,7 +1029,7 @@ export default function App() {
                           : comparePhotos
                       }
                       recommended={recommended}
-                      onDetail={(values) => void detail(values)}
+                      onDetail={detail}
                       loadingDetail={detailLoading}
                       onActive={setActiveId}
                     />

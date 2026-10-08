@@ -20,12 +20,18 @@ export default function Viewer({
 }: {
   photos: Photo[];
   recommended: Set<string>;
-  onDetail: (photos: Photo[]) => void;
+  onDetail: (photos: Photo[]) => Promise<boolean>;
   loadingDetail: boolean;
   onActive: (id: string) => void;
 }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [wantActualSize, setWantActualSize] = useState(false);
+  const [loadedImage, setLoadedImage] = useState<{
+    path: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const drag = useRef<{
     x: number;
     y: number;
@@ -37,33 +43,76 @@ export default function Viewer({
   useEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    setWantActualSize(false);
   }, [identity]);
+  const firstPath = photos[0]?.detailPath ?? photos[0]?.previewPath;
+  useEffect(() => {
+    const node = pane.current;
+    if (
+      !wantActualSize ||
+      loadingDetail ||
+      !photos.every((photo) => photo.detailPath) ||
+      !node ||
+      loadedImage?.path !== firstPath
+    )
+      return;
+    if (
+      !loadedImage.width ||
+      !loadedImage.height ||
+      !node.clientWidth ||
+      !node.clientHeight
+    )
+      return;
+    const fitRatio = Math.min(
+      node.clientWidth / loadedImage.width,
+      node.clientHeight / loadedImage.height,
+    );
+    setZoom(1 / fitRatio);
+    setPan({ x: 0, y: 0 });
+    setWantActualSize(false);
+  }, [wantActualSize, loadingDetail, loadedImage, firstPath, photos]);
   function changeZoom(next: number) {
     setZoom(Math.min(64, Math.max(1, next)));
     if (next <= 1) setPan({ x: 0, y: 0 });
   }
-  function actualSize() {
-    const photo = photos[0];
-    const node = pane.current;
-    if (!photo || !node) return;
-    const fitRatio = Math.min(
-      node.clientWidth / photo.width,
-      node.clientHeight / photo.height,
-    );
-    changeZoom(1 / fitRatio);
+  async function actualSize() {
+    if (!photos.length || loadingDetail) return;
+    setWantActualSize(true);
+    if (photos.every((photo) => photo.detailPath)) return;
+    try {
+      if (!(await onDetail(photos))) setWantActualSize(false);
+    } catch {
+      setWantActualSize(false);
+    }
   }
   return (
     <div className="viewer-shell">
       <div className="viewer-tools">
         <div className="segmented compact">
           <button
-            onClick={() => changeZoom(1)}
+            onClick={() => {
+              setWantActualSize(false);
+              changeZoom(1);
+            }}
             className={zoom === 1 ? "active" : ""}
           >
             <Expand size={15} />
             Fit
           </button>
-          <button onClick={actualSize}>100%</button>
+          <button
+            onClick={() => void actualSize()}
+            disabled={loadingDetail || wantActualSize}
+            title="Show actual image pixels; prepares full-resolution detail when needed"
+          >
+            {wantActualSize ? (
+              <>
+                <LoaderCircle className="spin" size={12} />
+                Preparing 100%…
+              </>
+            ) : (
+              "100%"
+            )}
+          </button>
         </div>
         <button
           className="icon-button"
@@ -90,7 +139,9 @@ export default function Viewer({
         <button
           className="detail-button"
           disabled={loadingDetail}
-          onClick={() => onDetail(photos)}
+          onClick={() => {
+            void onDetail(photos);
+          }}
         >
           {loadingDetail ? (
             <LoaderCircle className="spin" size={15} />
@@ -143,7 +194,7 @@ export default function Viewer({
               }}
               onDoubleClick={() => {
                 if (zoom > 1) changeZoom(1);
-                else actualSize();
+                else void actualSize();
               }}
             >
               <div
@@ -155,12 +206,26 @@ export default function Viewer({
                 <PhotoImage
                   path={photo.detailPath ?? photo.previewPath}
                   alt={photo.filename}
+                  onLoad={
+                    index === 0
+                      ? (image) =>
+                          setLoadedImage({
+                            path: photo.detailPath ?? photo.previewPath,
+                            width: image.naturalWidth,
+                            height: image.naturalHeight,
+                          })
+                      : undefined
+                  }
+                  onError={() => setWantActualSize(false)}
                 />
               </div>
             </div>
             <div className="pane-caption">
               <span>{photo.filename}</span>
               <span className="pane-badges">
+                <span className="resolution-status">
+                  {photo.detailPath ? "Full-resolution" : "Preview"}
+                </span>
                 {recommended.has(photo.id) && (
                   <span
                     className="hint-dot"
