@@ -37,7 +37,8 @@ class EngineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # Windows temp paths can use an 8.3 alias; compare canonical originals.
+        self.root = Path(self.temporary.name).resolve()
         self.source = self.root / "originals"
         self.cache = self.root / "cache"
         self.source.mkdir()
