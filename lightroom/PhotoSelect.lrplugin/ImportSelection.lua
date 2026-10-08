@@ -1,0 +1,96 @@
+local LrApplication = import 'LrApplication'
+local LrDialogs = import 'LrDialogs'
+local LrFileUtils = import 'LrFileUtils'
+local LrFunctionContext = import 'LrFunctionContext'
+local LrPathUtils = import 'LrPathUtils'
+local LrProgressScope = import 'LrProgressScope'
+local LrTasks = import 'LrTasks'
+
+local json = dofile(LrPathUtils.child(_PLUGIN.path, 'json.lua'))
+local Manifest = dofile(LrPathUtils.child(_PLUGIN.path, 'Manifest.lua'))
+
+local function loadSelection(path)
+    local contents = LrFileUtils.readFile(path)
+    if not contents then error('The selection file could not be read.') end
+    if #contents > 50 * 1024 * 1024 then error('The selection file is too large.') end
+    return Manifest.validate(json.decode(contents))
+end
+
+local function importSelection(context)
+    local selected = LrDialogs.runOpenPanel {
+        title = 'Import a Photo Select shortlist', prompt = 'Review import',
+        canChooseFiles = true, canChooseDirectories = false,
+        allowsMultipleSelection = false, fileTypes = { 'json' },
+    }
+    if not selected or not selected[1] then return end
+
+    local payload = loadSelection(selected[1])
+    local catalog = LrApplication.activeCatalog()
+    local progress = LrProgressScope {
+        title = 'Matching Photo Select photographs', functionContext = context,
+    }
+    local matched, seen, missing = {}, {}, 0
+    local ratings, favorites, tags = 0, 0, 0
+    for index, entry in ipairs(payload.photos) do
+        if progress:isCanceled() then return end
+        local photo = catalog:findPhotoByPath(entry.path, false)
+        if photo then
+            if not seen[photo.localIdentifier] then
+                matched[#matched + 1] = { photo = photo, entry = entry }
+                seen[photo.localIdentifier] = true
+                if entry.rating ~= nil then ratings = ratings + 1 end
+                if entry.decision == 'favorite' then favorites = favorites + 1 end
+                if #entry.tags > 0 then tags = tags + 1 end
+            end
+        else
+            missing = missing + 1
+        end
+        progress:setPortionComplete(index, #payload.photos)
+        if index % 50 == 0 then LrTasks.yield() end
+    end
+    progress:done()
+    if #matched == 0 then
+        LrDialogs.message('No matching photographs',
+            'Import these originals into Lightroom first, then try again. File paths must match the paths in the exported selection.', 'info')
+        return
+    end
+
+    local summary = string.format(
+        'Add %d photographs to Photo Select / %s.\n\n%d Pick flags, %d explicitly changed star ratings, and tags on %d photographs.\n%d photographs were not found in this catalog and will be skipped.\n\nExisting keywords and Develop settings are preserved. Passed photographs will not receive Reject flags.',
+        #matched, Manifest.collectionName(payload), favorites, ratings, tags, missing)
+    if LrDialogs.confirm('Import this shortlist?', summary, 'Import', 'Cancel') ~= 'ok' then return end
+
+    local collection
+    catalog:withWriteAccessDo('Create Photo Select collection', function()
+        local parent = catalog:createCollectionSet('Photo Select', nil, true)
+        collection = catalog:createCollection(Manifest.collectionName(payload), parent, true)
+    end, { timeout = 30 })
+    if not collection then error('Lightroom could not create the selection collection.') end
+
+    catalog:withWriteAccessDo('Import Photo Select shortlist', function()
+        local photos, keywords = {}, {}
+        for _, item in ipairs(matched) do
+            local photo, entry = item.photo, item.entry
+            if entry.rating ~= nil then photo:setRawMetadata('rating', entry.rating) end
+            if entry.decision == 'favorite' then photo:setRawMetadata('pickStatus', 1) end
+            for _, tag in ipairs(entry.tags) do
+                if not keywords[tag] then
+                    keywords[tag] = catalog:createKeyword(tag, {}, true, nil, true)
+                end
+                photo:addKeyword(keywords[tag])
+            end
+            photos[#photos + 1] = photo
+        end
+        collection:addPhotos(photos)
+    end, { timeout = 30 })
+    LrDialogs.message('Shortlist imported', string.format(
+        '%d photographs added to Photo Select / %s.\n%d unmatched photographs skipped. You can undo the metadata import using Lightroom\'s Undo command.',
+        #matched, Manifest.collectionName(payload), missing), 'info')
+end
+
+LrTasks.startAsyncTask(function()
+    local ok, message = LrTasks.pcall(function()
+        LrFunctionContext.callWithContext('Photo Select import', importSelection)
+    end)
+    if not ok then LrDialogs.message('Photo Select import failed', tostring(message), 'critical') end
+end)

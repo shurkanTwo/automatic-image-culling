@@ -1,0 +1,22 @@
+PHOTO SELECT LIGHTROOM CLASSIC BRIDGE - 0.2.0
+
+1. In Lightroom Classic, open File > Plug-in Manager > Add.
+2. Select this entire PhotoSelect.lrplugin folder.
+3. In Photo Select, export Favorites or a purpose collection as a selection JSON.
+4. In Lightroom Classic, choose Library > Plug-in Extras > Import Photo Select
+   shortlist. Depending on your version, Plug-in Extras is also in the File menu.
+5. Choose the JSON, review the matching-photo summary, and click Import.
+
+The originals must already be imported into the active Lightroom catalog and
+remain at their original paths. Missing photographs are skipped and counted.
+The plug-in adds matched photographs to a collection in the Photo Select
+collection set. Reimporting adds to the existing collection without duplicates.
+It only changes star ratings explicitly assigned in Photo Select, marks
+Favorites with Pick flags, and adds tags. Existing keywords and Develop settings
+remain intact. Pass is an archive decision and never creates a Reject flag.
+
+No originals are copied, moved, modified, or deleted. This is a one-way import;
+changes made afterward in Lightroom do not synchronize back to Photo Select.
+
+The included json.lua decoder is MIT-licensed, copyright (c) 2020 rxi.
+Its license text appears at the top of json.lua.
