@@ -8,3 +8,15 @@ __pycache__/
 /output/
 /previews/
 config.yaml
+node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/resources/engine/
+desktop/src-tauri/resources/lightroom/
+desktop/src-tauri/resources/THIRD-PARTY-NOTICES.txt
+desktop/src-tauri/gen/
+build/
+artifacts/
+.pytest_cache/
+.ruff_cache/
+*.tsbuildinfo
