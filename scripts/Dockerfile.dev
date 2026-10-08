@@ -15,7 +15,7 @@ RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir \
 
 RUN useradd --create-home --uid 1000 builder \
     && mkdir -p /workspace /home/builder/.cache \
-    && chown -R builder:builder /workspace /usr/local/cargo /usr/local/rustup /opt/venv
+    && chown -R builder:builder /workspace /home/builder/.cache /usr/local/cargo /usr/local/rustup /opt/venv
 
 ENV PATH="/opt/venv/bin:/usr/local/cargo/bin:${PATH}"
 ENV CARGO_BUILD_JOBS=4
