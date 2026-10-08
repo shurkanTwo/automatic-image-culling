@@ -138,12 +138,13 @@ export default function App() {
   );
   const active = project?.photos.find((photo) => photo.id === activeId);
   const selectedIds = selected.length ? selected : activeId ? [activeId] : [];
-  const recommended = useMemo(
-    () =>
-      new Set(
-        project?.groups.flatMap((group) => group.recommendedPhotoIds) ?? [],
-      ),
+  const similarGroups = useMemo(
+    () => project?.groups.filter((group) => group.photoIds.length > 1) ?? [],
     [project?.groups],
+  );
+  const recommended = useMemo(
+    () => new Set(similarGroups.flatMap((group) => group.recommendedPhotoIds)),
+    [similarGroups],
   );
   const selectedPhotos = photos.filter((photo) => selected.includes(photo.id));
   const comparePhotos = (
@@ -646,11 +647,11 @@ export default function App() {
             </nav>
             <div className="sidebar-section">
               <div className="sidebar-section-title">
-                <span>MOMENTS</span>
-                <span>{project.groups.length}</span>
+                <span>SIMILAR MOMENTS</span>
+                <span>{similarGroups.length}</span>
               </div>
               <div className="moment-list">
-                {project.groups.map((group, index) => (
+                {similarGroups.map((group, index) => (
                   <button
                     className={
                       options.scope.type === "group" &&
@@ -668,9 +669,11 @@ export default function App() {
                     <span className="nav-count">{group.photoIds.length}</span>
                   </button>
                 ))}
-                {!project.groups.length && (
+                {!similarGroups.length && (
                   <p className="sidebar-empty">
-                    Related photographs will appear here as analysis completes.
+                    {processing
+                      ? "Finding similar photographs…"
+                      : "No similar moments found. Your photographs are in All photographs."}
                   </p>
                 )}
               </div>
@@ -937,18 +940,18 @@ export default function App() {
                       className="icon-button"
                       aria-label="Previous moment"
                       disabled={
-                        project.groups.findIndex(
+                        similarGroups.findIndex(
                           (group) => group.id === scopeGroup.id,
                         ) === 0
                       }
                       onClick={() => {
-                        const index = project.groups.findIndex(
+                        const index = similarGroups.findIndex(
                           (group) => group.id === scopeGroup.id,
                         );
                         if (index > 0)
                           changeScope({
                             type: "group",
-                            id: project.groups[index - 1].id,
+                            id: similarGroups[index - 1].id,
                           });
                       }}
                     >
@@ -958,19 +961,19 @@ export default function App() {
                       className="icon-button"
                       aria-label="Next moment"
                       disabled={
-                        project.groups.findIndex(
+                        similarGroups.findIndex(
                           (group) => group.id === scopeGroup.id,
                         ) ===
-                        project.groups.length - 1
+                        similarGroups.length - 1
                       }
                       onClick={() => {
-                        const index = project.groups.findIndex(
+                        const index = similarGroups.findIndex(
                           (group) => group.id === scopeGroup.id,
                         );
-                        if (index < project.groups.length - 1)
+                        if (index < similarGroups.length - 1)
                           changeScope({
                             type: "group",
-                            id: project.groups[index + 1].id,
+                            id: similarGroups[index + 1].id,
                           });
                       }}
                     >
