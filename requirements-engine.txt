@@ -1,0 +1,7 @@
+# Python 3.12 has supported Windows wheels for each runtime dependency.
+# No downloaded models, services, or face recognition dependencies.
+Pillow==12.1.1
+numpy==2.2.6
+rawpy==0.25.1
+ExifRead==3.5.1
+pillow-heif==1.1.1

@@ -1,0 +1,193 @@
+{
+  "app": {
+    "name": "Photo Select",
+    "version": "0.2.0",
+    "identifier": "com.shurkantwo.photoselect"
+  },
+  "photo": {
+    "id": "sha256 of normalized absolute path (first 24 hex)",
+    "path": "absolute original path",
+    "filename": "basename",
+    "previewPath": "absolute cached image path",
+    "thumbnailPath": "absolute cached thumbnail path",
+    "detailPath": "absolute full resolution cached image or null",
+    "captureTime": "ISO8601 string",
+    "width": "original or embedded preview pixel width",
+    "height": "height",
+    "camera": "optional string",
+    "groupId": "group id or null",
+    "qualityScore": "0..100 technical estimate only",
+    "hints": "string[]",
+    "rating": "integer 0..5",
+    "ratingTouched": "boolean; false until manually rated",
+    "decision": "undecided | favorite | pass",
+    "reviewed": "boolean",
+    "tags": "string[]",
+    "analysisError": "string or null"
+  },
+  "group": {
+    "id": "stable string",
+    "label": "human display name",
+    "photoIds": "string[]",
+    "recommendedPhotoIds": "string[]"
+  },
+  "collection": {
+    "id": "string",
+    "name": "string",
+    "photoIds": "string[]"
+  },
+  "project": {
+    "id": "string",
+    "name": "string",
+    "sourceDir": "absolute directory",
+    "projectPath": "absolute sqlite project file",
+    "createdAt": "ISO8601",
+    "updatedAt": "ISO8601",
+    "photos": "Photo[]",
+    "groups": "Group[]",
+    "collections": "Collection[]",
+    "importStatus": "idle | running | completed | cancelled | failed",
+    "importError": "string or null"
+  },
+  "projectSummary": {
+    "id": "string",
+    "name": "string",
+    "sourceDir": "string",
+    "projectPath": "string",
+    "photoCount": "number",
+    "favoriteCount": "number",
+    "updatedAt": "string"
+  },
+  "commands": {
+    "get_app_state": {
+      "args": {},
+      "returns": "{projects: ProjectSummary[], version: string, engineAvailable: boolean}"
+    },
+    "create_project": {
+      "args": {
+        "name": "string",
+        "sourceDir": "string"
+      },
+      "returns": "Project"
+    },
+    "open_project": {
+      "args": {
+        "projectPath": "string"
+      },
+      "returns": "Project"
+    },
+    "get_project": {
+      "args": {
+        "projectId": "string"
+      },
+      "returns": "Project"
+    },
+    "start_import": {
+      "args": {
+        "projectId": "string"
+      },
+      "returns": "{jobId:string}"
+    },
+    "cancel_import": {
+      "args": {
+        "projectId": "string"
+      },
+      "returns": "void"
+    },
+    "update_photo": {
+      "args": {
+        "projectId": "string",
+        "photoId": "string",
+        "patch": "{rating?:number,ratingTouched?:boolean,decision?:string,reviewed?:boolean,tags?:string[]}"
+      },
+      "returns": "Photo"
+    },
+    "update_photos": {
+      "args": {
+        "projectId": "string",
+        "photoIds": "string[]",
+        "patch": "same patch"
+      },
+      "returns": "Photo[]"
+    },
+    "create_collection": {
+      "args": {
+        "projectId": "string",
+        "name": "string"
+      },
+      "returns": "Collection"
+    },
+    "update_collection": {
+      "args": {
+        "projectId": "string",
+        "collectionId": "string",
+        "name": "string | null",
+        "photoIds": "string[] | null"
+      },
+      "returns": "Collection"
+    },
+    "delete_collection": {
+      "args": {
+        "projectId": "string",
+        "collectionId": "string"
+      },
+      "returns": "void"
+    },
+    "generate_detail": {
+      "args": {
+        "projectId": "string",
+        "photoId": "string"
+      },
+      "returns": "{detailPath:string,width:number,height:number}"
+    },
+    "export_selection": {
+      "args": {
+        "projectId": "string",
+        "destination": "absolute json file",
+        "collectionId": "string | null",
+        "onlyFavorites": "boolean"
+      },
+      "returns": "{path:string,count:number}"
+    },
+    "get_lightroom_plugin_path": {
+      "args": {},
+      "returns": "string absolute bundled .lrplugin folder"
+    }
+  },
+  "events": {
+    "import-progress": "{projectId:string,jobId:string,phase:scan|analysis|grouping|complete|cancelled|error,processed:number,total:number,currentFile:string|null,failed:number,message:string|null}",
+    "project-updated": "{projectId:string}"
+  },
+  "engine": {
+    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR",
+    "detailCLI": "python -m culling_engine detail --source FILE --output FILE",
+    "probeCLI": "python -m culling_engine self-test",
+    "protocol": "one JSON object per stdout line; diagnostics ONLY stderr; UTF-8; flush every line",
+    "records": {
+      "scan": "{type:scan,total:number}",
+      "photo": "{type:photo,photo:{id,path,filename,previewPath,thumbnailPath,captureTime,width,height,camera,qualityScore,hints,phash:string|null,analysisError:string|null}}",
+      "progress": "{type:progress,processed:number,total:number,currentFile:string,failed:number}",
+      "groups": "{type:groups,groups:Group[]}",
+      "complete": "{type:complete,processed:number,total:number,failed:number}",
+      "error": "{type:error,message:string,path?:string}",
+      "detail": "{type:detail,detailPath:string,width:number,height:number}"
+    }
+  },
+  "lightroomManifest": {
+    "schemaVersion": 1,
+    "application": "Photo Select",
+    "projectName": "string",
+    "collectionName": "string",
+    "exportedAt": "ISO8601",
+    "photos": "[{path:string,rating:number|null,decision:undecided|favorite|pass,tags:string[]}]"
+  },
+  "principles": [
+    "Original files never moved, modified, or deleted.",
+    "Manual decisions persist across rescans and reanalysis.",
+    "Analysis suggests only; no automatic user ratings or favorite decisions.",
+    "Archive/pass is NOT a deletion instruction.",
+    "Use a single Rust-owned SQLite database per project.",
+    "Match all JSON and Tauri argument keys in camelCase.",
+    "Frontend handles incremental refresh, errors, keyboard focus and saves without losing edits."
+  ]
+}
