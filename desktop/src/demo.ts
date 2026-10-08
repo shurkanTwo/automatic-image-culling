@@ -191,14 +191,24 @@ export async function demoInvoke<T>(
       };
       save();
       break;
-    case "generate_detail":
+    case "generate_detail": {
+      const photo = project.photos.find((value) => value.id === args.photoId)!;
+      project = {
+        ...project,
+        photos: project.photos.map((value) =>
+          value.id === args.photoId
+            ? { ...value, detailPath: value.previewPath }
+            : value,
+        ),
+      };
+      save();
       result = {
-        detailPath: project.photos.find((photo) => photo.id === args.photoId)!
-          .previewPath,
+        detailPath: photo.previewPath,
         width: 6000,
         height: 4000,
       };
       break;
+    }
     case "export_selection": {
       const collection = args.collectionId
         ? project.collections.find((value) => value.id === args.collectionId)
