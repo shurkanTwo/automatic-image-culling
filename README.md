@@ -2,13 +2,13 @@
 
 A local desktop companion for the first pass through a trip, event, or everyday photo collection. Compare similar photographs, choose favorites, and build purpose-specific collections before returning to Lightroom Classic.
 
-Version 0.2.0 rebuilds the application around a persistent review workspace. Originals are read-only: Favorite and Pass record your choices without moving, deleting, or rewriting photographs.
+Version 0.2.1 improves the persistent review workspace with safer autosave, additive bulk tags, atomic undo, offline review, and a more reliable Lightroom handoff. Originals are read-only: Favorite and Pass record your choices without moving, deleting, or rewriting photographs.
 
 ## Windows test package
 
-The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.0-Windows-x64` artifact.
+The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.1-Windows-x64` artifact.
 
-Run `Photo-Select-0.2.0-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
+Run `Photo-Select-0.2.1-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
 
 For portable use, extract the entire portable ZIP and run `Photo Select.exe` with its `resources` folder beside it. Portable use requires an installed WebView2 runtime. Both versions store projects under `%LOCALAPPDATA%\com.shurkantwo.photoselect\projects`.
 
@@ -17,12 +17,14 @@ For portable use, extract the entire portable ZIP and run `Photo Select.exe` wit
 1. Choose the folder containing a trip or event. Subfolders are scanned, and previews appear as processing progresses. Import can be cancelled and restarted.
 2. Browse the grid, inspect a photograph, or compare two to four photographs with linked zoom and pan. Request full-resolution previews before using 100% to assess fine detail.
 3. Use **F** for Favorite, **P** for Pass, **U** for Undecided, and **0–5** for a rating. Arrow keys navigate, **Enter** opens inspection, **G** returns to the grid, and **C** opens comparison. Ctrl/Shift-click selects several photographs; Ctrl+Z undoes review changes.
-4. Add tags and collections such as “Japan photobook.” Reviews save to a local SQLite project automatically. Rescanning preserves ratings, decisions, tags, and collections.
+4. Add tags and collections such as “Japan photobook.” When several photos are selected, entered tags are added to each photo's existing tags. Reviews save to a local SQLite project automatically; closing commits a focused tag draft before waiting for saves. Rescanning preserves ratings, decisions, tags, and collections.
 5. Export favorites or a collection to Lightroom Classic using the included plugin.
 
 Technical estimates suggest which images deserve comparison. They measure visible detail and tonal clipping, and can favor texture or noise over smooth scenes. They do not evaluate artistic merit, identify subjects, detect closed eyes, or automatically choose favorites. Moment grouping is deliberately conservative. RAW previews reflect camera rendering rather than Lightroom develop adjustments.
 
 JPEG, PNG, TIFF, WebP, HEIF/HEIC, and LibRaw-supported RAW formats are supported, including Sony ARW. Individual corrupt or unsupported photographs appear with an error while the rest of the batch continues. Camera timestamps without an EXIF timezone retain their recorded wall-clock time.
+
+If originals are unavailable during a successful rescan, their cached previews, full-resolution details, and review choices remain available. They receive an availability note and are removed from current analysis suggestions. Reviewed selections can still be exported while the source drive is offline. An unreadable folder stops the rescan with an error instead of reporting a misleading empty result.
 
 ## Lightroom Classic handoff
 
@@ -30,7 +32,7 @@ Use **Lightroom connection** in the app to locate `PhotoSelect.lrplugin`. Add th
 
 After exporting a selection JSON, run **Library → Plug-in Extras → Import Photo Select shortlist...**. Photographs must already be imported into the catalog at the same paths. The plugin shows a confirmation before applying changes and reports unmatched paths.
 
-The import creates or adds to a collection within the `Photo Select` collection set. Favorites become Picks. Only ratings explicitly set in Photo Select are applied; untouched ratings stay unchanged. Tags become additional keywords. Pass does not set Lightroom’s Reject flag. Develop settings are preserved.
+The import creates or adds to a collection within the `Photo Select` collection set. Favorites become Picks. Only ratings explicitly set in Photo Select are applied; untouched ratings stay unchanged. Tags become additional keywords. Pass does not set Lightroom’s Reject flag. Develop settings are preserved. A busy catalog reports an import failure that can be retried; the metadata selection is applied in one transaction.
 
 This is an additive, one-way handoff. Reimporting does not remove collection members or previously applied keywords and flags. Lightroom ratings and edits are not synchronized back to Photo Select. The Lua importer is tested against an SDK test double; the actual Lightroom catalog integration still needs testing in Lightroom Classic.
 
@@ -83,9 +85,22 @@ cargo test --no-default-features --locked --test engine_integration -- --ignored
 
 The optional Rust integration test requires `PHOTO_SELECT_PYTHON` for generating test images. It exercises the real worker, corrupt-image isolation, full-resolution details, rescan persistence, export, and unchanged original bytes. Set `PHOTO_SELECT_ENGINE` to test the bundled worker instead of the Python module.
 
-Windows packaging runs on a native Windows runner. After the checks, run `npm run tauri -- build --bundles nsis` in `desktop`, then `python scripts/collect_windows_package.py` from the repository root. The workflow also checks the bundled worker outside the source checkout.
+Windows packaging runs on a native Windows runner. After the checks, run `npm run tauri -- build --bundles nsis` in `desktop`, then `python scripts/collect_windows_package.py` from the repository root. The workflow verifies matching component versions, bundled decoder capabilities, real RAW decoding in Unicode paths, and actual launches of both the portable and silently installed app. The pinned upstream RAW test photograph is downloaded for verification and is not included in the app.
 
 For Linux development without installed toolchains, `scripts/Dockerfile.dev` provides a development image. Run it with the repository mounted at `/workspace` and port 1420 published. Follow the same dependency installation and checks inside the container.
+
+The optional native Linux UI check uses the real webview, Rust IPC and image assets. After building the app and worker, install `tauri-driver` and run:
+
+```sh
+cargo install tauri-driver --version 2.1.0 --locked
+cd desktop/src-tauri
+cargo build --locked
+cd ../..
+xvfb-run -a dbus-run-session -- python scripts/check_native_ui.py \
+  --application desktop/src-tauri/target/debug/photo-select --output build/native-review
+```
+
+Keep the development server running for a debug build. The check uses a temporary data directory and synthetic originals; it verifies rendered previews, stars and favorites, bulk tags, undo, comparison, full-resolution viewing, export, and a focused draft saved on native close.
 
 ## Legacy prototype and license
 

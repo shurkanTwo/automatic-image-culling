@@ -1,4 +1,4 @@
-PHOTO SELECT LIGHTROOM CLASSIC BRIDGE - 0.2.0
+PHOTO SELECT LIGHTROOM CLASSIC BRIDGE - 0.2.1
 
 1. In Lightroom Classic, open File > Plug-in Manager > Add.
 2. Select this entire PhotoSelect.lrplugin folder.

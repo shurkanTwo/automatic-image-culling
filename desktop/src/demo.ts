@@ -86,7 +86,7 @@ export async function demoInvoke<T>(
   switch (command) {
     case "get_app_state":
       result = {
-        version: "0.2.0",
+        version: "0.2.1",
         engineAvailable: true,
         projects: [
           {

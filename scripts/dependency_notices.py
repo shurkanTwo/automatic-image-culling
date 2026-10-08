@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     sections = [
-        "Photo Select 0.2.0 - third-party dependencies\n",
+        "Photo Select 0.2.1 - third-party dependencies\n",
         "Application source and its license: " + (ROOT / "LICENSE").read_text(),
     ]
     for name in ("Pillow", "numpy", "rawpy", "ExifRead", "pillow-heif", "PyInstaller"):

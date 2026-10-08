@@ -1,7 +1,7 @@
-PHOTO SELECT 0.2.0 - WINDOWS TEST BUILD
+PHOTO SELECT 0.2.1 - WINDOWS TEST BUILD
 
 GET STARTED
-Run Photo-Select-0.2.0-Windows-x64-Setup.exe to install for your current user.
+Run Photo-Select-0.2.1-Windows-x64-Setup.exe to install for your current user.
 The installer includes the image engine; no Python or Node installation is needed.
 It checks for Microsoft Edge WebView2 and installs the runtime if it is missing
 (an internet connection is needed only for that first runtime installation).

@@ -632,7 +632,7 @@ export default function App() {
           </main>
           <footer className="landing-footer">
             Photo Select <span>For the photographs that matter.</span>
-            <span>v{state?.version ?? "0.2.0"}</span>
+            <span>v{state?.version ?? "0.2.1"}</span>
           </footer>
         </>
       ) : (
