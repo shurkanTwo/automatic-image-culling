@@ -38,6 +38,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+          cache-on-failure: true
       - name: Install Python dependencies
         run: python -m pip install -r requirements-engine.txt -r requirements-dev.txt
       - name: Check and test image engine and Lightroom bridge
@@ -76,7 +77,11 @@ jobs:
           $env:PHOTO_SELECT_ENGINE = (Resolve-Path resources/engine/photo-select-engine.exe).Path
           cargo test --no-default-features --locked --test engine_integration -- --ignored
       - name: Generate dependency notices
-        run: python scripts/dependency_notices.py
+        shell: pwsh
+        run: |
+          cargo fetch --manifest-path desktop/src-tauri/Cargo.toml --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/dependency_notices.py
       - name: Build native Windows installer
         working-directory: desktop
         run: npm run tauri -- build --bundles nsis
