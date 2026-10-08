@@ -16,6 +16,13 @@ local function loadSelection(path)
     return Manifest.validate(json.decode(contents))
 end
 
+local function writeCatalog(catalog, name, callback)
+    local status = catalog:withWriteAccessDo(name, callback, { timeout = 30 })
+    if status ~= 'executed' then
+        error('Lightroom is busy and could not complete the import. Try again when other catalog operations have finished.')
+    end
+end
+
 local function importSelection(context)
     local selected = LrDialogs.runOpenPanel {
         title = 'Import a Photo Select shortlist', prompt = 'Review import',
@@ -60,29 +67,36 @@ local function importSelection(context)
         #matched, Manifest.collectionName(payload), favorites, ratings, tags, missing)
     if LrDialogs.confirm('Import this shortlist?', summary, 'Import', 'Cancel') ~= 'ok' then return end
 
-    local collection
-    catalog:withWriteAccessDo('Create Photo Select collection', function()
+    local collection, keywords
+    keywords = {}
+    -- New SDK objects can only be used after the write gate that creates them returns.
+    writeCatalog(catalog, 'Prepare Photo Select shortlist', function()
         local parent = catalog:createCollectionSet('Photo Select', nil, true)
         collection = catalog:createCollection(Manifest.collectionName(payload), parent, true)
-    end, { timeout = 30 })
+        for _, item in ipairs(matched) do
+            for _, tag in ipairs(item.entry.tags) do
+                if not keywords[tag] then
+                    keywords[tag] = catalog:createKeyword(tag, {}, true, nil, true)
+                    if not keywords[tag] then error('Lightroom could not create the keyword: ' .. tag) end
+                end
+            end
+        end
+    end)
     if not collection then error('Lightroom could not create the selection collection.') end
 
-    catalog:withWriteAccessDo('Import Photo Select shortlist', function()
-        local photos, keywords = {}, {}
+    writeCatalog(catalog, 'Import Photo Select shortlist', function()
+        local photos = {}
         for _, item in ipairs(matched) do
             local photo, entry = item.photo, item.entry
             if entry.rating ~= nil then photo:setRawMetadata('rating', entry.rating) end
             if entry.decision == 'favorite' then photo:setRawMetadata('pickStatus', 1) end
             for _, tag in ipairs(entry.tags) do
-                if not keywords[tag] then
-                    keywords[tag] = catalog:createKeyword(tag, {}, true, nil, true)
-                end
                 photo:addKeyword(keywords[tag])
             end
             photos[#photos + 1] = photo
         end
         collection:addPhotos(photos)
-    end, { timeout = 30 })
+    end)
     LrDialogs.message('Shortlist imported', string.format(
         '%d photographs added to Photo Select / %s.\n%d unmatched photographs skipped. You can undo the metadata import using Lightroom\'s Undo command.',
         #matched, Manifest.collectionName(payload), missing), 'info')

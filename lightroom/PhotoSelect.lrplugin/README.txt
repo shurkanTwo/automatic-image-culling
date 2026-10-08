@@ -18,5 +18,10 @@ remain intact. Pass is an archive decision and never creates a Reject flag.
 No originals are copied, moved, modified, or deleted. This is a one-way import;
 changes made afterward in Lightroom do not synchronize back to Photo Select.
 
+If the catalog is busy, the import reports a failure and can be retried. New
+collections and keywords are prepared first; metadata and collection membership
+are then applied together. A failed second step may leave an empty collection
+and unused keywords, but does not partially change your photographs.
+
 The included json.lua decoder is MIT-licensed, copyright (c) 2020 rxi.
 Its license text appears at the top of json.lua.

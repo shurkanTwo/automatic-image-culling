@@ -2,7 +2,9 @@
 TEST_PHOTOS = {}
 TEST_MESSAGES = {}
 TEST_COLLECTIONS = {}
+TEST_KEYWORDS = {}
 TEST_WRITES = 0
+TEST_WRITE_ATTEMPTS = 0
 TEST_CONFIRM = 'ok'
 TEST_CANCEL = false
 
@@ -15,10 +17,12 @@ function testPhoto(path, rating, pick)
     }
     function photo:setRawMetadata(key, value)
         assert(TEST_IN_WRITE, 'Metadata writes require catalog write access')
+        assert(TEST_FAIL_PHOTO ~= self.localIdentifier, 'Simulated metadata failure')
         self.metadata[key] = value
     end
     function photo:addKeyword(keyword)
         assert(TEST_IN_WRITE, 'Keyword writes require catalog write access')
+        assert(TEST_WRITES > keyword.createdAtWrite, 'Commit keyword creation before assigning it')
         self.keywords[keyword.name] = true
     end
     TEST_PHOTOS[path] = photo
@@ -29,12 +33,42 @@ local catalog = {}
 function catalog:findPhotoByPath(path)
     return TEST_PHOTOS[path]
 end
-function catalog:withWriteAccessDo(name, callback)
+local function copyTable(value)
+    local result = {}
+    for key, item in pairs(value) do result[key] = item end
+    return result
+end
+
+function catalog:withWriteAccessDo(name, callback, options)
     assert(not TEST_IN_WRITE, 'Write access must not be nested')
+    assert(options.timeout == 30 and not options.asynchronous, 'Write access must complete synchronously')
+    TEST_WRITE_ATTEMPTS = TEST_WRITE_ATTEMPTS + 1
+    if TEST_ABORT_WRITE == TEST_WRITE_ATTEMPTS then return 'aborted' end
+    local photoState, collectionState = {}, {}
+    for path, photo in pairs(TEST_PHOTOS) do
+        photoState[path] = { metadata = copyTable(photo.metadata), keywords = copyTable(photo.keywords) }
+    end
+    for collectionName, collection in pairs(TEST_COLLECTIONS) do
+        collectionState[collectionName] = copyTable(collection.photos)
+    end
+    local keywordState = copyTable(TEST_KEYWORDS)
     TEST_IN_WRITE = true
-    callback()
+    local ok, message = pcall(callback)
     TEST_IN_WRITE = false
+    if not ok then
+        for path, state in pairs(photoState) do
+            TEST_PHOTOS[path].metadata = state.metadata
+            TEST_PHOTOS[path].keywords = state.keywords
+        end
+        for collectionName, collection in pairs(TEST_COLLECTIONS) do
+            if collectionState[collectionName] then collection.photos = collectionState[collectionName]
+            else TEST_COLLECTIONS[collectionName] = nil end
+        end
+        TEST_KEYWORDS = keywordState
+        error(message)
+    end
     TEST_WRITES = TEST_WRITES + 1
+    return 'executed'
 end
 function catalog:createCollectionSet(name)
     assert(TEST_IN_WRITE)
@@ -55,7 +89,10 @@ function catalog:createCollection(name)
 end
 function catalog:createKeyword(name)
     assert(TEST_IN_WRITE)
-    return { name = name }
+    if not TEST_KEYWORDS[name] then
+        TEST_KEYWORDS[name] = { name = name, createdAtWrite = TEST_WRITES }
+    end
+    return TEST_KEYWORDS[name]
 end
 
 local modules = {
