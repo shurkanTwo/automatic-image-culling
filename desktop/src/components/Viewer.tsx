@@ -27,6 +27,8 @@ export default function Viewer({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [wantActualSize, setWantActualSize] = useState(false);
+  const [detailRevision, setDetailRevision] = useState(0);
+  const [preparingDetail, setPreparingDetail] = useState(false);
   const [loadedImage, setLoadedImage] = useState<{
     path: string;
     width: number;
@@ -44,6 +46,7 @@ export default function Viewer({
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setWantActualSize(false);
+    drag.current = null;
   }, [identity]);
   const firstPath = photos[0]?.detailPath ?? photos[0]?.previewPath;
   useEffect(() => {
@@ -51,6 +54,7 @@ export default function Viewer({
     if (
       !wantActualSize ||
       loadingDetail ||
+      preparingDetail ||
       !photos.every((photo) => photo.detailPath) ||
       !node ||
       loadedImage?.path !== firstPath
@@ -70,19 +74,42 @@ export default function Viewer({
     setZoom(1 / fitRatio);
     setPan({ x: 0, y: 0 });
     setWantActualSize(false);
-  }, [wantActualSize, loadingDetail, loadedImage, firstPath, photos]);
+  }, [
+    wantActualSize,
+    loadingDetail,
+    preparingDetail,
+    loadedImage,
+    firstPath,
+    photos,
+  ]);
   function changeZoom(next: number) {
+    setWantActualSize(false);
     setZoom(Math.min(64, Math.max(1, next)));
     if (next <= 1) setPan({ x: 0, y: 0 });
   }
   async function actualSize() {
-    if (!photos.length || loadingDetail) return;
+    if (!photos.length || loadingDetail || preparingDetail) return;
     setWantActualSize(true);
     if (photos.every((photo) => photo.detailPath)) return;
     try {
-      if (!(await onDetail(photos))) setWantActualSize(false);
+      if (!(await requestDetail())) setWantActualSize(false);
     } catch {
       setWantActualSize(false);
+    }
+  }
+  async function requestDetail() {
+    setPreparingDetail(true);
+    try {
+      const ready = await onDetail(photos);
+      if (ready) {
+        setLoadedImage(null);
+        setDetailRevision((value) => value + 1);
+      }
+      return ready;
+    } catch {
+      return false;
+    } finally {
+      setPreparingDetail(false);
     }
   }
   return (
@@ -101,7 +128,7 @@ export default function Viewer({
           </button>
           <button
             onClick={() => void actualSize()}
-            disabled={loadingDetail || wantActualSize}
+            disabled={loadingDetail || preparingDetail || wantActualSize}
             title="Show actual image pixels; prepares full-resolution detail when needed"
           >
             {wantActualSize ? (
@@ -138,17 +165,19 @@ export default function Viewer({
         )}
         <button
           className="detail-button"
-          disabled={loadingDetail}
+          disabled={loadingDetail || preparingDetail}
           onClick={() => {
-            void onDetail(photos);
+            void requestDetail();
           }}
         >
-          {loadingDetail ? (
+          {loadingDetail || preparingDetail ? (
             <LoaderCircle className="spin" size={15} />
           ) : (
             <Scan size={15} />
           )}{" "}
-          {loadingDetail ? "Preparing detail…" : "Full-resolution detail"}
+          {loadingDetail || preparingDetail
+            ? "Preparing detail…"
+            : "Full-resolution detail"}
         </button>
       </div>
       <div className={`viewer-panes count-${photos.length}`}>
@@ -192,8 +221,11 @@ export default function Viewer({
               onPointerCancel={() => {
                 drag.current = null;
               }}
+              onLostPointerCapture={() => {
+                drag.current = null;
+              }}
               onDoubleClick={() => {
-                if (zoom > 1) changeZoom(1);
+                if (zoom !== 1) changeZoom(1);
                 else void actualSize();
               }}
             >
@@ -205,6 +237,7 @@ export default function Viewer({
               >
                 <PhotoImage
                   path={photo.detailPath ?? photo.previewPath}
+                  retryVersion={photo.detailPath ? detailRevision : 0}
                   alt={photo.filename}
                   onLoad={
                     index === 0
@@ -250,7 +283,7 @@ export default function Viewer({
         ))}
       </div>
       <div className="viewer-footnote">
-        {zoom > 1
+        {zoom !== 1
           ? "Drag to inspect · double-click to fit"
           : "Scroll to zoom · double-click for 100%"}
         <span>Originals stay untouched</span>

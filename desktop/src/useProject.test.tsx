@@ -6,7 +6,12 @@ import { useProject } from "./useProject";
 import { api } from "./api";
 
 vi.mock("./api", () => ({
-  api: { updatePhotos: vi.fn(), updatePhoto: vi.fn(), project: vi.fn() },
+  api: {
+    updatePhotos: vi.fn(),
+    updatePhoto: vi.fn(),
+    updatePhotoPatches: vi.fn(),
+    project: vi.fn(),
+  },
   subscribe: vi.fn(async () => () => {}),
 }));
 const original: Photo = {
@@ -54,6 +59,102 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 describe("durable manual review", () => {
+  it("does not manufacture writes or undo entries for repeated identical review decisions", async () => {
+    const favorite = {
+      ...original,
+      decision: "favorite" as const,
+      reviewed: true,
+    };
+    const { result } = renderHook(() => useProject());
+    act(() => {
+      result.current.load({ ...structuredClone(project), photos: [favorite] });
+    });
+    await act(async () => {
+      await result.current.edit(
+        ["photo"],
+        { decision: "favorite", reviewed: true },
+        "Favorite",
+      );
+    });
+    expect(api.updatePhotos).not.toHaveBeenCalled();
+    expect(result.current.undoLabel).toBeNull();
+    vi.mocked(api.updatePhotos).mockResolvedValueOnce([
+      { ...favorite, ratingTouched: true },
+    ]);
+    await act(async () => {
+      await result.current.edit(["photo"], { rating: 0 }, "Clear rating");
+    });
+    expect(api.updatePhotos).toHaveBeenCalledTimes(1);
+    expect(result.current.project?.photos[0].ratingTouched).toBe(true);
+  });
+  it("keeps a failed atomic batch undo retryable without showing a partial restoration", async () => {
+    const second = { ...original, id: "second", tags: ["travel"] };
+    const edited = [
+      { ...original, decision: "favorite" as const },
+      { ...second, decision: "favorite" as const },
+    ];
+    vi.mocked(api.updatePhotos).mockResolvedValueOnce(edited);
+    vi.mocked(api.updatePhotoPatches)
+      .mockRejectedValueOnce(new Error("Transaction failed"))
+      .mockResolvedValueOnce([original, second]);
+    const { result } = renderHook(() => useProject());
+    act(() => {
+      result.current.load({
+        ...structuredClone(project),
+        photos: [original, second],
+      });
+    });
+    await act(async () => {
+      await result.current.edit(
+        ["photo", "second"],
+        { decision: "favorite" },
+        "Favorite",
+      );
+    });
+    let undone!: boolean;
+    await act(async () => {
+      undone = await result.current.undo();
+    });
+    expect(undone).toBe(false);
+    expect(result.current.project?.photos).toEqual(edited);
+    expect(result.current.undoLabel).toBe("Favorite");
+    expect(result.current.saveError).toContain("Transaction failed");
+    expect(api.updatePhotoPatches).toHaveBeenCalledWith("project", [
+      { photoId: "photo", patch: { decision: "undecided" } },
+      { photoId: "second", patch: { decision: "undecided" } },
+    ]);
+    await act(async () => {
+      undone = await result.current.undo();
+    });
+    expect(undone).toBe(true);
+    expect(result.current.project?.photos).toEqual([original, second]);
+    expect(result.current.undoLabel).toBeNull();
+    expect(result.current.saveError).toBeNull();
+  });
+  it("rolls back every optimistic bulk tag addition if the atomic write fails", async () => {
+    const second = { ...original, id: "second", tags: ["travel"] };
+    vi.mocked(api.updatePhotoPatches).mockRejectedValueOnce(
+      new Error("Write failed"),
+    );
+    const { result } = renderHook(() => useProject());
+    act(() => {
+      result.current.load({
+        ...structuredClone(project),
+        photos: [original, second],
+      });
+    });
+    let saved!: boolean;
+    await act(async () => {
+      saved = await result.current.addTags(["photo", "second"], ["print"]);
+    });
+    expect(saved).toBe(false);
+    expect(result.current.project?.photos).toEqual([original, second]);
+    expect(result.current.undoLabel).toBeNull();
+    expect(api.updatePhotoPatches).toHaveBeenCalledWith("project", [
+      { photoId: "photo", patch: { tags: ["family", "print"] } },
+      { photoId: "second", patch: { tags: ["travel", "print"] } },
+    ]);
+  });
   it("drains saves added during closing and reports a write failure instead of allowing close", async () => {
     const first = deferred<Photo[]>();
     const second = deferred<Photo[]>();
@@ -113,7 +214,7 @@ describe("durable manual review", () => {
     act(() => {
       result.current.load(structuredClone(project));
     });
-    let refreshTask!: Promise<void>;
+    let refreshTask!: Promise<unknown>;
     act(() => {
       refreshTask = result.current.refresh();
     });
@@ -138,8 +239,8 @@ describe("durable manual review", () => {
     act(() => {
       result.current.load(structuredClone(project));
     });
-    let firstTask!: Promise<void>;
-    let queuedTask!: Promise<void>;
+    let firstTask!: Promise<unknown>;
+    let queuedTask!: Promise<unknown>;
     act(() => {
       firstTask = result.current.edit(
         ["photo"],
@@ -177,8 +278,8 @@ describe("durable manual review", () => {
     act(() => {
       result.current.load(structuredClone(project));
     });
-    let firstTask!: Promise<void>;
-    let secondTask!: Promise<void>;
+    let firstTask!: Promise<unknown>;
+    let secondTask!: Promise<unknown>;
     act(() => {
       firstTask = result.current.edit(
         ["photo"],
@@ -207,18 +308,25 @@ describe("durable manual review", () => {
     expect(result.current.project?.photos[0].decision).toBe("pass");
     expect(result.current.saving).toBe(0);
     expect(result.current.undoLabel).toBe("Pass");
-    vi.mocked(api.updatePhoto).mockResolvedValueOnce({
-      ...original,
-      decision: "favorite",
-      reviewed: true,
-    });
+    vi.mocked(api.updatePhotoPatches).mockResolvedValueOnce([
+      {
+        ...original,
+        decision: "favorite",
+        reviewed: true,
+      },
+    ]);
     await act(async () => {
       await result.current.undo();
     });
-    expect(api.updatePhoto).toHaveBeenLastCalledWith("project", "photo", {
-      decision: "favorite",
-      reviewed: true,
-    });
+    expect(api.updatePhotoPatches).toHaveBeenLastCalledWith("project", [
+      {
+        photoId: "photo",
+        patch: {
+          decision: "favorite",
+          reviewed: true,
+        },
+      },
+    ]);
     expect(result.current.project?.photos[0].decision).toBe("favorite");
   });
   it("undoes the first manual rating to an unrated photo, preserving analysis and tags", async () => {
@@ -227,8 +335,9 @@ describe("durable manual review", () => {
         { ...original, ...patch, ratingTouched: true },
       ],
     );
-    vi.mocked(api.updatePhoto).mockImplementation(
-      async (_projectId, _id, patch: PhotoPatch) => ({ ...original, ...patch }),
+    vi.mocked(api.updatePhotoPatches).mockImplementation(
+      async (_projectId, updates) =>
+        updates.map((update) => ({ ...original, ...update.patch })),
     );
     const { result } = renderHook(() => useProject());
     act(() => {
@@ -245,11 +354,16 @@ describe("durable manual review", () => {
     await act(async () => {
       await result.current.undo();
     });
-    expect(api.updatePhoto).toHaveBeenCalledWith("project", "photo", {
-      rating: 0,
-      ratingTouched: false,
-      reviewed: false,
-    });
+    expect(api.updatePhotoPatches).toHaveBeenCalledWith("project", [
+      {
+        photoId: "photo",
+        patch: {
+          rating: 0,
+          ratingTouched: false,
+          reviewed: false,
+        },
+      },
+    ]);
     expect(result.current.project?.photos[0]).toEqual(original);
     expect(result.current.undoLabel).toBeNull();
   });

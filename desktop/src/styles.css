@@ -1943,3 +1943,6 @@ kbd {
   font-size: 8px;
   white-space: nowrap;
 }
+.save-status.save-failed {
+  color: var(--danger);
+}

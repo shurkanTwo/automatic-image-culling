@@ -9,3 +9,5 @@ Browser integration tests can install `window.__PHOTO_SELECT_BRIDGE__` before th
 Manual updates are serialized and immediately saved to the project database. Undo retains the prior state of each edited photo, including whether a star rating had ever been assigned. Project refreshes wait for pending edits, and responses from a previous project cannot overwrite a newly opened project. Suggestions never become favorites or manual star ratings automatically.
 
 Shortcuts: arrows navigate; F favorites; P passes; U resets to undecided; 0–5 assigns a rating; Enter opens the viewer; G returns to the grid; C compares; Ctrl/Cmd+Z undoes; Ctrl/Cmd+A selects the displayed scope; / focuses search. Ctrl/Cmd-click toggles selection and Shift-click selects a range. Shortcuts pause while editing text or using a dialog.
+
+Tag edits on multiple selected photos add labels while preserving each photo's existing tags. The single-photo editor also supports removing tags. Batch undo uses one atomic database write. Failed tag drafts remain editable for retry; closing the native window, returning to Projects, or exporting commits drafts and waits for pending saves first.

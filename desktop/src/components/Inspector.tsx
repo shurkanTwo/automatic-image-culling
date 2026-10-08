@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Heart,
   Minus,
@@ -9,11 +9,14 @@ import {
   FolderPlus,
   Check,
 } from "lucide-react";
+import { COMMIT_DRAFTS_EVENT } from "../drafts";
 import { parseTags } from "../domain";
 import type { Collection, Photo, PhotoPatch } from "../types";
 export default function Inspector({
   photo,
   selectedCount,
+  selectionKey,
+  onSaveTags,
   collections,
   onEdit,
   onCollection,
@@ -21,15 +24,62 @@ export default function Inspector({
 }: {
   photo: Photo | undefined;
   selectedCount: number;
+  selectionKey: string;
+  onSaveTags: (tags: string[], add: boolean) => Promise<boolean>;
   collections: Collection[];
   onEdit: (patch: PhotoPatch, label: string) => void;
   onCollection: (id: string) => void;
   onReveal: () => void;
 }) {
   const [tags, setTags] = useState("");
+  const dirty = useRef(false);
+  const draftIdentity = useRef("");
+  const revision = useRef(0);
+  const committing = useRef<number | null>(null);
+  const bulk = selectedCount > 1;
   useEffect(() => {
-    setTags(photo?.tags.join(", ") ?? "");
-  }, [photo?.id, photo?.tags.join(", ")]);
+    const identity = `${photo?.id ?? ""}:${selectionKey}`;
+    if (draftIdentity.current !== identity) {
+      draftIdentity.current = identity;
+      revision.current += 1;
+      dirty.current = false;
+      setTags(bulk ? "" : (photo?.tags.join(", ") ?? ""));
+    } else if (!dirty.current && !bulk) {
+      setTags(photo?.tags.join(", ") ?? "");
+    }
+  }, [photo?.id, photo?.tags.join(", "), selectionKey, bulk]);
+  async function saveTags() {
+    if (!photo || !dirty.current || committing.current === revision.current)
+      return;
+    const parsed = parseTags(tags);
+    if (
+      (bulk && !parsed.length) ||
+      (!bulk && parsed.join(",") === photo.tags.join(","))
+    ) {
+      dirty.current = false;
+      return;
+    }
+    const submittedRevision = revision.current;
+    committing.current = submittedRevision;
+    try {
+      if (
+        (await onSaveTags(parsed, bulk)) &&
+        revision.current === submittedRevision
+      ) {
+        dirty.current = false;
+        setTags(bulk ? "" : parsed.join(", "));
+      }
+    } finally {
+      if (committing.current === submittedRevision) committing.current = null;
+    }
+  }
+  useEffect(() => {
+    const commit = () => {
+      void saveTags();
+    };
+    document.addEventListener(COMMIT_DRAFTS_EVENT, commit);
+    return () => document.removeEventListener(COMMIT_DRAFTS_EVENT, commit);
+  });
   if (!photo)
     return (
       <aside className="inspector">
@@ -39,11 +89,6 @@ export default function Inspector({
       </aside>
     );
   const decision = photo.decision;
-  function saveTags() {
-    const parsed = parseTags(tags);
-    if (parsed.join(",") !== photo!.tags.join(","))
-      onEdit({ tags: parsed }, "Edit tags");
-  }
   return (
     <aside className="inspector">
       <div className="inspector-title">
@@ -130,10 +175,16 @@ export default function Inspector({
         <textarea
           id="photo-tags"
           value={tags}
-          placeholder="travel, family, print…"
+          placeholder={
+            bulk ? "Add tags to selected photos…" : "travel, family, print…"
+          }
           rows={2}
-          onChange={(event) => setTags(event.target.value)}
-          onBlur={saveTags}
+          onChange={(event) => {
+            dirty.current = true;
+            revision.current += 1;
+            setTags(event.target.value);
+          }}
+          onBlur={() => void saveTags()}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -142,8 +193,10 @@ export default function Inspector({
           }}
         />
         <span className="quiet-note">
-          Separate tags with commas. Saves on leaving this field.
-          {selectedCount > 1 ? " Applies to all selected photos." : ""}
+          {bulk
+            ? "Adds tags to selected photos; existing tags are kept. "
+            : "Separate tags with commas. "}
+          Saves on leaving this field.
         </span>
       </div>
       <div className="inspector-section">

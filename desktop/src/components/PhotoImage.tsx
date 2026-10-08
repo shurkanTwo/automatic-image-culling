@@ -5,17 +5,24 @@ export default function PhotoImage({
   path,
   alt,
   thumbnail = false,
+  retryVersion = 0,
   onLoad,
   onError,
 }: {
   path: string | null;
   alt: string;
   thumbnail?: boolean;
+  retryVersion?: number;
   onLoad?: (image: HTMLImageElement) => void;
   onError?: () => void;
 }) {
-  const [failedPath, setFailedPath] = useState<string | null>(null);
-  if (!path || path === failedPath)
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const base = path ? photoSrc(path) : "";
+  const source =
+    retryVersion && !/^(data:|blob:)/.test(base)
+      ? `${base}${base.includes("?") ? "&" : "?"}detailRevision=${retryVersion}`
+      : base;
+  if (!path || source === failedSource)
     return (
       <div className="image-fallback">
         <ImageOff size={24} />
@@ -24,14 +31,15 @@ export default function PhotoImage({
     );
   return (
     <img
-      src={photoSrc(path)}
+      key={`${source}:${retryVersion}`}
+      src={source}
       alt={alt}
       loading={thumbnail ? "lazy" : "eager"}
       decoding="async"
       draggable={false}
       onLoad={(event) => onLoad?.(event.currentTarget)}
       onError={() => {
-        setFailedPath(path);
+        setFailedSource(source);
         onError?.();
       }}
     />

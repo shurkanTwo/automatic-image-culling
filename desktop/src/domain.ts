@@ -61,6 +61,22 @@ export function nextPhotoId(
   return photos[Math.max(0, Math.min(photos.length - 1, index + direction))].id;
 }
 
+export function comparisonPhotos(
+  photos: Photo[],
+  selectedIds: string[],
+  activeId: string | null,
+): Photo[] {
+  const selected = new Set(selectedIds);
+  const chosen = photos.filter((photo) => selected.has(photo.id));
+  if (chosen.length >= 2) return chosen.slice(0, 4);
+  const activeIndex = Math.max(
+    0,
+    photos.findIndex((photo) => photo.id === activeId),
+  );
+  const start = Math.max(0, Math.min(activeIndex, photos.length - 2));
+  return photos.slice(start, start + 2);
+}
+
 export function previousPatch(photo: Photo, patch: PhotoPatch): PhotoPatch {
   const result: PhotoPatch = {};
   if (patch.decision !== undefined) result.decision = photo.decision;
@@ -71,6 +87,23 @@ export function previousPatch(photo: Photo, patch: PhotoPatch): PhotoPatch {
   if (patch.tags !== undefined) result.tags = [...photo.tags];
   if (patch.reviewed !== undefined) result.reviewed = photo.reviewed;
   return result;
+}
+
+export function patchChangesPhoto(photo: Photo, patch: PhotoPatch): boolean {
+  if (patch.rating !== undefined && patch.rating !== photo.rating) return true;
+  const touched =
+    patch.ratingTouched ??
+    (patch.rating !== undefined ? true : photo.ratingTouched);
+  if (touched !== photo.ratingTouched) return true;
+  if (patch.decision !== undefined && patch.decision !== photo.decision)
+    return true;
+  if (patch.reviewed !== undefined && patch.reviewed !== photo.reviewed)
+    return true;
+  return (
+    patch.tags !== undefined &&
+    (patch.tags.length !== photo.tags.length ||
+      patch.tags.some((tag, index) => tag !== photo.tags[index]))
+  );
 }
 
 export function mergePhotos(project: Project, changed: Photo[]): Project {

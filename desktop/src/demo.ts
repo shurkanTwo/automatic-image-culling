@@ -118,6 +118,30 @@ export async function demoInvoke<T>(
     case "cancel_import":
       result = undefined;
       break;
+    case "update_photo_patches": {
+      const updates = args.updates as { photoId: string; patch: PhotoPatch }[];
+      const patches = new Map(
+        updates.map((update) => [update.photoId, update.patch]),
+      );
+      project = {
+        ...project,
+        photos: project.photos.map((photo) => {
+          const patch = patches.get(photo.id);
+          return patch
+            ? {
+                ...photo,
+                ...patch,
+                ratingTouched:
+                  patch.ratingTouched ??
+                  (patch.rating !== undefined ? true : photo.ratingTouched),
+              }
+            : photo;
+        }),
+      };
+      save();
+      result = project.photos.filter((photo) => patches.has(photo.id));
+      break;
+    }
     case "update_photo":
     case "update_photos": {
       const ids =

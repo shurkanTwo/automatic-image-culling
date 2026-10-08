@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, subscribe } from "./api";
-import { mergePhotos, previousPatch } from "./domain";
+import { mergePhotos, patchChangesPhoto, previousPatch } from "./domain";
 import type {
   Collection,
   ImportProgress,
@@ -17,6 +17,9 @@ export function useProject() {
   const projectRef = useRef<Project | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(0);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveErrorRef = useRef<string | null>(null);
+  const projectSession = useRef(0);
   const pending = useRef(0);
   const editRevision = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -34,6 +37,11 @@ export function useProject() {
   const load = useCallback(
     (value: Project | null) => {
       editRevision.current += 1;
+      projectSession.current += 1;
+      setSaveError(null);
+      saveErrorRef.current = null;
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = undefined;
       setProject(value);
       undoRef.current = [];
       setUndoLabel(null);
@@ -46,10 +54,11 @@ export function useProject() {
     const current = projectRef.current;
     if (!current) return;
     if (pending.current) {
-      refreshTimer.current = setTimeout(() => {
-        refreshTimer.current = undefined;
-        void refresh();
-      }, 350);
+      if (!refreshTimer.current)
+        refreshTimer.current = setTimeout(() => {
+          refreshTimer.current = undefined;
+          void refresh();
+        }, 350);
       return;
     }
     const requestedRevision = editRevision.current;
@@ -62,7 +71,11 @@ export function useProject() {
       )
         setProject(value);
     } catch (reason) {
-      setError(String(reason));
+      if (
+        projectRef.current?.id === current.id &&
+        editRevision.current === requestedRevision
+      )
+        setError(String(reason));
     }
   }, [setProject]);
   const scheduleRefresh = useCallback(() => {
@@ -99,25 +112,39 @@ export function useProject() {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [scheduleRefresh]);
-  function enqueue(action: () => Promise<void>): Promise<void> {
+  function enqueue(action: () => Promise<void>): Promise<boolean> {
     const intendedProjectId = projectRef.current?.id;
+    const intendedSession = projectSession.current;
     editRevision.current += 1;
     pending.current += 1;
     setSaving(pending.current);
     const task = queue.current
       .then(async () => {
-        if (projectRef.current?.id === intendedProjectId) await action();
+        if (
+          projectSession.current !== intendedSession ||
+          projectRef.current?.id !== intendedProjectId
+        )
+          return false;
+        await action();
+        return true;
       })
       .catch((reason) => {
         saveFailures.current += 1;
-        if (projectRef.current?.id === intendedProjectId)
+        if (
+          projectSession.current === intendedSession &&
+          projectRef.current?.id === intendedProjectId
+        ) {
           setError(String(reason));
+          setSaveError(String(reason));
+          saveErrorRef.current = String(reason);
+        }
+        return false;
       })
       .finally(() => {
         pending.current -= 1;
         setSaving(pending.current);
       });
-    queue.current = task;
+    queue.current = task.then(() => undefined);
     return task;
   }
   const hasPendingSaves = useCallback(() => pending.current > 0, []);
@@ -131,15 +158,25 @@ export function useProject() {
     undoRef.current = [...undoRef.current.slice(-49), entry];
     setUndoLabel(entry.label);
   }
+  function savedSuccessfully() {
+    const previousError = saveErrorRef.current;
+    saveErrorRef.current = null;
+    setSaveError(null);
+    setError((current) => (current === previousError ? null : current));
+  }
   function edit(
     ids: string[],
     patch: PhotoPatch,
     label: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return enqueue(async () => {
       const current = projectRef.current;
       if (!current || !ids.length) return;
-      const before = current.photos.filter((photo) => ids.includes(photo.id));
+      const targets = new Set(ids);
+      const before = current.photos.filter(
+        (photo) => targets.has(photo.id) && patchChangesPhoto(photo, patch),
+      );
+      const session = projectSession.current;
       if (!before.length) return;
       const optimistic: Photo[] = before.map((photo) => ({
         ...photo,
@@ -155,7 +192,12 @@ export function useProject() {
           before.map((photo) => photo.id),
           patch,
         );
-        if (projectRef.current?.id !== current.id) return;
+        if (
+          projectRef.current?.id !== current.id ||
+          projectSession.current !== session
+        )
+          return;
+        savedSuccessfully();
         setProject(mergePhotos(projectRef.current, changed));
         pushUndo({
           label,
@@ -165,25 +207,29 @@ export function useProject() {
           })),
         });
       } catch (reason) {
-        if (projectRef.current?.id === current.id)
+        if (
+          projectRef.current?.id === current.id &&
+          projectSession.current === session
+        )
           setProject(mergePhotos(projectRef.current, before));
         throw reason;
       }
     });
   }
-  function undo(): Promise<void> {
+  function undo(): Promise<boolean> {
     return enqueue(async () => {
       const current = projectRef.current;
+      const session = projectSession.current;
       const entry = undoRef.current.at(-1);
       if (!current || !entry) return;
       if ("changes" in entry) {
-        const changed: Photo[] = [];
-        // Restore independently because batch edits can have different prior ratings and decisions.
-        for (const change of entry.changes)
-          changed.push(
-            await api.updatePhoto(current.id, change.photoId, change.patch),
-          );
-        if (projectRef.current?.id !== current.id) return;
+        const changed = await api.updatePhotoPatches(current.id, entry.changes);
+        if (
+          projectRef.current?.id !== current.id ||
+          projectSession.current !== session
+        )
+          return;
+        savedSuccessfully();
         setProject(mergePhotos(projectRef.current, changed));
       } else {
         const updated = await api.updateCollection(
@@ -192,7 +238,11 @@ export function useProject() {
           entry.collection.name,
           entry.collection.photoIds,
         );
-        if (projectRef.current?.id !== current.id) return;
+        if (
+          projectRef.current?.id !== current.id ||
+          projectSession.current !== session
+        )
+          return;
         setProject({
           ...projectRef.current,
           collections: projectRef.current!.collections.map((value) =>
@@ -200,16 +250,73 @@ export function useProject() {
           ),
         });
       }
+      savedSuccessfully();
       undoRef.current.pop();
       setUndoLabel(undoRef.current.at(-1)?.label ?? null);
     });
   }
-  function createCollection(name: string): Promise<void> {
+  function addTags(ids: string[], tags: string[]): Promise<boolean> {
     return enqueue(async () => {
       const current = projectRef.current;
+      const session = projectSession.current;
+      if (!current || !tags.length) return;
+      const targets = new Set(ids);
+      const before = current.photos.filter(
+        (photo) =>
+          targets.has(photo.id) &&
+          patchChangesPhoto(photo, {
+            tags: [...new Set([...photo.tags, ...tags])],
+          }),
+      );
+      const updates = before.map((photo) => ({
+        photoId: photo.id,
+        patch: { tags: [...new Set([...photo.tags, ...tags])] },
+      }));
+      if (!updates.length) return;
+      setProject(
+        mergePhotos(
+          current,
+          before.map((photo, index) => ({ ...photo, ...updates[index].patch })),
+        ),
+      );
+      try {
+        const changed = await api.updatePhotoPatches(current.id, updates);
+        if (
+          projectRef.current?.id !== current.id ||
+          projectSession.current !== session
+        )
+          return;
+        savedSuccessfully();
+        setProject(mergePhotos(projectRef.current, changed));
+        pushUndo({
+          label: "Add tags",
+          changes: before.map((photo) => ({
+            photoId: photo.id,
+            patch: { tags: [...photo.tags] },
+          })),
+        });
+      } catch (reason) {
+        if (
+          projectRef.current?.id === current.id &&
+          projectSession.current === session
+        )
+          setProject(mergePhotos(projectRef.current, before));
+        throw reason;
+      }
+    });
+  }
+  function createCollection(name: string): Promise<boolean> {
+    return enqueue(async () => {
+      const current = projectRef.current;
+      const session = projectSession.current;
       if (!current) return;
       const value = await api.createCollection(current.id, name);
-      if (projectRef.current?.id !== current.id) return;
+      if (
+        projectRef.current?.id !== current.id ||
+        projectSession.current !== session
+      )
+        return;
+      savedSuccessfully();
       setProject({
         ...projectRef.current!,
         collections: [...projectRef.current!.collections, value],
@@ -220,21 +327,28 @@ export function useProject() {
     id: string,
     ids: string[],
     remove = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return enqueue(async () => {
       const current = projectRef.current;
+      const session = projectSession.current;
       const collection = current?.collections.find((value) => value.id === id);
       if (!current || !collection) return;
       const photoIds = remove
         ? collection.photoIds.filter((photoId) => !ids.includes(photoId))
         : [...new Set([...collection.photoIds, ...ids])];
+      if (photoIds.length === collection.photoIds.length) return;
       const updated = await api.updateCollection(
         current.id,
         id,
         null,
         photoIds,
       );
-      if (projectRef.current?.id !== current.id) return;
+      if (
+        projectRef.current?.id !== current.id ||
+        projectSession.current !== session
+      )
+        return;
+      savedSuccessfully();
       setProject({
         ...projectRef.current!,
         collections: projectRef.current!.collections.map((value) =>
@@ -255,10 +369,12 @@ export function useProject() {
     error,
     setError,
     saving,
+    saveError,
     hasPendingSaves,
     waitForSaves,
     undoLabel,
     edit,
+    addTags,
     undo,
     createCollection,
     collectionEdit,

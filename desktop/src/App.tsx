@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Aperture,
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -38,7 +39,8 @@ import {
   progressLabel,
   revealPath,
 } from "./api";
-import { nextPhotoId, visiblePhotos } from "./domain";
+import { comparisonPhotos, nextPhotoId, visiblePhotos } from "./domain";
+import { commitDrafts } from "./drafts";
 import type {
   AppState,
   BrowseOptions,
@@ -69,10 +71,12 @@ export default function App() {
     error,
     setError,
     saving,
+    saveError,
     hasPendingSaves,
     waitForSaves,
     undoLabel,
     edit,
+    addTags,
     undo,
     createCollection,
     collectionEdit,
@@ -85,6 +89,7 @@ export default function App() {
     const window = getCurrentWindow();
     void window
       .onCloseRequested(async (event) => {
+        commitDrafts();
         if (!closing && !hasPendingSaves()) return;
         event.preventDefault();
         if (closing) return;
@@ -129,6 +134,15 @@ export default function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [pluginPath, setPluginPath] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [importAction, setImportAction] = useState(false);
+  const [dismissedImportError, setDismissedImportError] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setDismissedImportError(null);
+  }, [project?.id]);
+  const projectIdRef = useRef(project?.id);
+  projectIdRef.current = project?.id;
   const searchRef = useRef<HTMLInputElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const filmstripRef = useRef<HTMLDivElement | null>(null);
@@ -146,21 +160,7 @@ export default function App() {
     () => new Set(similarGroups.flatMap((group) => group.recommendedPhotoIds)),
     [similarGroups],
   );
-  const selectedPhotos = photos.filter((photo) => selected.includes(photo.id));
-  const comparePhotos = (
-    selectedPhotos.length >= 2
-      ? selectedPhotos
-      : photos.slice(
-          Math.max(
-            0,
-            photos.findIndex((photo) => photo.id === activeId),
-          ),
-          Math.max(
-            0,
-            photos.findIndex((photo) => photo.id === activeId),
-          ) + 2,
-        )
-  ).slice(0, 4);
+  const comparePhotos = comparisonPhotos(photos, selected, activeId);
   const scopeId = options.scope.type === "all" ? null : options.scope.id;
   const scopeCollection =
     options.scope.type === "collection"
@@ -230,6 +230,21 @@ export default function App() {
   function mark(patch: PhotoPatch, label: string) {
     void edit(selectedIds, patch, label);
   }
+  function saveTags(tags: string[], add: boolean) {
+    return add
+      ? addTags(selectedIds, tags)
+      : edit(selectedIds, { tags }, "Edit tags");
+  }
+  function selectViewerPhoto(id: string) {
+    setActiveId(id);
+    if (!selected.includes(id)) setSelected([id]);
+  }
+  async function goToProjects() {
+    commitDrafts();
+    if (!(await waitForSaves())) return;
+    load(null);
+    void api.state().then(setState).catch(report);
+  }
   function navigate(direction: number) {
     const next = nextPhotoId(photos, activeId, direction);
     setActiveId(next);
@@ -270,7 +285,11 @@ export default function App() {
         mark({ decision: "undecided", reviewed: false }, "Undecided");
       else if (/^[0-5]$/.test(key))
         mark({ rating: Number(key), reviewed: true }, "Rate photographs");
-      else if (key === "enter") setView("single");
+      else if (
+        key === "enter" &&
+        (!target.closest("button") || target.closest(".photo-card"))
+      )
+        setView("single");
       else if (key === "escape" || key === "g") setView("grid");
       else if (key === "c" && photos.length >= 2) setView("compare");
       else if (key === "/") {
@@ -298,15 +317,18 @@ export default function App() {
     )?.focus();
     function handleDialogKey(event: KeyboardEvent) {
       if (event.key === "Escape" && !exporting) {
-        setExportOpen(false);
-        setCollectionName(null);
-        setPluginPath(null);
+        if (pluginPath) setPluginPath(null);
+        else if (exportOpen) setExportOpen(false);
+        else setCollectionName(null);
       }
       if (event.key !== "Tab") return;
       const controls = focusable();
       const first = controls[0];
       const last = controls.at(-1);
-      if (event.shiftKey && document.activeElement === first) {
+      if (!modal?.contains(document.activeElement)) {
+        event.preventDefault();
+        first?.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last?.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -366,34 +388,43 @@ export default function App() {
     }
   }
   async function rescan() {
-    if (!project) return;
+    if (!project || importAction) return;
+    setImportAction(true);
     try {
       await api.start(project.id);
       await workspace.refresh();
       setToast("Rescan started. Your choices and collections are preserved.");
     } catch (reason) {
       report(reason);
+    } finally {
+      setImportAction(false);
     }
   }
   async function detail(values: Photo[]) {
     if (!project) return false;
     setDetailLoading(true);
     try {
-      for (const photo of values) await api.detail(project.id, photo.id);
+      for (const photo of values) {
+        if (projectIdRef.current !== project.id) return false;
+        await api.detail(project.id, photo.id);
+      }
+      if (projectIdRef.current !== project.id) return false;
       await workspace.refresh();
       setToast(
         "Full-resolution previews ready. Use 100% to check fine detail.",
       );
       return true;
     } catch (reason) {
-      report(reason);
+      if (projectIdRef.current === project.id) report(reason);
       return false;
     } finally {
       setDetailLoading(false);
     }
   }
   async function exportSelection() {
-    if (!project || saving > 0) return;
+    if (!project) return;
+    commitDrafts();
+    if (!(await waitForSaves())) return;
     setExporting(true);
     try {
       const destination = await exportPath(project.name);
@@ -429,18 +460,30 @@ export default function App() {
           .map((photo) => photo.id),
       );
     } else if (event.ctrlKey || event.metaKey) {
-      setSelected((previous) =>
-        previous.includes(id)
-          ? previous.filter((value) => value !== id)
-          : [...previous, id],
-      );
+      const next = selected.includes(id)
+        ? selected.filter((value) => value !== id)
+        : [...selected, id];
+      setSelected(next);
+      setActiveId(next.includes(id) ? id : (next.at(-1) ?? id));
+      return;
     } else setSelected([id]);
     setActiveId(id);
   }
-  const errorBanner = (error || project?.importError) && (
+  const visibleError =
+    error ||
+    (project?.importError !== dismissedImportError
+      ? project?.importError
+      : null);
+  const errorBanner = visibleError && (
     <div className="error-banner" role="alert">
-      <span>{error || project?.importError}</span>
-      <button aria-label="Dismiss error" onClick={() => setError(null)}>
+      <span>{visibleError}</span>
+      <button
+        aria-label="Dismiss error"
+        onClick={() => {
+          setError(null);
+          setDismissedImportError(project?.importError ?? null);
+        }}
+      >
         <X size={16} />
       </button>
     </div>
@@ -602,10 +645,7 @@ export default function App() {
             <button
               className="back-button"
               disabled={saving > 0}
-              onClick={() => {
-                load(null);
-                void api.state().then(setState).catch(report);
-              }}
+              onClick={() => void goToProjects()}
             >
               <ArrowLeft size={14} />
               Projects
@@ -738,7 +778,9 @@ export default function App() {
               </button>
               <button
                 className="text-button"
-                disabled={processing || state?.engineAvailable === false}
+                disabled={
+                  processing || importAction || state?.engineAvailable === false
+                }
                 onClick={() => void rescan()}
               >
                 <RefreshCw size={14} />
@@ -754,13 +796,22 @@ export default function App() {
                 <strong>{title}</strong>
               </div>
               <div className="workspace-header-actions">
-                <span className={`save-status ${saving ? "saving" : ""}`}>
+                <span
+                  className={`save-status ${saving ? "saving" : saveError ? "save-failed" : ""}`}
+                  title={saveError ?? undefined}
+                >
                   {saving ? (
                     <LoaderCircle className="spin" size={13} />
+                  ) : saveError ? (
+                    <AlertCircle size={13} />
                   ) : (
                     <Check size={13} />
                   )}{" "}
-                  {saving ? "Saving…" : "All changes saved"}
+                  {saving
+                    ? "Saving…"
+                    : saveError
+                      ? "Last change failed to save"
+                      : "All changes saved"}
                 </span>
                 <button
                   className="secondary-button small-button"
@@ -1071,7 +1122,7 @@ export default function App() {
                       recommended={recommended}
                       onDetail={detail}
                       loadingDetail={detailLoading}
-                      onActive={setActiveId}
+                      onActive={selectViewerPhoto}
                     />
                     <div className="filmstrip-row">
                       <button
@@ -1122,6 +1173,8 @@ export default function App() {
               <Inspector
                 photo={active}
                 selectedCount={selectedIds.length}
+                selectionKey={selectedIds.join("|")}
+                onSaveTags={saveTags}
                 collections={project.collections}
                 onEdit={mark}
                 onCollection={(id) => void collectionEdit(id, selectedIds)}
@@ -1173,12 +1226,14 @@ export default function App() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="collection-title"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              if (collectionName.trim()) {
-                void createCollection(collectionName.trim());
+              if (
+                collectionName.trim() &&
+                !saving &&
+                (await createCollection(collectionName.trim()))
+              )
                 setCollectionName(null);
-              }
             }}
           >
             <button
@@ -1193,6 +1248,11 @@ export default function App() {
               <Layers size={24} />
             </div>
             <h2 id="collection-title">A place for a story.</h2>
+            {error && (
+              <p className="inline-error" role="alert">
+                {error}
+              </p>
+            )}
             <p>
               Make a collection for a photo book, a set of prints, or someone
               you love.
@@ -1209,7 +1269,7 @@ export default function App() {
             </label>
             <button
               className="primary-button"
-              disabled={!collectionName.trim()}
+              disabled={!collectionName.trim() || saving > 0}
               type="submit"
             >
               <Plus size={16} />
@@ -1222,6 +1282,7 @@ export default function App() {
         <div className="modal-backdrop">
           <div
             className="modal export-modal"
+            aria-hidden={Boolean(pluginPath)}
             role="dialog"
             aria-modal="true"
             aria-labelledby="export-title"
@@ -1229,6 +1290,7 @@ export default function App() {
             <button
               className="modal-close icon-button"
               aria-label="Close export"
+              disabled={exporting}
               onClick={() => setExportOpen(false)}
             >
               <X size={18} />
@@ -1237,6 +1299,11 @@ export default function App() {
               <Download size={24} />
             </div>
             <h2 id="export-title">Take your selection to Lightroom.</h2>
+            {error && (
+              <p className="inline-error" role="alert">
+                {error}
+              </p>
+            )}
             <p>
               Export a selection file with your choices, star ratings, and tags.
               Your original files stay in their folders.

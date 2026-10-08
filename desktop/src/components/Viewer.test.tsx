@@ -56,6 +56,25 @@ function setPaneSize(container: HTMLElement, width = 484, height = 400) {
   });
 }
 describe("actual pixel inspection", () => {
+  it("retries a failed cached detail after regeneration even when the cache path stays the same", async () => {
+    const onDetail = vi.fn(async () => true);
+    render(
+      <Viewer
+        photos={[{ ...photo, detailPath: "/full.jpg" }]}
+        recommended={new Set()}
+        onDetail={onDetail}
+        loadingDetail={false}
+        onActive={vi.fn()}
+      />,
+    );
+    fireEvent.error(screen.getByRole("img"));
+    expect(screen.queryByRole("img")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Full-resolution detail" }),
+    );
+    const reloaded = await screen.findByRole("img");
+    expect(reloaded.getAttribute("src")).toBe("/full.jpg?detailRevision=1");
+  });
   it("prepares full-resolution detail before zooming and uses loaded detail dimensions rather than metadata", async () => {
     let finish!: (value: boolean) => void;
     const onDetail = vi.fn(

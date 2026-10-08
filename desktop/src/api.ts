@@ -62,6 +62,10 @@ export const api = {
     call<Photo>("update_photo", { projectId, photoId, patch }),
   updatePhotos: (projectId: string, photoIds: string[], patch: PhotoPatch) =>
     call<Photo[]>("update_photos", { projectId, photoIds, patch }),
+  updatePhotoPatches: (
+    projectId: string,
+    updates: { photoId: string; patch: PhotoPatch }[],
+  ) => call<Photo[]>("update_photo_patches", { projectId, updates }),
   createCollection: (projectId: string, name: string) =>
     call<Collection>("create_collection", { projectId, name }),
   updateCollection: (
