@@ -15,7 +15,7 @@ For portable use, extract the entire portable ZIP and run `Photo Select.exe` wit
 ## Review a photo collection
 
 1. Choose the folder containing a trip or event. Subfolders are scanned, and previews appear as processing progresses. Import can be cancelled and restarted.
-2. Browse the grid, inspect a photograph, or compare two to four photographs with linked zoom and pan. Request full-resolution previews before using 100% to assess fine detail.
+2. Browse the grid, inspect a photograph, or compare two to four photographs with linked zoom and pan. **100%** prepares full-resolution previews and maps one image pixel to one physical display pixel, including scaled displays and comparison images with different dimensions. **Fit** returns to the full frame.
 3. Use **F** for Favorite, **P** for Pass, **U** for Undecided, and **0–5** for a rating. Arrow keys navigate, **Enter** opens inspection, **G** returns to the grid, and **C** opens comparison. Ctrl/Shift-click selects several photographs; Ctrl+Z undoes review changes.
 4. Add tags and collections such as “Japan photobook.” When several photos are selected, entered tags are added to each photo's existing tags. Reviews save to a local SQLite project automatically; closing commits a focused tag draft before waiting for saves. Rescanning preserves ratings, decisions, tags, and collections.
 5. Export favorites or a collection to Lightroom Classic using the included plugin.

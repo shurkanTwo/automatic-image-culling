@@ -142,10 +142,14 @@ class NativeWebview:
 def make_photos(source: Path) -> dict[Path, tuple[str, int]]:
     source.mkdir()
     for index in range(1, 4):
-        image = Image.new("RGB", (1800, 1200), (50 * index, 75, 120))
+        width = 2400 if index == 2 else 1800
+        height = width * 2 // 3
+        image = Image.new("RGB", (width, height), (50 * index, 75, 120))
         draw = ImageDraw.Draw(image)
-        for offset in range(0, 1800, 120):
-            draw.rectangle((offset, 120, offset + 60, 1080), fill=(240, 200, 80))
+        for offset in range(0, width, 120):
+            draw.rectangle(
+                (offset, 120, offset + 60, height - 120), fill=(240, 200, 80)
+            )
         image.save(source / f"写真{index}.png")
     return {
         path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
@@ -231,8 +235,18 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
             "return document.querySelectorAll('.viewer-pane').length >= 2;"
         )
     )
+    view.click('button[title^="One image pixel per physical display pixel"]')
+    view.wait(lambda: view.execute("""
+        const images = [...document.querySelectorAll('.photo-canvas img')];
+        return images.length === 2 && images.every(image => {
+            const bounds = image.getBoundingClientRect();
+            const ratio = Math.min(bounds.width / image.naturalWidth,
+                bounds.height / image.naturalHeight) * window.devicePixelRatio;
+            return image.naturalWidth >= 1800 && Math.abs(ratio - 1) < 0.01;
+        });
+    """))
     view.click('button[aria-label="Single photo view"]')
-    view.click('button[title^="Show actual image pixels"]')
+    view.click('button[title^="One image pixel per physical display pixel"]')
     view.wait(
         lambda: view.execute(
             "return document.querySelector('.zoom-label')?.textContent !== 'Fit' && document.querySelector('.photo-canvas img')?.naturalWidth === 1800;"
@@ -314,6 +328,7 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
         "bulkTagsPreserved": True,
         "atomicUndo": True,
         "compareAtLastPhoto": True,
+        "comparisonPixelsAccurateForDifferentSizes": True,
         "fullResolution": True,
         "collectionExport": True,
         "focusedDraftSavedOnNativeClose": True,

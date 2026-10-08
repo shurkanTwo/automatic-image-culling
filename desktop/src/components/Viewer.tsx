@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Expand,
   Scan,
@@ -25,70 +25,131 @@ export default function Viewer({
   onActive: (id: string) => void;
 }) {
   const [zoom, setZoom] = useState(1);
+  const [pixelMode, setPixelMode] = useState(false);
+  const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
+  const [paneSizes, setPaneSizes] = useState<
+    Record<string, { width: number; height: number }>
+  >({});
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [wantActualSize, setWantActualSize] = useState(false);
   const [detailRevision, setDetailRevision] = useState(0);
   const [preparingDetail, setPreparingDetail] = useState(false);
-  const [loadedImage, setLoadedImage] = useState<{
-    path: string;
-    width: number;
-    height: number;
-  } | null>(null);
+  const [loadedImages, setLoadedImages] = useState<
+    Record<string, { path: string; width: number; height: number }>
+  >({});
+  const panes = useRef<Record<string, HTMLDivElement>>({});
+  const measurePanes = useCallback(() => {
+    const measured = Object.fromEntries(
+      Object.entries(panes.current).map(([id, node]) => [
+        id,
+        { width: node.clientWidth, height: node.clientHeight },
+      ]),
+    );
+    setPaneSizes((current) =>
+      JSON.stringify(current) === JSON.stringify(measured) ? current : measured,
+    );
+    setPixelRatio(window.devicePixelRatio || 1);
+  }, []);
   const drag = useRef<{
     x: number;
     y: number;
     panX: number;
     panY: number;
   } | null>(null);
-  const pane = useRef<HTMLDivElement | null>(null);
   const identity = photos.map((photo) => photo.id).join(",");
   useEffect(() => {
     setZoom(1);
+    setPixelMode(false);
     setPan({ x: 0, y: 0 });
     setWantActualSize(false);
     drag.current = null;
   }, [identity]);
-  const firstPath = photos[0]?.detailPath ?? photos[0]?.previewPath;
   useEffect(() => {
-    const node = pane.current;
+    measurePanes();
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measurePanes);
+    Object.values(panes.current).forEach((node) => observer?.observe(node));
+    const display =
+      typeof window.matchMedia === "function"
+        ? window.matchMedia(`(resolution: ${pixelRatio}dppx)`)
+        : null;
+    display?.addEventListener("change", measurePanes);
+    window.addEventListener("resize", measurePanes);
+    return () => {
+      observer?.disconnect();
+      display?.removeEventListener("change", measurePanes);
+      window.removeEventListener("resize", measurePanes);
+    };
+  }, [identity, measurePanes, pixelRatio]);
+  const allDetails = photos.every((photo) => photo.detailPath);
+  useEffect(() => {
+    if (allDetails) return;
+    setPixelMode(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [allDetails]);
+  useEffect(() => {
     if (
       !wantActualSize ||
       loadingDetail ||
       preparingDetail ||
-      !photos.every((photo) => photo.detailPath) ||
-      !node ||
-      loadedImage?.path !== firstPath
+      !allDetails ||
+      !photos.length
     )
       return;
-    if (
-      !loadedImage.width ||
-      !loadedImage.height ||
-      !node.clientWidth ||
-      !node.clientHeight
-    )
-      return;
-    const fitRatio = Math.min(
-      node.clientWidth / loadedImage.width,
-      node.clientHeight / loadedImage.height,
-    );
-    setZoom(1 / fitRatio);
+    const ready = photos.every((photo) => {
+      const image = loadedImages[photo.id];
+      const size = paneSizes[photo.id];
+      return (
+        image?.path === photo.detailPath &&
+        image.width > 0 &&
+        image.height > 0 &&
+        size?.width > 0 &&
+        size.height > 0
+      );
+    });
+    if (!ready) return;
+    setPixelMode(true);
+    setZoom(1);
     setPan({ x: 0, y: 0 });
     setWantActualSize(false);
   }, [
     wantActualSize,
     loadingDetail,
     preparingDetail,
-    loadedImage,
-    firstPath,
+    loadedImages,
+    paneSizes,
+    allDetails,
     photos,
   ]);
+  function paneScale(id: string) {
+    if (!pixelMode) return zoom;
+    const image = loadedImages[id];
+    const size = paneSizes[id];
+    if (!image || !size?.width || !size.height) return zoom;
+    const fitRatio = Math.min(
+      size.width / image.width,
+      size.height / image.height,
+    );
+    // Each pane has its own fit ratio; 100% maps one source pixel to one physical display pixel.
+    return zoom / (fitRatio * pixelRatio);
+  }
+  function fit() {
+    setWantActualSize(false);
+    setPixelMode(false);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
   function changeZoom(next: number) {
     setWantActualSize(false);
-    setZoom(Math.min(64, Math.max(1, next)));
+    setZoom(Math.min(64, Math.max(pixelMode ? 0.05 : 1, next)));
     if (next <= 1) setPan({ x: 0, y: 0 });
   }
   async function actualSize() {
     if (!photos.length || loadingDetail || preparingDetail) return;
+    measurePanes();
     setWantActualSize(true);
     if (photos.every((photo) => photo.detailPath)) return;
     try {
@@ -102,7 +163,7 @@ export default function Viewer({
     try {
       const ready = await onDetail(photos);
       if (ready) {
-        setLoadedImage(null);
+        setLoadedImages({});
         setDetailRevision((value) => value + 1);
       }
       return ready;
@@ -117,19 +178,17 @@ export default function Viewer({
       <div className="viewer-tools">
         <div className="segmented compact">
           <button
-            onClick={() => {
-              setWantActualSize(false);
-              changeZoom(1);
-            }}
-            className={zoom === 1 ? "active" : ""}
+            onClick={fit}
+            className={!pixelMode && zoom === 1 ? "active" : ""}
           >
             <Expand size={15} />
             Fit
           </button>
           <button
             onClick={() => void actualSize()}
+            className={pixelMode && zoom === 1 ? "active" : ""}
             disabled={loadingDetail || preparingDetail || wantActualSize}
-            title="Show actual image pixels; prepares full-resolution detail when needed"
+            title="One image pixel per physical display pixel; prepares full-resolution detail when needed"
           >
             {wantActualSize ? (
               <>
@@ -150,7 +209,11 @@ export default function Viewer({
           <ZoomOut size={17} />
         </button>
         <span className="zoom-label">
-          {zoom === 1 ? "Fit" : `${zoom.toFixed(1)}×`}
+          {pixelMode
+            ? `${Math.round(zoom * 100)}%`
+            : zoom === 1
+              ? "Fit"
+              : `${zoom.toFixed(1)}×`}
         </span>
         <button
           className="icon-button"
@@ -181,17 +244,20 @@ export default function Viewer({
         </button>
       </div>
       <div className={`viewer-panes count-${photos.length}`}>
-        {photos.map((photo, index) => (
+        {photos.map((photo) => (
           <div className="viewer-pane" key={photo.id}>
             <div
-              className={`photo-canvas ${zoom > 1 ? "zoomed" : ""}`}
-              ref={index === 0 ? pane : undefined}
+              className={`photo-canvas ${paneScale(photo.id) > 1 ? "zoomed" : ""}`}
+              ref={(node) => {
+                if (node) panes.current[photo.id] = node;
+                else delete panes.current[photo.id];
+              }}
               onWheel={(event) => {
                 changeZoom(event.deltaY < 0 ? zoom * 1.12 : zoom / 1.12);
               }}
               onPointerDown={(event) => {
                 onActive(photo.id);
-                if (zoom <= 1) return;
+                if (paneScale(photo.id) <= 1) return;
                 event.currentTarget.setPointerCapture(event.pointerId);
                 drag.current = {
                   x: event.clientX,
@@ -203,7 +269,7 @@ export default function Viewer({
               onPointerMove={(event) => {
                 if (!drag.current) return;
                 const bounds = event.currentTarget.getBoundingClientRect();
-                const limit = (zoom - 1) * 50;
+                const limit = Math.max(0, paneScale(photo.id) - 1) * 50;
                 const x =
                   drag.current.panX +
                   ((event.clientX - drag.current.x) / bounds.width) * 100;
@@ -225,30 +291,31 @@ export default function Viewer({
                 drag.current = null;
               }}
               onDoubleClick={() => {
-                if (zoom !== 1) changeZoom(1);
+                if (pixelMode || zoom !== 1) fit();
                 else void actualSize();
               }}
             >
               <div
                 className="transformed-photo"
                 style={{
-                  transform: `translate(${pan.x}%, ${pan.y}%) scale(${zoom})`,
+                  transform: `translate(${pan.x}%, ${pan.y}%) scale(${paneScale(photo.id)})`,
                 }}
               >
                 <PhotoImage
                   path={photo.detailPath ?? photo.previewPath}
                   retryVersion={photo.detailPath ? detailRevision : 0}
                   alt={photo.filename}
-                  onLoad={
-                    index === 0
-                      ? (image) =>
-                          setLoadedImage({
-                            path: photo.detailPath ?? photo.previewPath,
-                            width: image.naturalWidth,
-                            height: image.naturalHeight,
-                          })
-                      : undefined
-                  }
+                  onLoad={(image) => {
+                    setLoadedImages((current) => ({
+                      ...current,
+                      [photo.id]: {
+                        path: photo.detailPath ?? photo.previewPath,
+                        width: image.naturalWidth,
+                        height: image.naturalHeight,
+                      },
+                    }));
+                    measurePanes();
+                  }}
                   onError={() => setWantActualSize(false)}
                 />
               </div>
@@ -283,7 +350,7 @@ export default function Viewer({
         ))}
       </div>
       <div className="viewer-footnote">
-        {zoom !== 1
+        {pixelMode || zoom !== 1
           ? "Drag to inspect · double-click to fit"
           : "Scroll to zoom · double-click for 100%"}
         <span>Originals stay untouched</span>
