@@ -49,6 +49,7 @@ import type {
   PhotoPatch,
   Scope,
   Sort,
+  SelectionMode,
 } from "./types";
 import { useProject } from "./useProject";
 import PhotoCard from "./components/PhotoCard";
@@ -56,11 +57,13 @@ import Viewer from "./components/Viewer";
 import Inspector from "./components/Inspector";
 
 type View = "grid" | "single" | "compare";
+const GRID_PAGE_SIZE = 180;
+const GRID_PREFETCH_DISTANCE = 600;
 const filters: { id: Filter; label: string; icon: typeof Image }[] = [
   { id: "all", label: "All photographs", icon: Image },
   { id: "favorite", label: "Favorites", icon: Heart },
   { id: "unreviewed", label: "Unreviewed", icon: Circle },
-  { id: "pass", label: "Passed", icon: Minus },
+  { id: "pass", label: "Discards", icon: Minus },
 ];
 export default function App() {
   const workspace = useProject();
@@ -126,10 +129,11 @@ export default function App() {
   const [view, setView] = useState<View>("grid");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  const [renderLimit, setRenderLimit] = useState(180);
+  const [renderLimit, setRenderLimit] = useState(GRID_PAGE_SIZE);
   const [collectionName, setCollectionName] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportTarget, setExportTarget] = useState("favorites");
+  const [includeDiscards, setIncludeDiscards] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [pluginPath, setPluginPath] = useState<string | null>(null);
@@ -137,6 +141,11 @@ export default function App() {
   const [importAction, setImportAction] = useState(false);
   const [importDirectory, setImportDirectory] = useState<string | null>(null);
   const [includeSubfolders, setIncludeSubfolders] = useState(false);
+  const [automaticSelectionEnabled, setAutomaticSelectionEnabled] =
+    useState(true);
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("cautious");
+  const [firstPassAction, setFirstPassAction] = useState(false);
+  const firstPassActionRef = useRef(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const creatingProjectRef = useRef(false);
@@ -146,10 +155,18 @@ export default function App() {
   useEffect(() => {
     setDismissedImportError(null);
   }, [project?.id]);
+  useEffect(() => {
+    setSelectionMode(project?.selectionMode ?? "cautious");
+  }, [project?.id, project?.selectionMode]);
   const projectIdRef = useRef(project?.id);
   projectIdRef.current = project?.id;
   const searchRef = useRef<HTMLInputElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const gridSentinelRef = useRef<HTMLDivElement | null>(null);
+  const lastScrolledPhotoRef = useRef<{
+    id: string | null;
+    container: HTMLDivElement;
+  } | null>(null);
   const filmstripRef = useRef<HTMLDivElement | null>(null);
   const photos = useMemo(
     () => (project ? visiblePhotos(project, options) : []),
@@ -193,6 +210,22 @@ export default function App() {
     0;
   const reviewed =
     project?.photos.filter((photo) => photo.reviewed).length ?? 0;
+  const discards =
+    project?.photos.filter((photo) => photo.decision === "pass").length ?? 0;
+  const automaticChoices =
+    project?.photos.filter((photo) => photo.decisionSource === "automatic")
+      .length ?? 0;
+  const exportCollection = project?.collections.find(
+    (collection) => collection.id === exportTarget,
+  );
+  const exportSelectedCount =
+    exportTarget === "favorites"
+      ? favorites
+      : (project?.photos.filter(
+          (photo) =>
+            exportCollection?.photoIds.includes(photo.id) &&
+            photo.decision !== "pass",
+        ).length ?? 0);
   const processing = project?.importStatus === "running";
 
   useEffect(() => {
@@ -219,13 +252,98 @@ export default function App() {
     );
   }, [photos, activeId]);
   useEffect(() => {
-    setRenderLimit(180);
-  }, [options]);
+    setRenderLimit(GRID_PAGE_SIZE);
+    if (gridRef.current) gridRef.current.scrollTop = 0;
+  }, [options, project?.id]);
+  useEffect(() => {
+    // Returning from the viewer should keep the current photograph available.
+    const index =
+      view === "grid" ? photos.findIndex((photo) => photo.id === activeId) : -1;
+    setRenderLimit(
+      Math.max(
+        GRID_PAGE_SIZE,
+        Math.ceil((index + 1) / GRID_PAGE_SIZE) * GRID_PAGE_SIZE,
+      ),
+    );
+  }, [view]);
+  useEffect(() => {
+    const container = gridRef.current;
+    const sentinel = gridSentinelRef.current;
+    if (
+      view !== "grid" ||
+      !container ||
+      !sentinel ||
+      renderLimit >= photos.length
+    )
+      return;
+
+    let disposed = false;
+    let requested = false;
+    function loadNextPage() {
+      // An observer can report the same intersection more than once before
+      // React commits the next page. Each observed page advances only once.
+      if (disposed || requested) return;
+      requested = true;
+      setRenderLimit((previous) =>
+        Math.min(previous + GRID_PAGE_SIZE, photos.length),
+      );
+    }
+    if (typeof IntersectionObserver !== "undefined") {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (
+            entries.some(
+              (entry) => entry.target === sentinel && entry.isIntersecting,
+            )
+          )
+            loadNextPage();
+        },
+        {
+          root: container,
+          rootMargin: `0px 0px ${GRID_PREFETCH_DISTANCE}px 0px`,
+        },
+      );
+      observer.observe(sentinel);
+      return () => {
+        disposed = true;
+        observer.disconnect();
+      };
+    }
+
+    // Older webviews still load automatically, including when the first page
+    // does not fill the viewport. Recheck after each appended page and resize.
+    const scrollContainer = container;
+    function checkViewport() {
+      if (
+        scrollContainer.clientHeight > 0 &&
+        scrollContainer.scrollHeight -
+          scrollContainer.scrollTop -
+          scrollContainer.clientHeight <=
+          GRID_PREFETCH_DISTANCE
+      )
+        loadNextPage();
+    }
+    container.addEventListener("scroll", checkViewport, { passive: true });
+    window.addEventListener("resize", checkViewport);
+    checkViewport();
+    return () => {
+      disposed = true;
+      container.removeEventListener("scroll", checkViewport);
+      window.removeEventListener("resize", checkViewport);
+    };
+  }, [view, options, project?.id, photos.length, renderLimit]);
   useEffect(() => {
     const container = view === "grid" ? gridRef.current : filmstripRef.current;
-    container
-      ?.querySelector(".photo-card.focused")
-      ?.scrollIntoView({ block: "nearest", inline: "center" });
+    if (!container) {
+      lastScrolledPhotoRef.current = null;
+      return;
+    }
+    const previous = lastScrolledPhotoRef.current;
+    if (previous?.id === activeId && previous.container === container) return;
+    const focused = container.querySelector(".photo-card.focused");
+    if (!focused) return;
+    focused.scrollIntoView({ block: "nearest", inline: "nearest" });
+    lastScrolledPhotoRef.current = { id: activeId, container };
   }, [activeId, view, renderLimit]);
   useEffect(() => {
     if (!toast) return;
@@ -264,7 +382,7 @@ export default function App() {
     setSelected(next ? [next] : []);
     const index = photos.findIndex((photo) => photo.id === next);
     if (index >= renderLimit)
-      setRenderLimit(Math.ceil((index + 1) / 180) * 180);
+      setRenderLimit(Math.ceil((index + 1) / GRID_PAGE_SIZE) * GRID_PAGE_SIZE);
   }
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -299,7 +417,8 @@ export default function App() {
         navigate(-1);
       } else if (key === "f")
         mark({ decision: "favorite", reviewed: true }, "Favorite");
-      else if (key === "p") mark({ decision: "pass", reviewed: true }, "Pass");
+      else if (key === "p")
+        mark({ decision: "pass", reviewed: true }, "Discard");
       else if (key === "u")
         mark({ decision: "undecided", reviewed: false }, "Undecided");
       else if (/^[0-5]$/.test(key))
@@ -408,6 +527,8 @@ export default function App() {
       const directory = await chooseFolder();
       if (!directory) return;
       setIncludeSubfolders(false);
+      setAutomaticSelectionEnabled(true);
+      setSelectionMode("cautious");
       setCreateError(null);
       setImportDirectory(directory);
     } catch (reason) {
@@ -432,6 +553,8 @@ export default function App() {
         name,
         importDirectory,
         includeSubfolders,
+        automaticSelectionEnabled,
+        selectionMode,
       );
       created = true;
       load(value);
@@ -465,6 +588,36 @@ export default function App() {
       report(reason);
     } finally {
       setImportAction(false);
+    }
+  }
+  async function runAutomaticFirstPass(clear = false) {
+    if (
+      !project ||
+      processing ||
+      importAction ||
+      creatingProjectRef.current ||
+      firstPassActionRef.current
+    )
+      return;
+    const projectId = project.id;
+    firstPassActionRef.current = true;
+    setFirstPassAction(true);
+    try {
+      commitDrafts();
+      if (!(await waitForSaves()) || projectIdRef.current !== projectId) return;
+      if (
+        !(await workspace.automaticFirstPass(selectionMode, clear)) ||
+        projectIdRef.current !== projectId
+      )
+        return;
+      setToast(
+        clear
+          ? "Automatic choices removed. Manual choices and star ratings are preserved."
+          : "Automatic first pass requested. Review the choices before exporting.",
+      );
+    } finally {
+      firstPassActionRef.current = false;
+      setFirstPassAction(false);
     }
   }
   async function detail(values: Photo[]) {
@@ -501,8 +654,13 @@ export default function App() {
         destination,
         exportTarget === "favorites" ? null : exportTarget,
         exportTarget === "favorites",
+        includeDiscards,
       );
-      setToast(`Exported ${result.count} photographs to ${result.path}`);
+      setToast(
+        result.selectedCount != null && result.discardCount != null
+          ? `Exported ${result.selectedCount} selected photographs and ${result.discardCount} Lightroom Rejects to ${result.path}`
+          : `Exported ${result.count} photographs to ${result.path}`,
+      );
       setExportOpen(false);
     } catch (reason) {
       report(reason);
@@ -703,7 +861,7 @@ export default function App() {
           </main>
           <footer className="landing-footer">
             Photo Select <span>For the photographs that matter.</span>
-            <span>v{state?.version ?? "0.2.2"}</span>
+            <span>v{state?.version ?? "0.2.3"}</span>
           </footer>
         </>
       ) : (
@@ -827,6 +985,67 @@ export default function App() {
                 </p>
               )}
             </div>
+            <div className="sidebar-section first-pass-section">
+              <div className="sidebar-section-title">
+                <span>AUTOMATIC FIRST PASS</span>
+              </div>
+              <label>
+                Selection mode
+                <select
+                  aria-label="Automatic first-pass mode"
+                  value={selectionMode}
+                  disabled={processing || firstPassAction || creatingProject}
+                  onChange={(event) =>
+                    setSelectionMode(event.target.value as SelectionMode)
+                  }
+                >
+                  <option value="cautious">Cautious</option>
+                  <option value="stronger">Stronger</option>
+                </select>
+              </label>
+              <p className="quiet-note">
+                {selectionMode === "cautious"
+                  ? "Favors clear technical standouts; discards only obvious problems."
+                  : "Selects fewer favorites and discards clearly weaker near-matching frames."}
+              </p>
+              <button
+                className="text-button"
+                disabled={
+                  processing ||
+                  firstPassAction ||
+                  importAction ||
+                  creatingProject ||
+                  state?.engineAvailable === false
+                }
+                onClick={() => void runAutomaticFirstPass()}
+              >
+                <Sparkles size={14} />
+                {firstPassAction
+                  ? "Updating first pass…"
+                  : "Run automatic first pass"}
+              </button>
+              {automaticChoices > 0 && (
+                <button
+                  className="text-button"
+                  disabled={
+                    processing ||
+                    firstPassAction ||
+                    importAction ||
+                    creatingProject
+                  }
+                  onClick={() => void runAutomaticFirstPass(true)}
+                >
+                  <Undo2 size={14} /> Undo automatic choices
+                </button>
+              )}
+              <p className="quiet-note">
+                {automaticChoices} automatic{" "}
+                {automaticChoices === 1 ? "choice" : "choices"} ·{" "}
+                {project.automaticSelectionEnabled
+                  ? "Enabled for rescans"
+                  : "Off for rescans"}
+              </p>
+            </div>
             <div className="sidebar-bottom">
               <div className="review-summary">
                 <span>Review progress</span>
@@ -856,6 +1075,7 @@ export default function App() {
                 className="text-button"
                 disabled={
                   processing ||
+                  firstPassAction ||
                   importAction ||
                   creatingProject ||
                   state?.engineAvailable === false
@@ -908,6 +1128,7 @@ export default function App() {
                   disabled={saving > 0}
                   onClick={() => {
                     setExportTarget(scopeCollection?.id ?? "favorites");
+                    setIncludeDiscards(true);
                     setExportOpen(true);
                   }}
                 >
@@ -1043,8 +1264,9 @@ export default function App() {
                   {scopeGroup ? (
                     <>
                       <Sparkles size={13} />
-                      Suggested representatives have a sparkle. Favorites are
-                      always your decision.
+                      Suggested representatives have a sparkle. Automatic
+                      choices can start your shortlist; your manual choices take
+                      priority.
                     </>
                   ) : (
                     <>
@@ -1171,15 +1393,11 @@ export default function App() {
                       ))}
                     </div>
                     {renderLimit < photos.length && (
-                      <button
-                        className="load-more secondary-button"
-                        onClick={() =>
-                          setRenderLimit((previous) => previous + 180)
-                        }
-                      >
-                        Show next {Math.min(180, photos.length - renderLimit)}{" "}
-                        photographs <ChevronDown size={15} />
-                      </button>
+                      <div
+                        className="grid-sentinel"
+                        ref={gridSentinelRef}
+                        aria-hidden="true"
+                      />
                     )}
                   </div>
                 ) : (
@@ -1265,7 +1483,7 @@ export default function App() {
             <footer className="workspace-footer">
               <span>
                 <kbd>←</kbd>
-                <kbd>→</kbd> Navigate <kbd>F</kbd> Favorite <kbd>P</kbd> Pass{" "}
+                <kbd>→</kbd> Navigate <kbd>F</kbd> Favorite <kbd>P</kbd> Discard{" "}
                 <kbd>0–5</kbd> Rate
               </span>
               <span>
@@ -1340,6 +1558,40 @@ export default function App() {
                 ? "Import photographs in this folder and all of its subfolders."
                 : "Import only photographs directly in this folder. Subfolders are skipped."}{" "}
               Future rescans use this same scope.
+            </p>
+            <label className="import-subfolders">
+              <input
+                type="checkbox"
+                checked={automaticSelectionEnabled}
+                disabled={creatingProject}
+                aria-describedby="import-first-pass"
+                onChange={(event) =>
+                  setAutomaticSelectionEnabled(event.target.checked)
+                }
+              />
+              Automatic first pass
+            </label>
+            <p id="import-first-pass">
+              After analysis, preselect technically strong photographs and mark
+              obvious problems as discards. Review these choices; originals and
+              your star ratings stay untouched.
+            </p>
+            <label className="first-pass-mode-label">
+              Selection mode
+              <select
+                aria-label="Import selection mode"
+                value={selectionMode}
+                disabled={creatingProject || !automaticSelectionEnabled}
+                onChange={(event) =>
+                  setSelectionMode(event.target.value as SelectionMode)
+                }
+              >
+                <option value="cautious">Cautious — only clear choices</option>
+                <option value="stronger">Stronger — a tighter shortlist</option>
+              </select>
+            </label>
+            <p className="quiet-note">
+              Technical quality cannot decide which moments matter to you.
             </p>
             {createError && (
               <p className="inline-error" role="alert">
@@ -1479,6 +1731,24 @@ export default function App() {
                 ))}
               </select>
             </label>
+            <label className="import-subfolders export-discards">
+              <input
+                type="checkbox"
+                checked={includeDiscards}
+                disabled={exporting}
+                onChange={(event) => setIncludeDiscards(event.target.checked)}
+              />
+              Include discards as Lightroom Rejects
+            </label>
+            <p className="quiet-note">
+              Favorites become Lightroom Picks. Included discards become Rejects
+              and stay outside the shortlist collection. No original files are
+              deleted.
+            </p>
+            <p className="quiet-note">
+              {exportSelectedCount} selected photographs ·{" "}
+              {includeDiscards ? discards : 0} Rejects
+            </p>
             <div className="export-help">
               <strong>In Lightroom Classic</strong>
               <ol>
@@ -1501,11 +1771,8 @@ export default function App() {
               disabled={
                 exporting ||
                 saving > 0 ||
-                (exportTarget === "favorites"
-                  ? favorites === 0
-                  : !project.collections.find(
-                      (collection) => collection.id === exportTarget,
-                    )?.photoIds.length)
+                (exportSelectedCount === 0 &&
+                  (!includeDiscards || discards === 0))
               }
               onClick={() => void exportSelection()}
             >

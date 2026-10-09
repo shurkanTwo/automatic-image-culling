@@ -1,4 +1,6 @@
-use crate::core::{path_string, Group, Photo, Result, Store};
+use crate::core::{
+    path_string, validate_selection_mode, Group, Photo, Project, Result, Store, Suggestion,
+};
 use crate::process::ManagedChild;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,10 +125,23 @@ impl Engine {
         let _ = child.wait();
         let stdout = output.join().unwrap_or_default();
         let _ = diagnostics.join();
+        let probes: Vec<Value> = stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|v| v["type"] == "self-test")
+            .collect();
         success
-            && stdout.lines().any(|line| {
-                serde_json::from_str::<Value>(line)
-                    .is_ok_and(|v| v["type"] == "self-test" && v["success"] == true)
+            && probes.len() == 1
+            && probes.iter().all(|v| {
+                v["success"] == true
+                    && v["version"] == env!("CARGO_PKG_VERSION")
+                    && v["checks"].as_array().is_some_and(|checks| {
+                        ["folder-scope", "automatic-selection"]
+                            .iter()
+                            .all(|required| {
+                                checks.iter().any(|check| check.as_str() == Some(required))
+                            })
+                    })
             })
     }
 }
@@ -155,6 +170,7 @@ struct ScanSummary {
     total: u64,
     failed: u64,
     seen: HashSet<String>,
+    suggestions: Option<Vec<Suggestion>>,
 }
 struct Job {
     id: String,
@@ -214,6 +230,9 @@ impl Workers {
         self
     }
     pub fn start(&self, project_id: &str) -> Result<String> {
+        self.start_configured(project_id, None)
+    }
+    fn start_configured(&self, project_id: &str, selection_mode: Option<&str>) -> Result<String> {
         let mut jobs = self.jobs.lock().map_err(|e| e.to_string())?;
         if jobs.contains_key(project_id) {
             return Err("An import is already running for this project".into());
@@ -226,6 +245,9 @@ impl Workers {
                 "Wait for detailed previews to finish before reimporting this project".into(),
             );
         }
+        if let Some(mode) = selection_mode {
+            self.store.configure_first_pass(project_id, mode)?;
+        }
         let project = self.store.project(project_id)?;
         self.store.validate_source_dir(&project.source_dir)?;
         let cache = self.store.prepare_cache(project_id)?;
@@ -234,7 +256,9 @@ impl Workers {
             .arg("--source")
             .arg(&project.source_dir)
             .arg("--cache")
-            .arg(path_string(&cache));
+            .arg(path_string(&cache))
+            .arg("--selection-mode")
+            .arg(&project.selection_mode);
         if !project.include_subfolders {
             command.arg("--no-subfolders");
         }
@@ -282,13 +306,20 @@ impl Workers {
                 .ok()
                 .map(|summary| (summary.processed, summary.total, summary.failed))
                 .unwrap_or((0, 0, 0));
+            // Serialize cancellation with the successful completion transaction. Once committed,
+            // the job is finished and later cancellation requests cannot relabel its decisions.
+            let mut finishing_jobs = workers.jobs.lock().unwrap_or_else(|e| e.into_inner());
             let cancelled = job.cancelled.load(Ordering::SeqCst);
             let (mut phase, reason) = if cancelled {
                 ("cancelled", None)
             } else {
                 match (result, status) {
                     (Ok(summary), Ok(s)) if s.success() => {
-                        match workers.store.finish_scan(&project_id, &summary.seen) {
+                        match workers.store.finish_scan_with_suggestions(
+                            &project_id,
+                            &summary.seen,
+                            summary.suggestions.as_deref(),
+                        ) {
                             Ok(()) => ("complete", None),
                             Err(error) => ("error", Some(error)),
                         }
@@ -309,9 +340,13 @@ impl Workers {
                 "cancelled" => "cancelled",
                 _ => "failed",
             };
-            let persistence = workers
-                .store
-                .set_status(&project_id, status, reason.clone());
+            let persistence = if phase == "complete" {
+                Ok(())
+            } else {
+                workers
+                    .store
+                    .set_status(&project_id, status, reason.clone())
+            };
             let final_message = match persistence {
                 Ok(()) => reason,
                 Err(e) => {
@@ -329,9 +364,8 @@ impl Workers {
                 failed: counts.2,
                 message: final_message,
             });
-            if let Ok(mut jobs) = workers.jobs.lock() {
-                jobs.remove(&project_id);
-            }
+            finishing_jobs.remove(&project_id);
+            drop(finishing_jobs);
             workers.updated(&project_id);
         });
         Ok(id)
@@ -348,6 +382,8 @@ impl Workers {
         let mut failed = 0;
         let mut complete = false;
         let mut seen = HashSet::new();
+        let mut suggestions = None;
+        let mut grouped = false;
         let mut last_update = Instant::now() - Duration::from_secs(1);
         loop {
             match read_record(&mut reader)? {
@@ -360,6 +396,7 @@ impl Workers {
                     total,
                     failed,
                     seen,
+                    suggestions,
                 });
             }
             if line.trim().is_empty() {
@@ -383,13 +420,18 @@ impl Workers {
                     phase = Some("scan");
                 }
                 "photo" => {
+                    if grouped || suggestions.is_some() {
+                        return Err("Engine sent photos after grouping".into());
+                    }
                     let photo: Photo = serde_json::from_value(
                         record.get("photo").cloned().ok_or("Missing photo")?,
                     )
                     .map_err(|e| e.to_string())?;
                     let photo_id = photo.id.clone();
                     self.store.ingest_photo(project_id, photo)?;
-                    seen.insert(photo_id);
+                    if !seen.insert(photo_id) {
+                        return Err("Engine sent a duplicate photo".into());
+                    }
                 }
                 "progress" => {
                     processed = number(&record, "processed")?;
@@ -398,12 +440,31 @@ impl Workers {
                     phase = Some("analysis");
                 }
                 "groups" => {
+                    if grouped || suggestions.is_some() {
+                        return Err("Engine sent duplicate or misplaced grouping".into());
+                    }
+                    grouped = true;
                     let groups: Vec<Group> = serde_json::from_value(
                         record.get("groups").cloned().ok_or("Missing groups")?,
                     )
                     .map_err(|e| e.to_string())?;
                     self.store.ingest_groups(project_id, groups)?;
                     phase = Some("grouping");
+                }
+                "suggestions" => {
+                    if !grouped || suggestions.is_some() {
+                        return Err("Engine sent duplicate or misplaced suggestions".into());
+                    }
+                    suggestions = Some(
+                        serde_json::from_value::<Vec<Suggestion>>(
+                            record
+                                .get("suggestions")
+                                .cloned()
+                                .ok_or("Missing automatic suggestions")?,
+                        )
+                        .map_err(|e| e.to_string())?,
+                    );
+                    phase = Some("selection");
                 }
                 "complete" => {
                     complete = true;
@@ -459,7 +520,47 @@ impl Workers {
             total,
             failed,
             seen,
+            suggestions,
         })
+    }
+    pub fn automatic_first_pass(
+        &self,
+        project_id: &str,
+        selection_mode: Option<&str>,
+    ) -> Result<Project> {
+        let jobs = self.jobs.lock().map_err(|e| e.to_string())?;
+        if jobs
+            .keys()
+            .any(|key| key == project_id || key.starts_with(&format!("detail:{project_id}:")))
+        {
+            return Err("Wait for this project's import or detailed previews to finish before automatic selection".into());
+        }
+        let project = self.store.project(project_id)?;
+        let mode = selection_mode.unwrap_or(&project.selection_mode);
+        validate_selection_mode(mode)?;
+        if project.first_pass_ready && project.selection_mode == mode {
+            let project = self.store.apply_cached_first_pass(project_id, mode)?;
+            drop(jobs);
+            self.updated(project_id);
+            return Ok(project);
+        }
+        let mode = mode.to_string();
+        drop(jobs);
+        self.start_configured(project_id, Some(&mode))?;
+        self.store.project(project_id)
+    }
+    pub fn clear_automatic_selection(&self, project_id: &str) -> Result<Project> {
+        let jobs = self.jobs.lock().map_err(|e| e.to_string())?;
+        if jobs
+            .keys()
+            .any(|key| key == project_id || key.starts_with(&format!("detail:{project_id}:")))
+        {
+            return Err("Wait for this project's import or detailed previews to finish before clearing automatic selection".into());
+        }
+        let project = self.store.clear_automatic_selection(project_id)?;
+        drop(jobs);
+        self.updated(project_id);
+        Ok(project)
     }
     pub fn open_project(&self, path: &str) -> Result<crate::core::Project> {
         let id = self.store.identify_project(path)?;

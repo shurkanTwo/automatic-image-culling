@@ -161,6 +161,153 @@ def make_photos(source: Path) -> dict[Path, tuple[str, int]]:
     }
 
 
+def automatic_selection_journey(
+    view: NativeWebview, source: Path, output: Path
+) -> None:
+    source.mkdir()
+    sharp = Image.new("RGB", (800, 600), (35, 50, 80))
+    draw = ImageDraw.Draw(sharp)
+    for x in range(0, 800, 20):
+        draw.rectangle((x, 40, x + 10, 560), fill=(240, 220, 170))
+    sharp.save(source / "sharp.png")
+    Image.new("RGB", (800, 600), "black").save(source / "blank.png")
+    (source / "broken.jpg").write_bytes(b"not an image")
+    fingerprints = {path: path.read_bytes() for path in source.iterdir()}
+    project = view.invoke(
+        "create_project",
+        {
+            "name": "Automatic first pass",
+            "sourceDir": str(source),
+            "selectionMode": "cautious",
+        },
+    )
+    args = {"projectId": project["id"]}
+    view.invoke("start_import", args)
+
+    def completed():
+        current = view.invoke("get_project", args)
+        if current["importStatus"] == "failed":
+            raise RuntimeError(current["importError"])
+        return current if current["importStatus"] == "completed" else None
+
+    project = view.wait(completed)
+    photos = {photo["filename"]: photo for photo in project["photos"]}
+    if (
+        not project["automaticSelectionEnabled"]
+        or not project["firstPassReady"]
+        or photos["sharp.png"]["decision"] != "favorite"
+        or photos["blank.png"]["decision"] != "pass"
+        or photos["broken.jpg"]["decision"] != "undecided"
+        or photos["blank.png"]["decisionSource"] != "automatic"
+        or not photos["blank.png"]["suggestionReason"]
+        or photos["blank.png"]["reviewed"]
+        or photos["blank.png"]["ratingTouched"]
+    ):
+        raise RuntimeError(
+            "Automatic first pass did not apply explainable safe choices"
+        )
+    view.invoke(
+        "update_photo",
+        {
+            **args,
+            "photoId": photos["sharp.png"]["id"],
+            "patch": {"decision": "undecided"},
+        },
+    )
+    view.invoke("automatic_first_pass", {**args, "selectionMode": "stronger"})
+    project = view.wait(completed)
+    sharp_photo = next(
+        photo for photo in project["photos"] if photo["filename"] == "sharp.png"
+    )
+    if (
+        sharp_photo["decision"] != "undecided"
+        or sharp_photo["decisionSource"] != "manual"
+    ):
+        raise RuntimeError("Rerunning another mode overwrote a manual choice")
+    export = output / "automatic-discards.json"
+    view.invoke(
+        "export_selection",
+        {
+            **args,
+            "destination": str(export),
+            "onlyFavorites": True,
+            "includeDiscards": True,
+        },
+    )
+    manifest = json.loads(export.read_text())
+    if (
+        manifest["schemaVersion"] != 2
+        or len(manifest["photos"]) != 1
+        or manifest["photos"][0]["catalogFlag"] != "reject"
+        or manifest["photos"][0]["addToCollection"]
+    ):
+        raise RuntimeError(
+            "Discard-only export lost Reject flag or added a collection member"
+        )
+    project = view.invoke("clear_automatic_selection", args)
+    if project["automaticSelectionEnabled"] or any(
+        photo["decisionSource"] == "automatic" for photo in project["photos"]
+    ):
+        raise RuntimeError("Undo automatic choices did not reset automation")
+    view.invoke("start_import", args)
+    project = view.wait(completed)
+    if any(photo["decision"] != "undecided" for photo in project["photos"]):
+        raise RuntimeError("Rescan reapplied automatic choices after undo")
+    for path, original in fingerprints.items():
+        if path.read_bytes() != original:
+            raise RuntimeError("Automatic analysis modified an original")
+
+
+def automatic_grid_journey(view: NativeWebview, source: Path) -> None:
+    source.mkdir()
+    image = Image.new("RGB", (40, 30), (70, 90, 120))
+    for index in range(210):
+        image.save(source / f"grid-{index:03}.png")
+    project = view.invoke(
+        "create_project",
+        {
+            "name": "Automatic grid",
+            "sourceDir": str(source),
+            "automaticSelectionEnabled": False,
+        },
+    )
+    args = {"projectId": project["id"]}
+    view.invoke("start_import", args)
+    view.wait(
+        lambda: view.invoke("get_project", args)["importStatus"] == "completed",
+        timeout=90,
+    )
+    view.command("POST", "/refresh", {})
+    view.wait(
+        lambda: view.execute("return Boolean(document.querySelector('.recent-card'));")
+    )
+    index = view.execute(
+        "return [...document.querySelectorAll('.recent-card')].findIndex(card => card.querySelector('strong').textContent === 'Automatic grid');"
+    )
+    view.click(f".recent-card:nth-child({index + 1})")
+    initial = view.wait(
+        lambda: view.execute(
+            "return document.querySelector('.photo-card.focused img')?.naturalWidth > 0 && document.querySelectorAll('.photo-card').length;"
+        )
+    )
+    if initial >= 210:
+        raise RuntimeError("Grid did not initially limit the large photo batch")
+    view.execute(
+        "const grid = document.querySelector('.grid-scroll'); grid.scrollTop = grid.scrollHeight; return true;"
+    )
+    view.wait(
+        lambda: view.execute(
+            "return document.querySelectorAll('.photo-card').length === 210;"
+        )
+    )
+    if not view.execute(
+        "return document.querySelector('.grid-scroll').scrollTop > 0 && !document.querySelector('.selection-dot') && getComputedStyle(document.documentElement).colorScheme === 'dark';"
+    ):
+        raise RuntimeError(
+            "Automatic grid append lost scroll, selection overlay, or dark native controls"
+        )
+
+
 def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
     view.wait(lambda: view.execute("return Boolean(window.__TAURI_INTERNALS__);"))
     state = view.invoke("get_app_state")
@@ -172,6 +319,7 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
             "name": "Native review",
             "sourceDir": str(source),
             "includeSubfolders": False,
+            "automaticSelectionEnabled": False,
         },
     )
     project_id = project["id"]
@@ -196,6 +344,7 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
             "name": "Native recursive review",
             "sourceDir": str(source),
             "includeSubfolders": True,
+            "automaticSelectionEnabled": False,
         },
     )
     view.invoke("start_import", {"projectId": recursive["id"]})
@@ -374,6 +523,13 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
         "fullResolution": True,
         "collectionExport": True,
         "focusedDraftSavedOnNativeClose": True,
+        "automaticFavoritesAndDiscards": True,
+        "automaticModesPreserveManualChoices": True,
+        "undoAutomaticChoicesDisablesRescanAutomation": True,
+        "lightroomRejectExport": True,
+        "largeGridLoadsAutomatically": True,
+        "selectedThumbnailsUnobstructed": True,
+        "darkNativeControls": True,
     }
 
 
@@ -393,7 +549,28 @@ def main() -> None:
         originals = make_photos(source)
         view = NativeWebview(args.application.resolve(strict=True), args.port)
         try:
+            view.wait(
+                lambda: view.execute("return Boolean(window.__TAURI_INTERNALS__);")
+            )
+            automatic_selection_journey(view, workdir / "automatic photos", output)
+            automatic_grid_journey(view, workdir / "grid photos")
             report = review_journey(view, source, output)
+        except Exception:
+            try:
+                (output / "native-failure.json").write_text(
+                    json.dumps(
+                        view.execute(
+                            "return {body:document.body.innerText, cards:document.querySelectorAll('.photo-card').length, active:document.querySelector('.photo-card.focused')?.getAttribute('aria-label'), grid:document.querySelector('.grid-scroll') && {top:document.querySelector('.grid-scroll').scrollTop,height:document.querySelector('.grid-scroll').clientHeight,total:document.querySelector('.grid-scroll').scrollHeight}, sentinel:document.querySelector('.grid-sentinel')?.getBoundingClientRect().toJSON()};"
+                        ),
+                        indent=2,
+                    )
+                )
+                (output / "native-failure.png").write_bytes(
+                    base64.b64decode(view.command("GET", "/screenshot"))
+                )
+            except (urllib.error.URLError, ConnectionError):
+                pass
+            raise
         finally:
             view.close()
         for path, fingerprint in originals.items():

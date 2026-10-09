@@ -40,10 +40,16 @@ fn create_project(
     name: String,
     source_dir: String,
     include_subfolders: Option<bool>,
+    automatic_selection_enabled: Option<bool>,
+    selection_mode: Option<String>,
 ) -> Result<Project> {
-    state
-        .store
-        .create_with_options(&name, &source_dir, include_subfolders.unwrap_or(false))
+    state.store.create_configured(
+        &name,
+        &source_dir,
+        include_subfolders.unwrap_or(false),
+        automatic_selection_enabled.unwrap_or(true),
+        selection_mode.as_deref().unwrap_or("cautious"),
+    )
 }
 #[tauri::command]
 fn open_project(state: State<'_, Workers>, project_path: String) -> Result<Project> {
@@ -58,6 +64,18 @@ fn start_import(state: State<'_, Workers>, project_id: String) -> Result<Started
     Ok(Started {
         job_id: state.start(&project_id)?,
     })
+}
+#[tauri::command]
+fn automatic_first_pass(
+    state: State<'_, Workers>,
+    project_id: String,
+    selection_mode: Option<String>,
+) -> Result<Project> {
+    state.automatic_first_pass(&project_id, selection_mode.as_deref())
+}
+#[tauri::command]
+fn clear_automatic_selection(state: State<'_, Workers>, project_id: String) -> Result<Project> {
+    state.clear_automatic_selection(&project_id)
 }
 #[tauri::command]
 fn cancel_import(state: State<'_, Workers>, project_id: String) -> Result<()> {
@@ -150,12 +168,14 @@ fn export_selection(
     destination: String,
     collection_id: Option<String>,
     only_favorites: bool,
+    include_discards: Option<bool>,
 ) -> Result<ExportResult> {
-    state.store.export(
+    state.store.export_with_discards(
         &project_id,
         &destination,
         collection_id.as_deref(),
         only_favorites,
+        include_discards.unwrap_or(false),
     )
 }
 #[tauri::command]
@@ -201,11 +221,17 @@ pub fn run() {
                 });
                 let available =
                     packaged_engine.is_file() && Engine::executable(packaged_engine).available();
+                let projects = app
+                    .state::<Workers>()
+                    .store
+                    .summaries()
+                    .map_err(std::io::Error::other)?;
                 let report = serde_json::json!({
                     "version":env!("CARGO_PKG_VERSION"),
                     "engineAvailable":available,
                     "lightroomPluginPath":crate::core::path_string(&plugin),
-                    "resourceDir":crate::core::path_string(&resources)
+                    "resourceDir":crate::core::path_string(&resources),
+                    "projects":projects
                 });
                 // Persist and flush the report before requesting normal event-loop shutdown.
                 let bytes = serde_json::to_vec_pretty(&report)?;
@@ -227,6 +253,8 @@ pub fn run() {
             get_project,
             start_import,
             cancel_import,
+            automatic_first_pass,
+            clear_automatic_selection,
             update_photo,
             update_photos,
             update_photo_patches,

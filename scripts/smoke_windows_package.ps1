@@ -1,54 +1,5 @@
 $ErrorActionPreference = 'Stop'
-
-function Test-NativeApplication([string] $Executable, [string] $Report) {
-    Remove-Item -LiteralPath $Report -ErrorAction SilentlyContinue
-    $env:PHOTO_SELECT_SMOKE_TEST_OUTPUT = $Report
-    try {
-        $process = Start-Process -FilePath $Executable -WorkingDirectory (Split-Path $Executable) -PassThru
-        if (-not $process.WaitForExit(60000)) {
-            Stop-Process -Id $process.Id -Force
-            throw "Application installation probe timed out: $Executable"
-        }
-        $process.Refresh()
-        if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Report)) {
-            throw "Application installation probe failed: $Executable (exit $($process.ExitCode))"
-        }
-        $result = Get-Content -LiteralPath $Report -Raw | ConvertFrom-Json
-        if (-not $result.engineAvailable -or $result.version -ne $manifest.version) {
-            throw "Packaged engine was unavailable or the application version was wrong."
-        }
-        if (-not (Test-Path -LiteralPath (Join-Path $result.lightroomPluginPath 'Info.lua'))) {
-            throw "Bundled Lightroom plugin was missing."
-        }
-        Write-Output ($result | ConvertTo-Json)
-    } finally {
-        Remove-Item Env:PHOTO_SELECT_SMOKE_TEST_OUTPUT -ErrorAction SilentlyContinue
-    }
-}
-
-$repository = Split-Path $PSScriptRoot
-$packages = Join-Path $repository 'artifacts/windows'
-$manifest = Get-Content -LiteralPath (Join-Path $packages 'manifest.json') -Raw | ConvertFrom-Json
-$temporaryRoot = Join-Path $env:RUNNER_TEMP 'Photo Select package verification'
-New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
-$portable = Get-ChildItem -LiteralPath $packages -Filter '*-Portable.zip'
-if ($portable.Count -ne 1) { throw 'Expected exactly one portable package.' }
-$extracted = Join-Path $temporaryRoot 'portable'
-Expand-Archive -LiteralPath $portable.FullName -DestinationPath $extracted -Force
-$portableExecutable = Get-ChildItem -LiteralPath $extracted -Filter 'Photo Select.exe' -Recurse
-if ($portableExecutable.Count -ne 1) { throw 'Portable application executable was missing.' }
-Test-NativeApplication $portableExecutable.FullName (Join-Path $temporaryRoot 'portable-report.json')
-
-$installer = Get-ChildItem -LiteralPath $packages -Filter '*-Setup.exe'
-if ($installer.Count -ne 1) { throw 'Expected exactly one installer.' }
-$installed = Join-Path $temporaryRoot 'installed'
-# NSIS requires /D to be last; its value includes the rest of the command line.
-$installation = Start-Process -FilePath $installer.FullName -ArgumentList "/S /D=$installed" -PassThru
-if (-not $installation.WaitForExit(180000)) {
-    Stop-Process -Id $installation.Id -Force
-    throw 'Silent installer timed out.'
-}
-$installation.Refresh()
-if ($installation.ExitCode -ne 0) { throw "Installer failed with exit $($installation.ExitCode)." }
-Test-NativeApplication (Join-Path $installed 'photo-select.exe') (Join-Path $temporaryRoot 'installer-report.json')
-Copy-Item -Path (Join-Path $temporaryRoot '*-report.json') -Destination $packages
+# The Python harness owns installation order, prior-version upgrades, and repair.
+# Keep one entrypoint so portable smoke cannot register a competing fresh install.
+python (Join-Path $PSScriptRoot 'verify_windows_installation.py')
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

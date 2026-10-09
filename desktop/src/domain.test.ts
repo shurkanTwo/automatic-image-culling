@@ -24,6 +24,11 @@ const photograph = (id: string, changes: Partial<Photo> = {}): Photo => ({
   rating: 0,
   ratingTouched: false,
   decision: "undecided",
+  decisionSource: "manual",
+  decisionTouched: false,
+  suggestedDecision: null,
+  suggestionReason: null,
+  suggestionConfidence: null,
   reviewed: false,
   tags: [],
   analysisError: null,
@@ -50,6 +55,9 @@ const project: Project = {
   name: "Trip",
   sourceDir: "/photos",
   includeSubfolders: true,
+  automaticSelectionEnabled: false,
+  selectionMode: "cautious",
+  firstPassReady: false,
   projectPath: "/p.db",
   createdAt: "",
   updatedAt: "",
@@ -118,26 +126,28 @@ describe("review navigation", () => {
 });
 describe("manual edits and undo", () => {
   it("restores different prior decisions and ratings per photo, including never-rated state", () => {
-    const patches = photos
-      .slice(0, 2)
-      .map((photo) =>
-        previousPatch(photo, {
-          rating: 5,
-          decision: "favorite",
-          reviewed: true,
-        }),
-      );
+    const patches = photos.slice(0, 2).map((photo) =>
+      previousPatch(photo, {
+        rating: 5,
+        decision: "favorite",
+        reviewed: true,
+      }),
+    );
     expect(patches[0]).toEqual({
       rating: 4,
       ratingTouched: true,
       decision: "favorite",
       reviewed: true,
+      decisionSource: "manual",
+      decisionTouched: false,
     });
     expect(patches[1]).toEqual({
       rating: 0,
       ratingTouched: false,
       decision: "pass",
       reviewed: true,
+      decisionSource: "manual",
+      decisionTouched: false,
     });
   });
   it("takes a copy of tags for undo and merges saves without overwriting unrelated photos", () => {

@@ -7,6 +7,7 @@ import type {
   Photo,
   PhotoPatch,
   Project,
+  SelectionMode,
 } from "./types";
 
 type UndoEntry =
@@ -169,6 +170,11 @@ export function useProject() {
     patch: PhotoPatch,
     label: string,
   ): Promise<boolean> {
+    patch = {
+      ...patch,
+      decisionSource: patch.decisionSource ?? "manual",
+      decisionTouched: patch.decisionTouched ?? true,
+    };
     return enqueue(async () => {
       const current = projectRef.current;
       if (!current || !ids.length) return;
@@ -214,6 +220,26 @@ export function useProject() {
           setProject(mergePhotos(projectRef.current, before));
         throw reason;
       }
+    });
+  }
+  function automaticFirstPass(
+    mode: SelectionMode,
+    clear = false,
+  ): Promise<boolean> {
+    return enqueue(async () => {
+      const current = projectRef.current;
+      const session = projectSession.current;
+      if (!current || current.importStatus === "running") return;
+      const updated = clear
+        ? await api.clearAutomaticSelection(current.id)
+        : await api.automaticFirstPass(current.id, mode);
+      if (
+        projectRef.current?.id !== current.id ||
+        projectSession.current !== session
+      )
+        return;
+      savedSuccessfully();
+      setProject(updated);
     });
   }
   function undo(): Promise<boolean> {
@@ -270,7 +296,11 @@ export function useProject() {
       );
       const updates = before.map((photo) => ({
         photoId: photo.id,
-        patch: { tags: [...new Set([...photo.tags, ...tags])] },
+        patch: {
+          tags: [...new Set([...photo.tags, ...tags])],
+          decisionSource: "manual" as const,
+          decisionTouched: true,
+        },
       }));
       if (!updates.length) return;
       setProject(
@@ -292,7 +322,7 @@ export function useProject() {
           label: "Add tags",
           changes: before.map((photo) => ({
             photoId: photo.id,
-            patch: { tags: [...photo.tags] },
+            patch: previousPatch(photo, { tags: [...photo.tags] }),
           })),
         });
       } catch (reason) {
@@ -374,6 +404,7 @@ export function useProject() {
     waitForSaves,
     undoLabel,
     edit,
+    automaticFirstPass,
     addTags,
     undo,
     createCollection,

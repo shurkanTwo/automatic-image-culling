@@ -30,6 +30,22 @@ function initialProject(): Project {
     rating: index < 3 ? 4 : 0,
     ratingTouched: index < 3,
     decision: index < 3 ? "favorite" : index === 5 ? "pass" : "undecided",
+    decisionSource: "manual",
+    decisionTouched: index < 6,
+    suggestedDecision:
+      index >= 6 && index % 8 === 2
+        ? "favorite"
+        : index >= 6 && index % 8 === 5
+          ? "pass"
+          : null,
+    suggestionReason:
+      index >= 6 && index % 8 === 2
+        ? "Demo suggestion: strong detail and balanced exposure in this moment."
+        : index >= 6 && index % 8 === 5
+          ? "Demo suggestion: substantially weaker detail than a near-matching frame."
+          : null,
+    suggestionConfidence:
+      index >= 6 && [2, 5].includes(index % 8) ? 0.93 : null,
     reviewed: index < 6,
     tags: index < 3 ? ["landscape"] : [],
     analysisError: null,
@@ -39,6 +55,9 @@ function initialProject(): Project {
     name: "Alpine weekend",
     sourceDir: "/Demo/Alpine weekend",
     includeSubfolders: true,
+    automaticSelectionEnabled: true,
+    selectionMode: "cautious",
+    firstPassReady: true,
     projectPath: "/Demo/alpine.photoselect",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -68,13 +87,49 @@ function initialProject(): Project {
 function readProject(): Project {
   try {
     const stored = localStorage.getItem(key);
-    if (stored) return { includeSubfolders: true, ...JSON.parse(stored) };
+    if (stored) {
+      const value = JSON.parse(stored);
+      return {
+        includeSubfolders: true,
+        automaticSelectionEnabled: false,
+        selectionMode: "cautious",
+        firstPassReady: false,
+        ...value,
+        photos: value.photos.map((photo: Photo) => ({
+          ...photo,
+          decisionSource: photo.decisionSource ?? "manual",
+          decisionTouched: photo.decisionTouched ?? false,
+          suggestedDecision: photo.suggestedDecision ?? null,
+          suggestionReason: photo.suggestionReason ?? null,
+          suggestionConfidence: photo.suggestionConfidence ?? null,
+        })),
+      };
+    }
   } catch {
     /* Start a clean explicit demo if its stored data is invalid. */
   }
   return initialProject();
 }
 let project = readProject();
+function applyFirstPass() {
+  project.photos = project.photos.map((photo) => {
+    if (
+      photo.reviewed ||
+      photo.ratingTouched ||
+      photo.analysisError ||
+      (photo as Photo & { decisionTouched?: boolean }).decisionTouched ||
+      (photo.decisionSource !== "automatic" && photo.decision !== "undecided")
+    )
+      return photo;
+    const decision = photo.suggestedDecision ?? "undecided";
+    return {
+      ...photo,
+      decision,
+      decisionSource: decision === "undecided" ? "manual" : "automatic",
+    };
+  });
+}
+if (project.automaticSelectionEnabled) applyFirstPass();
 export async function demoInvoke<T>(
   command: string,
   args: Record<string, unknown> = {},
@@ -87,7 +142,7 @@ export async function demoInvoke<T>(
   switch (command) {
     case "get_app_state":
       result = {
-        version: "0.2.2",
+        version: "0.2.3",
         engineAvailable: true,
         projects: [
           {
@@ -115,12 +170,35 @@ export async function demoInvoke<T>(
         name: String(args.name),
         sourceDir: String(args.sourceDir),
         includeSubfolders: args.includeSubfolders === true,
+        automaticSelectionEnabled: args.automaticSelectionEnabled !== false,
+        selectionMode:
+          args.selectionMode === "stronger" ? "stronger" : "cautious",
       };
       save();
       result = project;
       break;
     case "start_import":
+      if (project.automaticSelectionEnabled) applyFirstPass();
+      save();
       result = { jobId: "demo-preview" };
+      break;
+    case "automatic_first_pass":
+      project.automaticSelectionEnabled = true;
+      project.selectionMode =
+        args.selectionMode === "stronger" ? "stronger" : "cautious";
+      applyFirstPass();
+      save();
+      result = project;
+      break;
+    case "clear_automatic_selection":
+      project.automaticSelectionEnabled = false;
+      project.photos = project.photos.map((photo) =>
+        photo.decisionSource === "automatic"
+          ? { ...photo, decision: "undecided", decisionSource: "manual" }
+          : photo,
+      );
+      save();
+      result = project;
       break;
     case "cancel_import":
       result = undefined;
@@ -138,6 +216,8 @@ export async function demoInvoke<T>(
             ? {
                 ...photo,
                 ...patch,
+                decisionSource: patch.decisionSource ?? "manual",
+                decisionTouched: patch.decisionTouched ?? true,
                 ratingTouched:
                   patch.ratingTouched ??
                   (patch.rating !== undefined ? true : photo.ratingTouched),
@@ -163,6 +243,8 @@ export async function demoInvoke<T>(
             ? {
                 ...photo,
                 ...patch,
+                decisionSource: patch.decisionSource ?? "manual",
+                decisionTouched: patch.decisionTouched ?? true,
                 ratingTouched:
                   patch.ratingTouched ??
                   (patch.rating !== undefined ? true : photo.ratingTouched),
@@ -244,13 +326,19 @@ export async function demoInvoke<T>(
       const collection = args.collectionId
         ? project.collections.find((value) => value.id === args.collectionId)
         : null;
-      const photos = project.photos.filter(
+      const selected = project.photos.filter(
         (photo) =>
+          photo.decision !== "pass" &&
           (!collection || collection.photoIds.includes(photo.id)) &&
           (!args.onlyFavorites || photo.decision === "favorite"),
       );
+      const rejected = args.includeDiscards
+        ? project.photos.filter((photo) => photo.decision === "pass")
+        : [];
+      const selectedIds = new Set(selected.map((photo) => photo.id));
+      const photos = [...selected, ...rejected];
       const manifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         application: "Photo Select",
         projectName: project.name,
         collectionName: collection?.name ?? "Favorites",
@@ -259,6 +347,13 @@ export async function demoInvoke<T>(
           path: photo.path,
           rating: photo.ratingTouched ? photo.rating : null,
           decision: photo.decision,
+          catalogFlag:
+            photo.decision === "pass"
+              ? "reject"
+              : photo.decision === "favorite"
+                ? "pick"
+                : null,
+          addToCollection: selectedIds.has(photo.id),
           tags: photo.tags,
         })),
       };
@@ -272,7 +367,12 @@ export async function demoInvoke<T>(
       link.download = "photo-select-demo.json";
       link.click();
       URL.revokeObjectURL(url);
-      result = { path: "photo-select-demo.json", count: photos.length };
+      result = {
+        path: "photo-select-demo.json",
+        count: photos.length,
+        selectedCount: selected.length,
+        discardCount: rejected.length,
+      };
       break;
     }
     case "get_lightroom_plugin_path":

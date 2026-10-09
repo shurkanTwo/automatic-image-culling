@@ -46,10 +46,32 @@ pub struct Photo {
     pub decision: String,
     #[serde(default)]
     pub reviewed: bool,
+    #[serde(default = "manual")]
+    pub decision_source: String,
+    #[serde(default)]
+    pub decision_touched: bool,
+    #[serde(default)]
+    pub suggested_decision: Option<String>,
+    #[serde(default)]
+    pub suggestion_reason: Option<String>,
+    #[serde(default)]
+    pub suggestion_confidence: Option<f64>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub analysis_error: Option<String>,
+}
+fn manual() -> String {
+    "manual".into()
+}
+fn cautious() -> String {
+    "cautious".into()
+}
+pub fn validate_selection_mode(mode: &str) -> Result<()> {
+    if !["cautious", "stronger"].contains(&mode) {
+        return Err("Invalid automatic selection mode".into());
+    }
+    Ok(())
 }
 fn undecided() -> String {
     "undecided".into()
@@ -85,6 +107,12 @@ pub struct Project {
     pub collections: Vec<Collection>,
     pub import_status: String,
     pub import_error: Option<String>,
+    #[serde(default)]
+    pub automatic_selection_enabled: bool,
+    #[serde(default = "cautious")]
+    pub selection_mode: String,
+    #[serde(default)]
+    pub first_pass_ready: bool,
 }
 fn include_subfolders_by_default() -> bool {
     true
@@ -107,6 +135,8 @@ pub struct PhotoPatch {
     pub rating: Option<u8>,
     pub rating_touched: Option<bool>,
     pub decision: Option<String>,
+    pub decision_source: Option<String>,
+    pub decision_touched: Option<bool>,
     pub reviewed: Option<bool>,
     pub tags: Option<Vec<String>>,
 }
@@ -121,6 +151,17 @@ pub struct PhotoUpdate {
 pub struct ExportResult {
     pub path: String,
     pub count: usize,
+    pub selected_count: usize,
+    pub discard_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Suggestion {
+    pub photo_id: String,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub confidence: f64,
 }
 
 #[derive(Clone)]
@@ -251,6 +292,17 @@ impl Store {
         source: &str,
         include_subfolders: bool,
     ) -> Result<Project> {
+        self.create_configured(name, source, include_subfolders, false, "cautious")
+    }
+    pub fn create_configured(
+        &self,
+        name: &str,
+        source: &str,
+        include_subfolders: bool,
+        automatic_selection_enabled: bool,
+        selection_mode: &str,
+    ) -> Result<Project> {
+        validate_selection_mode(selection_mode)?;
         let name = valid_name(name)?;
         let source =
             fs::canonicalize(source).map_err(|e| format!("Cannot open source folder: {e}"))?;
@@ -284,6 +336,9 @@ impl Store {
             collections: vec![],
             import_status: "idle".into(),
             import_error: None,
+            automatic_selection_enabled,
+            selection_mode: selection_mode.into(),
+            first_pass_ready: false,
         };
         write_meta(&db, &p)?;
         self.register(id, path)?;
@@ -414,6 +469,9 @@ impl Store {
             .map_err(error)?;
         let mut p = read_meta(&tx)?;
         p.import_status = status.into();
+        if status == "running" {
+            p.first_pass_ready = false;
+        }
         p.import_error = reason;
         p.updated_at = now();
         write_meta(&tx, &p)?;
@@ -461,6 +519,11 @@ impl Store {
         photo.rating_touched = false;
         photo.decision = undecided();
         photo.reviewed = false;
+        photo.decision_source = manual();
+        photo.decision_touched = false;
+        photo.suggested_decision = None;
+        photo.suggestion_reason = None;
+        photo.suggestion_confidence = None;
         photo.tags.clear();
         photo.detail_path = None;
         photo.group_id = None;
@@ -469,6 +532,8 @@ impl Store {
             photo.rating_touched = old.rating_touched;
             photo.decision = old.decision;
             photo.reviewed = old.reviewed;
+            photo.decision_source = old.decision_source;
+            photo.decision_touched = old.decision_touched;
             photo.tags = old.tags;
             // Revalidate full-resolution caches against the source through the engine on demand.
             photo.detail_path = None;
@@ -608,6 +673,9 @@ impl Store {
             if let Some(touched) = patch.rating_touched {
                 photo.rating_touched = touched;
             }
+            // Every explicit edit is manual unless this is an undo restoring provenance.
+            photo.decision_source = patch.decision_source.clone().unwrap_or_else(manual);
+            photo.decision_touched = patch.decision_touched.unwrap_or(true);
             if let Some(decision) = &patch.decision {
                 photo.decision = decision.clone();
             }
@@ -631,15 +699,37 @@ impl Store {
         Ok(output)
     }
     pub fn finish_scan(&self, id: &str, seen: &HashSet<String>) -> Result<()> {
+        self.finish_scan_with_suggestions(id, seen, None)
+    }
+    pub fn finish_scan_with_suggestions(
+        &self,
+        id: &str,
+        seen: &HashSet<String>,
+        suggestions: Option<&[Suggestion]>,
+    ) -> Result<()> {
         let mut db = self.connection(id)?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(error)?;
         let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
+        if let Some(suggestions) = suggestions {
+            validate_suggestions(&photos, seen, suggestions)?;
+        }
         for photo in &mut photos {
             if !seen.contains(&photo.id) {
+                photo.suggested_decision = None;
+                photo.suggestion_reason = None;
+                photo.suggestion_confidence = None;
                 photo.analysis_error=Some("Original file was unavailable during the latest import (missing, unreadable, or unsupported). Cached previews and review decisions are preserved.".into());
                 photo.group_id = None;
+                write_item(&tx, "photos", &photo.id, photo)?;
+            }
+            // A successful rescan must retire stale automatic choices when fresh analysis failed.
+            // Manual decisions remain available for offline review and export.
+            if photo.analysis_error.is_some() && photo.decision_source == "automatic" {
+                photo.decision = undecided();
+                photo.decision_source = manual();
+                photo.decision_touched = false;
                 write_item(&tx, "photos", &photo.id, photo)?;
             }
         }
@@ -656,8 +746,100 @@ impl Store {
                 write_item(&tx, "groups_data", &group.id, &group)?;
             }
         }
-        touch(&tx)?;
+        let mut project = read_meta(&tx)?;
+        project.first_pass_ready = suggestions.is_some();
+        if let Some(suggestions) = suggestions {
+            let by_id: HashMap<_, _> = suggestions
+                .iter()
+                .map(|s| (s.photo_id.as_str(), s))
+                .collect();
+            for photo in &mut photos {
+                let Some(suggestion) = by_id.get(photo.id.as_str()) else {
+                    continue;
+                };
+                photo.suggested_decision = Some(suggestion.decision.clone());
+                photo.suggestion_reason = suggestion.reason.clone();
+                photo.suggestion_confidence = Some(suggestion.confidence);
+            }
+            if project.automatic_selection_enabled {
+                apply_automatic_choices(&tx, &mut photos)?;
+            }
+            for photo in &photos {
+                write_item(&tx, "photos", &photo.id, photo)?;
+            }
+        }
+        project.import_status = "completed".into();
+        project.import_error = None;
+        project.updated_at = now();
+        write_meta(&tx, &project)?;
         tx.commit().map_err(error)
+    }
+    pub fn configure_first_pass(&self, id: &str, mode: &str) -> Result<()> {
+        validate_selection_mode(mode)?;
+        let mut db = self.connection(id)?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
+        let mut p = read_meta(&tx)?;
+        if p.selection_mode != mode {
+            p.first_pass_ready = false;
+        }
+        p.selection_mode = mode.into();
+        p.automatic_selection_enabled = true;
+        p.updated_at = now();
+        write_meta(&tx, &p)?;
+        tx.commit().map_err(error)
+    }
+    pub fn apply_cached_first_pass(&self, id: &str, mode: &str) -> Result<Project> {
+        validate_selection_mode(mode)?;
+        let mut db = self.connection(id)?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
+        let mut p = read_meta(&tx)?;
+        if !p.first_pass_ready || p.selection_mode != mode {
+            return Err("Automatic suggestions need a fresh analysis".into());
+        }
+        validate_rows(&tx, &p)?;
+        let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
+        if photos
+            .iter()
+            .filter(|p| p.analysis_error.is_none())
+            .any(|p| p.suggested_decision.is_none() || p.suggestion_confidence.is_none())
+        {
+            return Err("Automatic suggestions are incomplete".into());
+        }
+        apply_automatic_choices(&tx, &mut photos)?;
+        for photo in &photos {
+            write_item(&tx, "photos", &photo.id, photo)?;
+        }
+        p.automatic_selection_enabled = true;
+        p.updated_at = now();
+        write_meta(&tx, &p)?;
+        tx.commit().map_err(error)?;
+        self.project(id)
+    }
+    pub fn clear_automatic_selection(&self, id: &str) -> Result<Project> {
+        let mut db = self.connection(id)?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(error)?;
+        let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
+        for photo in &mut photos {
+            if photo.decision_source == "automatic" {
+                photo.decision = undecided();
+                photo.decision_source = manual();
+                photo.decision_touched = false;
+                photo.reviewed = false;
+                write_item(&tx, "photos", &photo.id, photo)?;
+            }
+        }
+        let mut p = read_meta(&tx)?;
+        p.automatic_selection_enabled = false;
+        p.updated_at = now();
+        write_meta(&tx, &p)?;
+        tx.commit().map_err(error)?;
+        self.project(id)
     }
     pub fn create_collection(&self, id: &str, name: &str) -> Result<Collection> {
         let collection = Collection {
@@ -742,6 +924,16 @@ impl Store {
         collection_id: Option<&str>,
         only_favorites: bool,
     ) -> Result<ExportResult> {
+        self.export_with_discards(id, destination, collection_id, only_favorites, false)
+    }
+    pub fn export_with_discards(
+        &self,
+        id: &str,
+        destination: &str,
+        collection_id: Option<&str>,
+        only_favorites: bool,
+        include_discards: bool,
+    ) -> Result<ExportResult> {
         let p = self.project(id)?;
         let destination = Path::new(destination);
         if !destination.is_absolute()
@@ -775,9 +967,42 @@ impl Store {
                     .ok_or("Unknown collection")
             })
             .transpose()?;
-        let photos:Vec<_>=p.photos.iter().filter(|photo|collection.map(|c|c.photo_ids.contains(&photo.id)).unwrap_or(photo.decision=="favorite")).filter(|photo|!only_favorites || photo.decision=="favorite").map(|photo|serde_json::json!({"path":photo.path,"rating":if photo.rating_touched {Some(photo.rating)} else {None},"decision":photo.decision,"tags":photo.tags})).collect();
+        let mut paths = HashSet::new();
+        let mut photos = Vec::new();
+        let mut selected_count = 0;
+        let mut discard_count = 0;
+        for photo in &p.photos {
+            let selected = collection
+                .map(|c| c.photo_ids.contains(&photo.id))
+                .unwrap_or(photo.decision == "favorite")
+                && photo.decision != "pass"
+                && (!only_favorites || photo.decision == "favorite");
+            if !selected && !(include_discards && photo.decision == "pass") {
+                continue;
+            }
+            let path_key = if cfg!(windows) {
+                photo.path.to_lowercase()
+            } else {
+                photo.path.clone()
+            };
+            if !paths.insert(path_key) {
+                continue;
+            }
+            if selected {
+                selected_count += 1;
+            }
+            if photo.decision == "pass" {
+                discard_count += 1;
+            }
+            let catalog_flag = match photo.decision.as_str() {
+                "favorite" => Some("pick"),
+                "pass" => Some("reject"),
+                _ => None,
+            };
+            photos.push(serde_json::json!({"path":photo.path,"rating":if photo.rating_touched {Some(photo.rating)} else {None},"decision":photo.decision,"tags":photo.tags,"catalogFlag":catalog_flag,"addToCollection":selected}));
+        }
         let count = photos.len();
-        let manifest = serde_json::json!({"schemaVersion":1,"application":"Photo Select","projectName":p.name,"collectionName":collection.map(|v|v.name.as_str()).unwrap_or("Favorites"),"exportedAt":now(),"photos":photos});
+        let manifest = serde_json::json!({"schemaVersion":2,"application":"Photo Select","projectName":p.name,"collectionName":collection.map(|v|v.name.as_str()).unwrap_or("Favorites"),"exportedAt":now(),"photos":photos});
         atomic_write(
             &resolved,
             &serde_json::to_vec_pretty(&manifest).map_err(error)?,
@@ -785,8 +1010,82 @@ impl Store {
         Ok(ExportResult {
             path: path_string(&resolved),
             count,
+            selected_count,
+            discard_count,
         })
     }
+}
+fn validate_suggestions(
+    photos: &[Photo],
+    seen: &HashSet<String>,
+    suggestions: &[Suggestion],
+) -> Result<()> {
+    let mut unique = HashSet::new();
+    let by_id: HashMap<_, _> = photos.iter().map(|p| (p.id.as_str(), p)).collect();
+    for suggestion in suggestions {
+        validate_suggestion(
+            &suggestion.decision,
+            suggestion.reason.as_deref(),
+            suggestion.confidence,
+        )?;
+        if !seen.contains(&suggestion.photo_id) || !unique.insert(suggestion.photo_id.clone()) {
+            return Err("Invalid or duplicate suggested photo identity".into());
+        }
+        let photo = by_id
+            .get(suggestion.photo_id.as_str())
+            .ok_or("Unknown suggested photo")?;
+        if photo.analysis_error.is_some() && suggestion.decision != "undecided" {
+            return Err("Failed photo cannot receive an automatic decision".into());
+        }
+    }
+    if &unique != seen {
+        return Err("Automatic suggestions do not cover every analyzed photo".into());
+    }
+    Ok(())
+}
+fn validate_suggestion(decision: &str, reason: Option<&str>, confidence: f64) -> Result<()> {
+    if !["favorite", "pass", "undecided"].contains(&decision)
+        || !confidence.is_finite()
+        || !(0.0..=1.0).contains(&confidence)
+        || reason.is_some_and(|r| r.chars().count() > 2000 || r.chars().any(|c| c.is_control()))
+    {
+        return Err("Invalid automatic suggestion".into());
+    }
+    Ok(())
+}
+fn apply_automatic_choices(db: &Connection, photos: &mut [Photo]) -> Result<()> {
+    let collections: Vec<Collection> = read_items(db, "collections")?;
+    let included: HashSet<_> = collections
+        .iter()
+        .flat_map(|c| c.photo_ids.iter())
+        .collect();
+    for photo in photos {
+        if photo.analysis_error.is_some() || photo.reviewed || photo.rating_touched {
+            continue;
+        }
+        let Some(suggested) = &photo.suggested_decision else {
+            continue;
+        };
+        if photo.decision_source == "manual"
+            && (photo.decision_touched
+                || photo.reviewed
+                || photo.rating_touched
+                || photo.decision != "undecided"
+                || !photo.tags.is_empty())
+        {
+            continue;
+        }
+        if suggested == "pass" && included.contains(&photo.id) {
+            if photo.decision_source == "automatic" && photo.decision == "pass" {
+                photo.decision = undecided();
+            }
+            continue;
+        }
+        photo.decision = suggested.clone();
+        photo.decision_source = "automatic".into();
+        photo.reviewed = false;
+    }
+    Ok(())
 }
 fn valid_name(name: &str) -> Result<String> {
     let name = name.trim();
@@ -796,6 +1095,12 @@ fn valid_name(name: &str) -> Result<String> {
     Ok(name.into())
 }
 fn validate_patch(p: &PhotoPatch) -> Result<()> {
+    if p.decision_source
+        .as_ref()
+        .is_some_and(|s| !["manual", "automatic"].contains(&s.as_str()))
+    {
+        return Err("Invalid decision source".into());
+    }
     if p.rating.is_some_and(|v| v > 5) {
         return Err("Rating must be between 0 and 5".into());
     }
@@ -830,6 +1135,7 @@ fn read_meta(db: &Connection) -> Result<Project> {
         .map_err(error)?;
     let project: Project = serde_json::from_str(&data).map_err(error)?;
     valid_project_id(&project.id)?;
+    validate_selection_mode(&project.selection_mode)?;
     valid_name(&project.name)?;
     chrono::DateTime::parse_from_rfc3339(&project.created_at)
         .map_err(|_| "Invalid saved project creation time".to_string())?;
@@ -945,9 +1251,21 @@ fn validate_project_rows(project: &Project) -> Result<()> {
         validate_patch(&PhotoPatch {
             rating: Some(photo.rating),
             decision: Some(photo.decision.clone()),
+            decision_source: Some(photo.decision_source.clone()),
             tags: Some(photo.tags.clone()),
             ..Default::default()
         })?;
+        if let Some(decision) = &photo.suggested_decision {
+            validate_suggestion(
+                decision,
+                photo.suggestion_reason.as_deref(),
+                photo
+                    .suggestion_confidence
+                    .ok_or("Saved suggestion has no confidence")?,
+            )?;
+        } else if photo.suggestion_reason.is_some() || photo.suggestion_confidence.is_some() {
+            return Err("Saved suggestion is incomplete".into());
+        }
         for cached in [&photo.preview_path, &photo.thumbnail_path] {
             if !cached.is_empty() {
                 valid_absolute_path(Path::new(cached))?;

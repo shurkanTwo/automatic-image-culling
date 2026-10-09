@@ -231,3 +231,192 @@ fn real_engine_import_detail_and_rescan_preserve_originals_and_review() {
         1
     );
 }
+
+#[test]
+#[ignore = "Requires installed Python fixture dependencies; supports PHOTO_SELECT_ENGINE for the bundled worker"]
+fn real_engine_automatic_first_pass_preserves_manual_undecided_and_exports_rejects() {
+    let temporary = TempDir::new().unwrap();
+    let source = temporary.path().join("originals");
+    fs::create_dir(&source).unwrap();
+    let python = std::env::var("PHOTO_SELECT_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let status = Command::new(python)
+        .args([
+            "-c",
+            r#"
+from PIL import Image
+from pathlib import Path
+import sys
+source = Path(sys.argv[1])
+sharp = Image.new('RGB', (1200, 800))
+sharp.putdata([(v, v, v) for y in range(800) for x in range(1200)
+               for v in [220 if ((x // 8) + (y // 8)) % 2 else 40]])
+sharp.save(source / 'sharp.jpg', quality=98)
+Image.new('RGB', (1200, 800), (0, 0, 0)).save(source / 'blank.jpg')
+(source / 'corrupt.jpg').write_bytes(b'not an image')
+"#,
+        ])
+        .arg(&source)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let originals: Vec<_> = ["sharp.jpg", "blank.jpg", "corrupt.jpg"]
+        .into_iter()
+        .map(|name| {
+            let path = source.join(name);
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    let store = Store::new(temporary.path().join("appdata")).unwrap();
+    let project = store
+        .create_configured(
+            "Automatic real worker",
+            source.to_str().unwrap(),
+            false,
+            true,
+            "cautious",
+        )
+        .unwrap();
+    let engine = Engine::discover(PathBuf::from("/no-bundled-engine"));
+    assert!(engine.available());
+    let workers = Workers::new(store.clone(), engine, Arc::new(|_, _| {}));
+    let wait = || {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while workers.is_running(&project.id) {
+            assert!(Instant::now() < deadline, "analysis timed out");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let result = store.project(&project.id).unwrap();
+        assert_eq!(
+            result.import_status, "completed",
+            "{:?}",
+            result.import_error
+        );
+        result
+    };
+    workers.start(&project.id).unwrap();
+    let selected = wait();
+    assert!(selected.first_pass_ready);
+    assert!(selected.automatic_selection_enabled);
+    assert_eq!(selected.photos.len(), 3);
+    let sharp = selected
+        .photos
+        .iter()
+        .find(|p| p.filename == "sharp.jpg")
+        .unwrap();
+    let blank = selected
+        .photos
+        .iter()
+        .find(|p| p.filename == "blank.jpg")
+        .unwrap();
+    let corrupt = selected
+        .photos
+        .iter()
+        .find(|p| p.filename == "corrupt.jpg")
+        .unwrap();
+    assert_eq!(sharp.decision, "favorite", "{:?}", sharp);
+    assert_eq!(blank.decision, "pass", "{:?}", blank);
+    for photo in [sharp, blank] {
+        assert_eq!(photo.decision_source, "automatic");
+        assert_eq!(
+            photo.suggested_decision.as_deref(),
+            Some(photo.decision.as_str())
+        );
+        assert!(photo
+            .suggestion_reason
+            .as_ref()
+            .is_some_and(|s| !s.is_empty()));
+        assert!(photo.suggestion_confidence.is_some());
+        assert!(!photo.reviewed);
+        assert_eq!(photo.rating, 0);
+        assert!(!photo.rating_touched);
+    }
+    assert!(corrupt.analysis_error.is_some());
+    assert_eq!(corrupt.decision, "undecided");
+    assert_eq!(corrupt.suggested_decision.as_deref(), Some("undecided"));
+    let sharp_id = sharp.id.clone();
+    let blank_id = blank.id.clone();
+    // An explicit manual Undecided is protected even when reviewed remains false.
+    store
+        .update_photos(
+            &project.id,
+            &[sharp_id.clone()],
+            &PhotoPatch {
+                decision: Some("undecided".into()),
+                reviewed: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    workers
+        .automatic_first_pass(&project.id, Some("stronger"))
+        .unwrap();
+    let rescanned = wait();
+    assert_eq!(rescanned.selection_mode, "stronger");
+    let manual = rescanned.photos.iter().find(|p| p.id == sharp_id).unwrap();
+    assert_eq!(manual.decision, "undecided");
+    assert_eq!(manual.decision_source, "manual");
+    assert!(manual.decision_touched);
+    assert_eq!(manual.suggested_decision.as_deref(), Some("favorite"));
+    assert_eq!(
+        rescanned
+            .photos
+            .iter()
+            .find(|p| p.id == blank_id)
+            .unwrap()
+            .decision,
+        "pass"
+    );
+    let destination = temporary.path().join("rejects.json");
+    let exported = store
+        .export_with_discards(
+            &project.id,
+            destination.to_str().unwrap(),
+            None,
+            false,
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            exported.count,
+            exported.selected_count,
+            exported.discard_count
+        ),
+        (1, 0, 1)
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&destination).unwrap()).unwrap();
+    assert_eq!(manifest["schemaVersion"], 2);
+    assert_eq!(manifest["photos"][0]["path"], blank.path);
+    assert_eq!(manifest["photos"][0]["catalogFlag"], "reject");
+    assert_eq!(manifest["photos"][0]["addToCollection"], false);
+    assert!(manifest["photos"][0]["rating"].is_null());
+    let cleared = workers.clear_automatic_selection(&project.id).unwrap();
+    assert!(!cleared.automatic_selection_enabled);
+    assert!(cleared.photos.iter().all(|p| p.decision == "undecided"));
+    workers.start(&project.id).unwrap();
+    let disabled = wait();
+    assert!(!disabled.automatic_selection_enabled);
+    assert!(disabled.first_pass_ready);
+    assert!(disabled.photos.iter().all(|p| p.decision == "undecided"));
+    assert_eq!(
+        disabled
+            .photos
+            .iter()
+            .find(|p| p.id == blank_id)
+            .unwrap()
+            .suggested_decision
+            .as_deref(),
+        Some("pass")
+    );
+    for (path, bytes) in originals {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}

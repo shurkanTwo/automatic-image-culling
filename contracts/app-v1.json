@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Photo Select",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "identifier": "com.shurkantwo.photoselect"
   },
   "photo": {
@@ -23,7 +23,12 @@
     "decision": "undecided | favorite | pass",
     "reviewed": "boolean",
     "tags": "string[]",
-    "analysisError": "string or null"
+    "analysisError": "string or null",
+    "decisionSource": "manual | automatic; legacy defaults to manual",
+    "suggestedDecision": "favorite | pass | undecided | null",
+    "suggestionReason": "string | null; preview technical evidence",
+    "suggestionConfidence": "number 0..1 | null; technical evidence, not aesthetic probability",
+    "decisionTouched": "boolean; false for untouched manual defaults, preserves manual Undecided eligibility through undo"
   },
   "group": {
     "id": "stable string",
@@ -48,7 +53,10 @@
     "groups": "Group[]",
     "collections": "Collection[]",
     "importStatus": "idle | running | completed | cancelled | failed",
-    "importError": "string or null"
+    "importError": "string or null",
+    "automaticSelectionEnabled": "boolean; new desktop projects default true; legacy projects false",
+    "selectionMode": "cautious | stronger; defaults cautious",
+    "firstPassReady": "boolean; complete validated proposals available"
   },
   "projectSummary": {
     "id": "string",
@@ -69,7 +77,9 @@
       "args": {
         "name": "string",
         "sourceDir": "string",
-        "includeSubfolders": "boolean; optional, defaults to false for new projects"
+        "includeSubfolders": "boolean; optional, defaults to false for new projects",
+        "automaticSelectionEnabled": "boolean; optional, defaults true",
+        "selectionMode": "cautious | stronger; optional, defaults cautious"
       },
       "returns": "Project"
     },
@@ -101,7 +111,7 @@
       "args": {
         "projectId": "string",
         "photoId": "string",
-        "patch": "{rating?:number,ratingTouched?:boolean,decision?:string,reviewed?:boolean,tags?:string[]}"
+        "patch": "{rating?:number,ratingTouched?:boolean,decision?:string,decisionSource?:manual|automatic,decisionTouched?:boolean,reviewed?:boolean,tags?:string[]}"
       },
       "returns": "Photo"
     },
@@ -155,21 +165,35 @@
         "projectId": "string",
         "destination": "absolute json file",
         "collectionId": "string | null",
-        "onlyFavorites": "boolean"
+        "onlyFavorites": "boolean",
+        "includeDiscards": "boolean; optional, defaults false for legacy callers"
       },
-      "returns": "{path:string,count:number}"
+      "returns": "{path:string,count:number,selectedCount:number,discardCount:number}"
     },
     "get_lightroom_plugin_path": {
       "args": {},
       "returns": "string absolute bundled .lrplugin folder"
+    },
+    "automatic_first_pass": {
+      "args": {
+        "projectId": "string",
+        "selectionMode": "cautious | stronger; optional"
+      },
+      "returns": "Project; apply available same-mode proposals or start a rescan"
+    },
+    "clear_automatic_selection": {
+      "args": {
+        "projectId": "string"
+      },
+      "returns": "Project; reset only automatic choices and disable automatic selection on future rescans"
     }
   },
   "events": {
-    "import-progress": "{projectId:string,jobId:string,phase:scan|analysis|grouping|complete|cancelled|error,processed:number,total:number,currentFile:string|null,failed:number,message:string|null}",
+    "import-progress": "{projectId:string,jobId:string,phase:scan|analysis|grouping|selection|complete|cancelled|error,processed:number,total:number,currentFile:string|null,failed:number,message:string|null}",
     "project-updated": "{projectId:string}"
   },
   "engine": {
-    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR [--no-subfolders]; recursive unless --no-subfolders is supplied",
+    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR [--no-subfolders] [--selection-mode cautious|stronger]; recursive unless --no-subfolders; default cautious",
     "detailCLI": "python -m culling_engine detail --source FILE --output FILE",
     "probeCLI": "python -m culling_engine self-test",
     "protocol": "one JSON object per stdout line; diagnostics ONLY stderr; UTF-8; flush every line",
@@ -180,22 +204,24 @@
       "groups": "{type:groups,groups:Group[]}",
       "complete": "{type:complete,processed:number,total:number,failed:number}",
       "error": "{type:error,message:string,path?:string}; path-bearing records are recoverable file/directory failures, no path is a fatal scan failure",
-      "detail": "{type:detail,detailPath:string,width:number,height:number}"
+      "detail": "{type:detail,detailPath:string,width:number,height:number}",
+      "suggestions": "{type:suggestions,suggestions:[{photoId:string,decision:favorite|pass|undecided,reason:string|null,confidence:number 0..1}]}; exactly one per analyzed photo, after groups before complete"
     }
   },
   "lightroomManifest": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "application": "Photo Select",
     "projectName": "string",
     "collectionName": "string",
     "exportedAt": "ISO8601",
-    "photos": "[{path:string,rating:number|null,decision:undecided|favorite|pass,tags:string[]}]"
+    "photos": "[{path:string,rating:number|null,decision:undecided|favorite|pass,tags:string[],catalogFlag:pick|reject|null,addToCollection:boolean}]; favorite maps to pick; pass maps to reject; extra project discards have addToCollection=false",
+    "legacy": "Plugin accepts schema 1; favorites pick, pass does not reject, all entries join collection"
   },
   "principles": [
     "Original files never moved, modified, or deleted.",
     "Manual decisions persist across rescans and reanalysis.",
-    "Analysis suggests only; no automatic user ratings or favorite decisions.",
-    "Archive/pass is NOT a deletion instruction.",
+    "Automatic choices require a successful complete scan, are explained and reversible, and preserve manual review edits. Automatic selection does not assign stars.",
+    "Discard/pass and Lightroom Reject flags never delete originals.",
     "Use a single Rust-owned SQLite database per project.",
     "Match all JSON and Tauri argument keys in camelCase.",
     "Frontend handles incremental refresh, errors, keyboard focus and saves without losing edits."

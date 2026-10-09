@@ -11,6 +11,8 @@ vi.mock("./api", () => ({
     updatePhoto: vi.fn(),
     updatePhotoPatches: vi.fn(),
     project: vi.fn(),
+    automaticFirstPass: vi.fn(),
+    clearAutomaticSelection: vi.fn(),
   },
   subscribe: vi.fn(async () => () => {}),
 }));
@@ -31,6 +33,11 @@ const original: Photo = {
   rating: 0,
   ratingTouched: false,
   decision: "undecided",
+  decisionSource: "manual",
+  decisionTouched: false,
+  suggestedDecision: null,
+  suggestionReason: null,
+  suggestionConfidence: null,
   reviewed: false,
   tags: ["family"],
   analysisError: null,
@@ -40,6 +47,9 @@ const project: Project = {
   name: "Family",
   sourceDir: "/photos",
   includeSubfolders: true,
+  automaticSelectionEnabled: false,
+  selectionMode: "cautious",
+  firstPassReady: false,
   projectPath: "/project.cullproj",
   createdAt: "",
   updatedAt: "",
@@ -60,11 +70,141 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 describe("durable manual review", () => {
+  it.each(["decision", "rating", "tags", "bulk tags"])(
+    "restores automatic provenance and eligibility after undoing a %s edit",
+    async (kind) => {
+      const automatic: Photo = {
+        ...original,
+        decision: "favorite",
+        decisionSource: "automatic",
+        decisionTouched: false,
+        suggestedDecision: "favorite",
+        suggestionReason: "Strong detail",
+        suggestionConfidence: 0.95,
+      };
+      let snapshot = [structuredClone(automatic)];
+      vi.mocked(api.updatePhotos).mockImplementation(
+        async (_id, ids, patch) => {
+          snapshot = snapshot.map((photo) =>
+            ids.includes(photo.id)
+              ? {
+                  ...photo,
+                  ...patch,
+                  ratingTouched:
+                    patch.rating !== undefined ? true : photo.ratingTouched,
+                }
+              : photo,
+          );
+          return structuredClone(snapshot);
+        },
+      );
+      vi.mocked(api.updatePhotoPatches).mockImplementation(
+        async (_id, updates) => {
+          snapshot = snapshot.map((photo) => ({
+            ...photo,
+            ...updates.find((update) => update.photoId === photo.id)?.patch,
+          }));
+          return structuredClone(snapshot);
+        },
+      );
+      const { result } = renderHook(() => useProject());
+      act(() => result.current.load({ ...project, photos: [automatic] }));
+      await act(async () => {
+        if (kind === "bulk tags")
+          await result.current.addTags(["photo"], ["print"]);
+        else
+          await result.current.edit(
+            ["photo"],
+            kind === "decision"
+              ? { decision: "pass", reviewed: true }
+              : kind === "rating"
+                ? { rating: 4, reviewed: true }
+                : { tags: ["print"] },
+            "Manual edit",
+          );
+      });
+      expect(result.current.project?.photos[0].decisionSource).toBe("manual");
+      expect(result.current.project?.photos[0].decisionTouched).toBe(true);
+      await act(async () => {
+        await result.current.undo();
+      });
+      expect(api.updatePhotoPatches).toHaveBeenLastCalledWith("project", [
+        {
+          photoId: "photo",
+          patch: expect.objectContaining({
+            decisionSource: "automatic",
+            decisionTouched: false,
+          }),
+        },
+      ]);
+      expect(result.current.project?.photos[0]).toEqual(automatic);
+    },
+  );
+  it("records an explicit Undecided override, ignores a repeated override, and restores untouched eligibility on undo", async () => {
+    let snapshot = structuredClone(original);
+    vi.mocked(api.updatePhotos).mockImplementation(async (_id, _ids, patch) => {
+      snapshot = { ...snapshot, ...patch };
+      return [structuredClone(snapshot)];
+    });
+    vi.mocked(api.updatePhotoPatches).mockImplementation(
+      async (_id, updates) => {
+        snapshot = { ...snapshot, ...updates[0].patch };
+        return [structuredClone(snapshot)];
+      },
+    );
+    const { result } = renderHook(() => useProject());
+    act(() => result.current.load(structuredClone(project)));
+    await act(async () => {
+      await result.current.edit(
+        ["photo"],
+        { decision: "undecided", reviewed: false },
+        "Undecided",
+      );
+    });
+    expect(result.current.project?.photos[0].decisionTouched).toBe(true);
+    await act(async () => {
+      await result.current.edit(
+        ["photo"],
+        { decision: "undecided", reviewed: false },
+        "Undecided",
+      );
+    });
+    expect(api.updatePhotos).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await result.current.undo();
+    });
+    expect(result.current.project?.photos[0]).toEqual(original);
+  });
+  it("ignores an automatic first-pass response after another project has loaded", async () => {
+    const requested = deferred<Project>();
+    vi.mocked(api.automaticFirstPass).mockReturnValueOnce(requested.promise);
+    const { result } = renderHook(() => useProject());
+    act(() => result.current.load(structuredClone(project)));
+    let task!: Promise<boolean>;
+    act(() => {
+      task = result.current.automaticFirstPass("stronger");
+    });
+    await waitFor(() =>
+      expect(api.automaticFirstPass).toHaveBeenCalledWith(
+        "project",
+        "stronger",
+      ),
+    );
+    const other = { ...project, id: "other-project" };
+    act(() => result.current.load(other));
+    await act(async () => {
+      requested.resolve({ ...project, automaticSelectionEnabled: true });
+      await task;
+    });
+    expect(result.current.project?.id).toBe("other-project");
+    expect(result.current.project?.automaticSelectionEnabled).toBe(false);
+  });
   it("does not manufacture writes or undo entries for repeated identical review decisions", async () => {
     const favorite = {
       ...original,
       decision: "favorite" as const,
       reviewed: true,
+      decisionTouched: true,
     };
     const { result } = renderHook(() => useProject());
     act(() => {
@@ -121,8 +261,22 @@ describe("durable manual review", () => {
     expect(result.current.undoLabel).toBe("Favorite");
     expect(result.current.saveError).toContain("Transaction failed");
     expect(api.updatePhotoPatches).toHaveBeenCalledWith("project", [
-      { photoId: "photo", patch: { decision: "undecided" } },
-      { photoId: "second", patch: { decision: "undecided" } },
+      {
+        photoId: "photo",
+        patch: {
+          decision: "undecided",
+          decisionSource: "manual",
+          decisionTouched: false,
+        },
+      },
+      {
+        photoId: "second",
+        patch: {
+          decision: "undecided",
+          decisionSource: "manual",
+          decisionTouched: false,
+        },
+      },
     ]);
     await act(async () => {
       undone = await result.current.undo();
@@ -152,8 +306,22 @@ describe("durable manual review", () => {
     expect(result.current.project?.photos).toEqual([original, second]);
     expect(result.current.undoLabel).toBeNull();
     expect(api.updatePhotoPatches).toHaveBeenCalledWith("project", [
-      { photoId: "photo", patch: { tags: ["family", "print"] } },
-      { photoId: "second", patch: { tags: ["travel", "print"] } },
+      {
+        photoId: "photo",
+        patch: {
+          tags: ["family", "print"],
+          decisionSource: "manual",
+          decisionTouched: true,
+        },
+      },
+      {
+        photoId: "second",
+        patch: {
+          tags: ["travel", "print"],
+          decisionSource: "manual",
+          decisionTouched: true,
+        },
+      },
     ]);
   });
   it("drains saves added during closing and reports a write failure instead of allowing close", async () => {
@@ -324,6 +492,8 @@ describe("durable manual review", () => {
         photoId: "photo",
         patch: {
           decision: "favorite",
+          decisionSource: "manual",
+          decisionTouched: false,
           reviewed: true,
         },
       },
@@ -362,6 +532,8 @@ describe("durable manual review", () => {
           rating: 0,
           ratingTouched: false,
           reviewed: false,
+          decisionSource: "manual",
+          decisionTouched: false,
         },
       },
     ]);

@@ -14,9 +14,20 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def main() -> None:
+    version = json.loads((ROOT / "desktop/package.json").read_text())["version"]
+    installer_notice = (
+        (ROOT / "desktop/src-tauri/windows/installer.nsi")
+        .read_text(encoding="utf-8")
+        .split("Unicode true", 1)[0]
+    )
+    installer_notice = "\n".join(
+        line.removeprefix(";").removeprefix(" ")
+        for line in installer_notice.splitlines()
+    )
     sections = [
-        "Photo Select 0.2.1 - third-party dependencies\n",
+        f"Photo Select {version} - third-party dependencies\n",
         "Application source and its license: " + (ROOT / "LICENSE").read_text(),
+        "\nWindows installer template (Tauri CLI 2.12.1):\n" + installer_notice + "\n",
     ]
     for name in ("Pillow", "numpy", "rawpy", "ExifRead", "pillow-heif", "PyInstaller"):
         distribution = importlib.metadata.distribution(name)

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   font-family:
     "DM Sans",
     system-ui,
@@ -76,6 +77,11 @@ textarea::placeholder {
 }
 select {
   cursor: pointer;
+}
+select option,
+select optgroup {
+  color: var(--text);
+  background: #1c1f1b;
 }
 button svg {
   flex-shrink: 0;
@@ -406,6 +412,39 @@ kbd {
   margin-top: auto;
   padding-top: 24px;
 }
+.first-pass-section label,
+.first-pass-mode-label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 11px;
+}
+.first-pass-section select {
+  width: 100%;
+  padding: 7px;
+  font-size: 11px;
+}
+.first-pass-section .text-button {
+  width: 100%;
+  font-size: 11px;
+}
+.first-pass-section .quiet-note {
+  font-size: 10px;
+}
+.first-pass-reason {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.first-pass-reason p {
+  margin: 7px 0 0;
+}
+.export-discards {
+  margin-top: 18px;
+}
 .review-summary {
   display: flex;
   flex-wrap: wrap;
@@ -634,10 +673,16 @@ kbd {
 .photo-card:not(:disabled):hover {
   background: #252b20;
 }
-.photo-card.selected,
-.photo-card.focused {
-  border-color: #ad8e60;
+.photo-card.selected {
+  border-color: var(--accent);
   background: #27291f;
+}
+.photo-card.focused:not(.selected) {
+  border-color: #6f7b68;
+  background: #232920;
+}
+.photo-card:focus-visible {
+  outline-color: #8a9781;
 }
 .thumbnail {
   aspect-ratio: 1.5;
@@ -686,26 +731,6 @@ kbd {
 .selected .card-status {
   color: #929f83;
 }
-.selection-dot {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 2px #0005;
-}
-.selection-dot:after {
-  content: "✓";
-  position: absolute;
-  inset: -1px;
-  color: #28271c;
-  font-weight: bold;
-  font-size: 10px;
-  text-align: center;
-}
 .image-badges {
   position: absolute;
   bottom: 7px;
@@ -750,9 +775,9 @@ kbd {
   font-size: 10px;
   background: #222a1f;
 }
-.load-more {
-  display: flex;
-  margin: 24px auto 0;
+.grid-sentinel {
+  height: 1px;
+  margin-top: 24px;
 }
 .empty-state {
   margin: auto;
@@ -1213,15 +1238,6 @@ kbd {
 .compact-card .image-badges > span {
   width: 17px;
   height: 17px;
-}
-.compact-card .selection-dot {
-  width: 10px;
-  height: 10px;
-  top: 5px;
-  left: 5px;
-}
-.compact-card .selection-dot:after {
-  font-size: 8px;
 }
 .compare-note {
   padding: 7px 18px;

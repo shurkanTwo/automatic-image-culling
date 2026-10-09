@@ -19,17 +19,29 @@ export default function PhotoCard({
   onDoubleClick: () => void;
   compact?: boolean;
 }) {
+  const decisionLabel = photo.decision === "pass" ? "discard" : photo.decision;
+  const status =
+    photo.decisionSource === "automatic" && photo.decision !== "undecided"
+      ? photo.decision === "favorite"
+        ? "Auto favorite"
+        : "Auto discard"
+      : photo.reviewed
+        ? photo.decision === "undecided"
+          ? "Reviewed"
+          : photo.decision === "favorite"
+            ? "Favorite"
+            : "Discarded"
+        : "Unreviewed";
   return (
     <button
       className={`photo-card ${selected ? "selected" : ""} ${active ? "focused" : ""} ${photo.decision === "pass" ? "passed" : ""} ${compact ? "compact-card" : ""}`}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
-      aria-label={`${photo.filename}, ${photo.decision}${selected ? ", selected" : ""}`}
+      aria-label={`${photo.filename}, ${status.startsWith("Auto") ? status.toLowerCase() : decisionLabel}${selected ? ", selected" : ""}`}
       aria-pressed={selected}
     >
       <div className="thumbnail">
         <PhotoImage path={photo.thumbnailPath} alt={photo.filename} thumbnail />
-        {selected && <span className="selection-dot" />}
         <span className="image-badges">
           {photo.decision === "favorite" && (
             <span className="favorite-badge">
@@ -64,17 +76,16 @@ export default function PhotoCard({
           )}
         </span>
       </div>
+      {compact &&
+        photo.decisionSource === "automatic" &&
+        photo.decision !== "undecided" && (
+          <div className="card-status">
+            <span>{status}</span>
+          </div>
+        )}
       {!compact && (
         <div className="card-status">
-          <span>
-            {photo.reviewed
-              ? photo.decision === "undecided"
-                ? "Reviewed"
-                : photo.decision === "favorite"
-                  ? "Favorite"
-                  : "Passed"
-              : "Unreviewed"}
-          </span>
+          <span>{status}</span>
           <span>
             {new Date(photo.captureTime).toLocaleTimeString([], {
               hour: "2-digit",

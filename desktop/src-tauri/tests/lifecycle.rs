@@ -45,6 +45,11 @@ impl Fixture {
             rating_touched: false,
             decision: "undecided".into(),
             reviewed: false,
+            decision_source: "manual".into(),
+            decision_touched: false,
+            suggested_decision: None,
+            suggestion_reason: None,
+            suggestion_confidence: None,
             tags: vec![],
             analysis_error: None,
         }
@@ -282,7 +287,7 @@ fn export_uses_explicit_collection_and_does_not_invent_ratings() {
         .unwrap();
     assert_eq!(result.count, 2);
     let manifest: serde_json::Value = serde_json::from_slice(&fs::read(&dest).unwrap()).unwrap();
-    assert_eq!(manifest["schemaVersion"], 1);
+    assert_eq!(manifest["schemaVersion"], 2);
     assert_eq!(manifest["application"], "Photo Select");
     assert_eq!(manifest["collectionName"], "Story");
     assert!(manifest["photos"][0]["rating"].is_null());
@@ -935,4 +940,446 @@ fn wholly_disconnected_source_drive_keeps_cached_review_reopen_and_export_availa
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(destination).unwrap()).unwrap();
     assert_eq!(manifest["photos"][0]["path"], offline.path);
+}
+
+fn proposal(photo: &Photo, decision: &str) -> photo_select::core::Suggestion {
+    photo_select::core::Suggestion {
+        photo_id: photo.id.clone(),
+        decision: decision.into(),
+        reason: Some("Technical comparison".into()),
+        confidence: 0.95,
+    }
+}
+
+#[test]
+fn automatic_first_pass_preserves_manual_edits_and_collection_membership() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    let b = f.add("b");
+    let c = f.add("c");
+    let d = f.add("d");
+    let e = f.add("e");
+    f.store.configure_first_pass(&f.id, "cautious").unwrap();
+    f.store.set_status(&f.id, "running", None).unwrap();
+    // These edits happen after analysis begins, including explicit unreviewed Undecided.
+    f.store
+        .update_photos(
+            &f.id,
+            &[b.id.clone()],
+            &PhotoPatch {
+                decision: Some("undecided".into()),
+                reviewed: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[c.id.clone()],
+            &PhotoPatch {
+                rating: Some(4),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[d.id.clone()],
+            &PhotoPatch {
+                tags: Some(vec!["story".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let collection = f.store.create_collection(&f.id, "Book").unwrap();
+    f.store
+        .update_collection(&f.id, &collection.id, None, Some(vec![e.id.clone()]))
+        .unwrap();
+    let seen = [
+        a.id.clone(),
+        b.id.clone(),
+        c.id.clone(),
+        d.id.clone(),
+        e.id.clone(),
+    ]
+    .into_iter()
+    .collect();
+    let suggestions = [
+        proposal(&a, "favorite"),
+        proposal(&b, "pass"),
+        proposal(&c, "pass"),
+        proposal(&d, "pass"),
+        proposal(&e, "pass"),
+    ];
+    f.store
+        .finish_scan_with_suggestions(&f.id, &seen, Some(&suggestions))
+        .unwrap();
+    let p = f.store.project(&f.id).unwrap();
+    assert!(p.first_pass_ready);
+    assert_eq!(p.photos[0].decision, "favorite");
+    assert_eq!(p.photos[0].decision_source, "automatic");
+    assert!(!p.photos[0].reviewed);
+    for photo in &p.photos[1..] {
+        assert_eq!(photo.decision, "undecided");
+        assert_eq!(photo.suggested_decision.as_deref(), Some("pass"));
+    }
+    assert_eq!(p.photos[2].rating, 4);
+    assert_eq!(p.photos[3].tags, vec!["story"]);
+    assert_eq!(p.collections[0].photo_ids, vec![e.id.clone()]);
+    // Fresh ingestion preserves provenance and every manual choice.
+    f.store.ingest_photo(&f.id, f.photo("a")).unwrap();
+    f.store.ingest_photo(&f.id, f.photo("b")).unwrap();
+    let changed = [
+        proposal(&a, "pass"),
+        proposal(&b, "favorite"),
+        proposal(&c, "pass"),
+        proposal(&d, "pass"),
+        proposal(&e, "pass"),
+    ];
+    f.store
+        .finish_scan_with_suggestions(&f.id, &seen, Some(&changed))
+        .unwrap();
+    let p = f.store.project(&f.id).unwrap();
+    assert_eq!(p.photos[0].decision, "pass");
+    assert_eq!(p.photos[1].decision, "undecided");
+}
+
+#[test]
+fn cached_automatic_selection_and_clear_only_change_automatic_choices() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    let b = f.add("b");
+    let seen = [a.id.clone(), b.id.clone()].into_iter().collect();
+    f.store
+        .finish_scan_with_suggestions(
+            &f.id,
+            &seen,
+            Some(&[proposal(&a, "favorite"), proposal(&b, "pass")]),
+        )
+        .unwrap();
+    let p = f.store.project(&f.id).unwrap();
+    assert!(!p.automatic_selection_enabled);
+    assert!(p.first_pass_ready);
+    assert!(p.photos.iter().all(|p| p.decision == "undecided"));
+    assert!(f.store.apply_cached_first_pass(&f.id, "stronger").is_err());
+    let p = f.store.apply_cached_first_pass(&f.id, "cautious").unwrap();
+    assert!(p.photos.iter().all(|p| p.decision_source == "automatic"));
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                decision: Some("favorite".into()),
+                reviewed: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let p = f.store.clear_automatic_selection(&f.id).unwrap();
+    assert!(!p.automatic_selection_enabled);
+    assert!(p.first_pass_ready);
+    assert_eq!(p.photos[0].decision, "favorite");
+    assert!(p.photos[0].reviewed);
+    assert_eq!(p.photos[1].decision, "undecided");
+    assert_eq!(p.photos[1].decision_source, "manual");
+    // Rescans remain opt-out after clearing; explicit cached apply may opt back in.
+    f.store
+        .finish_scan_with_suggestions(
+            &f.id,
+            &seen,
+            Some(&[proposal(&a, "pass"), proposal(&b, "pass")]),
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.project(&f.id).unwrap().photos[1].decision,
+        "undecided"
+    );
+    assert_eq!(
+        f.store
+            .apply_cached_first_pass(&f.id, "cautious")
+            .unwrap()
+            .photos[1]
+            .decision,
+        "pass"
+    );
+}
+
+#[test]
+fn invalid_suggestion_batches_are_atomic_and_failed_photos_are_never_selected() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    let mut b = f.photo("b");
+    b.analysis_error = Some("Cannot decode".into());
+    f.store.ingest_photo(&f.id, b.clone()).unwrap();
+    f.store.configure_first_pass(&f.id, "cautious").unwrap();
+    f.store.set_status(&f.id, "running", None).unwrap();
+    let seen = [a.id.clone(), b.id.clone()].into_iter().collect();
+    let before = serde_json::to_value(f.store.project(&f.id).unwrap()).unwrap();
+    let mut invalid = proposal(&b, "undecided");
+    invalid.confidence = 1.1;
+    for batch in [
+        vec![proposal(&a, "favorite")],
+        vec![proposal(&a, "favorite"), proposal(&b, "pass")],
+        vec![proposal(&a, "favorite"), invalid],
+        vec![proposal(&a, "favorite"), proposal(&a, "favorite")],
+    ] {
+        assert!(f
+            .store
+            .finish_scan_with_suggestions(&f.id, &seen, Some(&batch))
+            .is_err());
+        assert_eq!(
+            serde_json::to_value(f.store.project(&f.id).unwrap()).unwrap(),
+            before
+        );
+    }
+    f.store
+        .finish_scan_with_suggestions(
+            &f.id,
+            &seen,
+            Some(&[proposal(&a, "favorite"), proposal(&b, "undecided")]),
+        )
+        .unwrap();
+    let p = f.store.project(&f.id).unwrap();
+    assert_eq!(p.photos[0].decision, "favorite");
+    assert_eq!(p.photos[1].decision, "undecided");
+    assert_eq!(p.photos[1].decision_source, "manual");
+}
+
+#[test]
+fn legacy_automatic_fields_default_off_and_manual() {
+    let f = Fixture::new();
+    f.add("a");
+    let mut p = serde_json::to_value(f.store.project(&f.id).unwrap()).unwrap();
+    for key in [
+        "automaticSelectionEnabled",
+        "selectionMode",
+        "firstPassReady",
+    ] {
+        p.as_object_mut().unwrap().remove(key);
+    }
+    for key in [
+        "decisionSource",
+        "decisionTouched",
+        "suggestedDecision",
+        "suggestionReason",
+        "suggestionConfidence",
+    ] {
+        p["photos"][0].as_object_mut().unwrap().remove(key);
+    }
+    let p: photo_select::core::Project = serde_json::from_value(p).unwrap();
+    assert!(!p.automatic_selection_enabled);
+    assert!(!p.first_pass_ready);
+    assert_eq!(p.selection_mode, "cautious");
+    assert_eq!(p.photos[0].decision_source, "manual");
+}
+
+#[test]
+fn export_v2_includes_catalog_rejects_without_adding_them_to_selected_collection() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    let b = f.add("b");
+    let c = f.add("c");
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                decision: Some("favorite".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[b.id.clone(), c.id.clone()],
+            &PhotoPatch {
+                decision: Some("pass".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let collection = f.store.create_collection(&f.id, "Book").unwrap();
+    f.store
+        .update_collection(&f.id, &collection.id, None, Some(vec![a.id, b.id]))
+        .unwrap();
+    let dest = f.temp.path().join("export-v2.json");
+    let result = f
+        .store
+        .export_with_discards(
+            &f.id,
+            dest.to_str().unwrap(),
+            Some(&collection.id),
+            false,
+            true,
+        )
+        .unwrap();
+    assert_eq!(result.count, 3);
+    assert_eq!(result.selected_count, 1);
+    assert_eq!(result.discard_count, 2);
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(dest).unwrap()).unwrap();
+    assert_eq!(manifest["schemaVersion"], 2);
+    assert_eq!(manifest["photos"][0]["catalogFlag"], "pick");
+    assert_eq!(manifest["photos"][1]["catalogFlag"], "reject");
+    assert_eq!(manifest["photos"][1]["addToCollection"], false);
+    assert_eq!(manifest["photos"][2]["catalogFlag"], "reject");
+    assert_eq!(manifest["photos"][2]["addToCollection"], false);
+    let without_rejects = f
+        .store
+        .export(
+            &f.id,
+            f.temp.path().join("no-rejects.json").to_str().unwrap(),
+            Some(&collection.id),
+            false,
+        )
+        .unwrap();
+    assert_eq!(without_rejects.count, 1);
+    assert_eq!(without_rejects.selected_count, 1);
+    assert_eq!(without_rejects.discard_count, 0);
+}
+
+#[test]
+fn undo_restores_untouched_manual_and_automatic_provenance() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                tags: Some(vec!["temporary".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                tags: Some(vec![]),
+                decision_source: Some("manual".into()),
+                decision_touched: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let seen = [a.id.clone()].into_iter().collect();
+    f.store
+        .finish_scan_with_suggestions(&f.id, &seen, Some(&[proposal(&a, "favorite")]))
+        .unwrap();
+    f.store.apply_cached_first_pass(&f.id, "cautious").unwrap();
+    let before = f.store.project(&f.id).unwrap().photos.remove(0);
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                rating: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id.clone()],
+            &PhotoPatch {
+                rating: Some(before.rating),
+                rating_touched: Some(before.rating_touched),
+                decision_source: Some(before.decision_source),
+                decision_touched: Some(before.decision_touched),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    f.store
+        .finish_scan_with_suggestions(&f.id, &seen, Some(&[proposal(&a, "pass")]))
+        .unwrap();
+    let after = f.store.project(&f.id).unwrap();
+    assert_eq!(after.photos[0].decision, "pass");
+    assert_eq!(after.photos[0].decision_source, "automatic");
+    assert_eq!(after.photos[0].rating, 0);
+    assert!(!after.photos[0].rating_touched);
+}
+
+#[test]
+fn discard_only_export_creates_catalog_entries_without_collection_membership() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    f.store
+        .update_photos(
+            &f.id,
+            &[a.id],
+            &PhotoPatch {
+                decision: Some("pass".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let dest = f.temp.path().join("rejects-only.json");
+    let result = f
+        .store
+        .export_with_discards(&f.id, dest.to_str().unwrap(), None, false, true)
+        .unwrap();
+    assert_eq!(result.count, 1);
+    assert_eq!(result.selected_count, 0);
+    assert_eq!(result.discard_count, 1);
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(dest).unwrap()).unwrap();
+    assert_eq!(manifest["photos"][0]["catalogFlag"], "reject");
+    assert_eq!(manifest["photos"][0]["addToCollection"], false);
+}
+
+#[test]
+fn successful_rescan_retires_stale_automatic_choices_for_failed_and_unseen_originals() {
+    let f = Fixture::new();
+    let a = f.add("a");
+    let b = f.add("b");
+    let c = f.add("c");
+    f.store.configure_first_pass(&f.id, "cautious").unwrap();
+    let seen = [a.id.clone(), b.id.clone(), c.id.clone()]
+        .into_iter()
+        .collect();
+    f.store
+        .finish_scan_with_suggestions(
+            &f.id,
+            &seen,
+            Some(&[
+                proposal(&a, "pass"),
+                proposal(&b, "favorite"),
+                proposal(&c, "pass"),
+            ]),
+        )
+        .unwrap();
+    f.store
+        .update_photos(
+            &f.id,
+            &[c.id.clone()],
+            &PhotoPatch {
+                decision: Some("pass".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let mut failed = f.photo("a");
+    failed.analysis_error = Some("Cannot decode".into());
+    f.store.ingest_photo(&f.id, failed).unwrap();
+    // A partial scan cannot change existing choices before successful completion.
+    assert_eq!(f.store.project(&f.id).unwrap().photos[0].decision, "pass");
+    f.store
+        .finish_scan_with_suggestions(
+            &f.id,
+            &[a.id.clone()].into_iter().collect(),
+            Some(&[proposal(&a, "undecided")]),
+        )
+        .unwrap();
+    let p = f.store.project(&f.id).unwrap();
+    assert_eq!(p.photos[0].decision, "undecided");
+    assert_eq!(p.photos[1].decision, "undecided");
+    assert!(p.photos[0].analysis_error.is_some());
+    assert!(p.photos[1].analysis_error.is_some());
+    assert_eq!(p.photos[2].decision, "pass");
+    assert_eq!(p.photos[2].decision_source, "manual");
 }

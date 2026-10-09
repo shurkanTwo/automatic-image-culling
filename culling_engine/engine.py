@@ -27,8 +27,9 @@ from .discovery import (
 )
 from .grouping import group_photos
 from .imaging import atomic_save_jpeg, decode_image, resize_to_edge
+from .selection import suggest_selection, valid_metrics
 
-CONFIG_VERSION = "photo-select-preview-2048-thumb-360-analysis-640-v3"
+CONFIG_VERSION = "photo-select-preview-2048-thumb-360-analysis-640-v4"
 DEFAULT_WORKERS = min(4, max(1, (os.cpu_count() or 2) // 2))
 PREVIEW_EDGE = 2048
 THUMBNAIL_EDGE = 360
@@ -88,6 +89,8 @@ def _load_cache(record: Path, identity: SourceIdentity) -> dict[str, Any] | None
         ):
             return None
         if not _valid_cached_metadata(photo, identity):
+            return None
+        if not valid_metrics(photo.get("technicalMetrics")):
             return None
         signature = photo.get("visualSignature")
         if not isinstance(signature, list) or len(signature) != 48:
@@ -213,6 +216,7 @@ def analyze_photo(path: Path, cache: Path) -> dict[str, Any]:
         photo["thumbnailPath"] = ""
         photo["phash"] = None
         photo.pop("visualSignature", None)
+        photo.pop("technicalMetrics", None)
     return photo
 
 
@@ -242,10 +246,13 @@ def scan(
     *,
     workers: int = DEFAULT_WORKERS,
     include_subfolders: bool = True,
+    selection_mode: str = "cautious",
 ) -> dict[str, Any]:
     """Bound pending futures so a batch does not allocate thousands of decoders."""
     if not 1 <= workers <= 8:
         raise ValueError("Worker count must be between 1 and 8")
+    if selection_mode not in ("cautious", "stronger"):
+        raise ValueError("Selection mode must be cautious or stronger")
     source = source.resolve(strict=True)
     cache = cache.resolve()
     str(cache).encode("utf-8")
@@ -302,7 +309,14 @@ def scan(
                     }
                 )
                 submit_next()
-    emit({"type": "groups", "groups": group_photos(results)})
+    groups = group_photos(results)
+    emit({"type": "groups", "groups": groups})
+    emit(
+        {
+            "type": "suggestions",
+            "suggestions": suggest_selection(results, groups, mode=selection_mode),
+        }
+    )
     complete = {
         "type": "complete",
         "processed": processed,

@@ -30,18 +30,29 @@ def self_test() -> dict[str, Any]:
             capabilities[dependency] = True
         except ImportError:
             capabilities[dependency] = False
-    checks = ["decode", "orientation", "cache", "detail", "json", "folder-scope"]
+    checks = [
+        "decode",
+        "orientation",
+        "cache",
+        "detail",
+        "json",
+        "folder-scope",
+        "automatic-selection",
+    ]
     with tempfile.TemporaryDirectory(prefix="photo-select-self-test-") as temporary:
         base = Path(temporary).resolve()
         source = base / "source"
         source.mkdir()
         rgb = Image.new("RGB", (120, 80), (95, 150, 220))
         rgb.paste((240, 40, 20), (12, 8, 42, 38))
+        for column in range(50, 110, 4):
+            rgb.paste((30, 30, 30), (column, 50, column + 2, 70))
         rgb.save(source / "synthetic.png")
         exif = Image.Exif()
         exif[274] = 6
         rgb.save(source / "rotated.jpg", exif=exif)
-        expected_count = 2
+        Image.new("RGB", (120, 80), (0, 0, 0)).save(source / "blank.png")
+        expected_count = 3
         if capabilities["pillow_heif"]:
             rgb.save(source / "phone.heic", format="HEIF")
             expected_count += 1
@@ -61,6 +72,26 @@ def self_test() -> dict[str, Any]:
         }:
             raise RuntimeError(f"Synthetic scan failed: {summary}")
         photos = [record["photo"] for record in records if record["type"] == "photo"]
+        suggestions = next(
+            record["suggestions"]
+            for record in records
+            if record["type"] == "suggestions"
+        )
+        black = next(photo for photo in photos if photo["filename"] == "blank.png")
+        if (
+            len(suggestions) != len(photos)
+            or not any(
+                suggestion["decision"] == "favorite" for suggestion in suggestions
+            )
+            or not any(
+                suggestion["photoId"] == black["id"]
+                and suggestion["decision"] == "pass"
+                for suggestion in suggestions
+            )
+            or [record["type"] for record in records][-3:]
+            != ["groups", "suggestions", "complete"]
+        ):
+            raise RuntimeError("Automatic selection check failed")
         if any(Path(photo["path"]).parent != source for photo in photos):
             raise RuntimeError("Selected-folder scope check failed")
         rotated = next(photo for photo in photos if photo["filename"] == "rotated.jpg")
@@ -128,6 +159,12 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--cache", required=True, type=Path)
     scan_parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     scan_parser.add_argument(
+        "--selection-mode",
+        choices=("cautious", "stronger"),
+        default="cautious",
+        help="Assertiveness of reversible technical first-pass proposals",
+    )
+    scan_parser.add_argument(
         "--no-subfolders",
         action="store_true",
         help="Analyze only images directly in the source folder",
@@ -157,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 emit_json,
                 workers=arguments.workers,
                 include_subfolders=not arguments.no_subfolders,
+                selection_mode=arguments.selection_mode,
             )
         elif arguments.command == "detail":
             emit_json(generate_detail(arguments.source, arguments.output))

@@ -91,6 +91,14 @@ def analyze_image(image: Image.Image) -> dict[str, Any]:
     )
     return {
         "qualityScore": round(score, 1),
+        "technicalMetrics": {
+            "detail": round(detail, 6),
+            "gradient": round(gradient, 6),
+            "contrast": round(contrast, 6),
+            "highlightClipping": round(highlight_clipping, 6),
+            "shadowClipping": round(shadow_clipping, 6),
+            "luminanceStd": round(float(np.std(luminance)), 6),
+        },
         "hints": hints,
         "phash": perceptual_hash(sample),
         "visualSignature": np.round(signature.ravel(), 4).tolist(),

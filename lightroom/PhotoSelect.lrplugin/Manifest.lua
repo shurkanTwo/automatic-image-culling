@@ -20,7 +20,7 @@ local function validList(value, limit)
 end
 
 function Manifest.validate(payload)
-    if type(payload) ~= 'table' or payload.schemaVersion ~= 1
+    if type(payload) ~= 'table' or (payload.schemaVersion ~= 1 and payload.schemaVersion ~= 2)
         or payload.application ~= 'Photo Select' or not validList(payload.photos, 100000) then
         error('Choose a selection JSON exported by Photo Select.')
     end
@@ -39,6 +39,13 @@ function Manifest.validate(payload)
             and entry.decision ~= 'undecided' then
             error('Photo ' .. index .. ' has an invalid review decision.')
         end
+        if payload.schemaVersion == 2 then
+            local expectedFlag = entry.decision == 'favorite' and 'pick'
+                or entry.decision == 'pass' and 'reject' or nil
+            if entry.catalogFlag ~= expectedFlag or type(entry.addToCollection) ~= 'boolean' then
+                error('Photo ' .. index .. ' has an invalid Lightroom flag or collection instruction.')
+            end
+        end
         if not validList(entry.tags, 100) then
             error('Photo ' .. index .. ' has an invalid tag list.')
         end
@@ -49,6 +56,17 @@ function Manifest.validate(payload)
         end
     end
     return payload
+end
+
+function Manifest.catalogFlag(payload, entry)
+    if payload.schemaVersion == 2 then return entry.catalogFlag end
+    -- Version 1 treated Pass as archive-only. Preserve that meaning on old exports.
+    if entry.decision == 'favorite' then return 'pick' end
+    return nil
+end
+
+function Manifest.addToCollection(payload, entry)
+    return payload.schemaVersion == 1 or entry.addToCollection
 end
 
 function Manifest.collectionName(payload)

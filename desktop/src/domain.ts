@@ -78,7 +78,10 @@ export function comparisonPhotos(
 }
 
 export function previousPatch(photo: Photo, patch: PhotoPatch): PhotoPatch {
-  const result: PhotoPatch = {};
+  const result: PhotoPatch = {
+    decisionSource: photo.decisionSource ?? "manual",
+    decisionTouched: photo.decisionTouched ?? false,
+  };
   if (patch.decision !== undefined) result.decision = photo.decision;
   if (patch.rating !== undefined) {
     result.rating = photo.rating;
@@ -90,6 +93,16 @@ export function previousPatch(photo: Photo, patch: PhotoPatch): PhotoPatch {
 }
 
 export function patchChangesPhoto(photo: Photo, patch: PhotoPatch): boolean {
+  if (
+    patch.decisionSource !== undefined &&
+    patch.decisionSource !== (photo.decisionSource ?? "manual")
+  )
+    return true;
+  if (
+    patch.decisionTouched !== undefined &&
+    patch.decisionTouched !== (photo.decisionTouched ?? false)
+  )
+    return true;
   if (patch.rating !== undefined && patch.rating !== photo.rating) return true;
   const touched =
     patch.ratingTouched ??

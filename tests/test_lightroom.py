@@ -19,10 +19,16 @@ class LightroomBridgeTests(unittest.TestCase):
         self.lua.globals()["_PLUGIN"] = self.lua.table(path=str(PLUGIN))
         self.photos = self.lua.globals().TEST_PHOTOS
 
-    def run_import(self, entries: list[dict], *, project_name: str = "Japan") -> None:
+    def run_import(
+        self,
+        entries: list[dict],
+        *,
+        project_name: str = "Japan",
+        schema_version: int = 1,
+    ) -> None:
         self.lua.globals().TEST_SELECTION_JSON = json.dumps(
             {
-                "schemaVersion": 1,
+                "schemaVersion": schema_version,
                 "application": "Photo Select",
                 "projectName": project_name,
                 "collectionName": "Photobook",
@@ -60,6 +66,90 @@ class LightroomBridgeTests(unittest.TestCase):
         self.run_import([self.entry("photo.jpg", rating=0, decision="pass")])
         self.assertEqual(self.photos["photo.jpg"].metadata.rating, 0)
         self.assertEqual(self.photos["photo.jpg"].metadata.pickStatus, 1)
+
+    def test_v2_discards_are_rejected_without_joining_the_shortlist(self) -> None:
+        for path, flag in (("favorite.jpg", -1), ("discard.jpg", 1), ("topic.jpg", 1)):
+            self.lua.globals().testPhoto(path, 4, flag)
+        self.run_import(
+            [
+                self.entry("favorite.jpg", catalogFlag="pick", addToCollection=True),
+                self.entry(
+                    "discard.jpg",
+                    decision="pass",
+                    catalogFlag="reject",
+                    addToCollection=False,
+                ),
+                self.entry(
+                    "topic.jpg",
+                    decision="undecided",
+                    catalogFlag=None,
+                    addToCollection=True,
+                ),
+            ],
+            schema_version=2,
+        )
+        self.assertEqual(self.photos["favorite.jpg"].metadata.pickStatus, 1)
+        self.assertEqual(self.photos["discard.jpg"].metadata.pickStatus, -1)
+        self.assertEqual(self.photos["topic.jpg"].metadata.pickStatus, 1)
+        self.assertEqual(
+            set(self.lua.globals().TEST_COLLECTIONS["Japan - Photobook"].photos),
+            {"favorite.jpg", "topic.jpg"},
+        )
+        self.assertEqual(self.photos["discard.jpg"].metadata.rating, 4)
+        summary = self.lua.globals().TEST_CONFIRMATIONS[1].message
+        self.assertIn("Add 2 photographs", summary)
+        self.assertIn("1 Pick flags, 1 Reject flags", summary)
+
+    def test_discard_only_import_does_not_create_an_empty_collection(self) -> None:
+        self.lua.globals().testPhoto("discard.jpg", 3, 0)
+        self.run_import(
+            [
+                self.entry(
+                    "discard.jpg",
+                    decision="pass",
+                    catalogFlag="reject",
+                    addToCollection=False,
+                )
+            ],
+            schema_version=2,
+        )
+        self.assertEqual(self.photos["discard.jpg"].metadata.pickStatus, -1)
+        self.assertIsNone(self.lua.globals().TEST_COLLECTIONS["Japan - Photobook"])
+
+    def test_v2_invalid_or_conflicting_instructions_cannot_write(self) -> None:
+        for values in (
+            {"catalogFlag": "reject", "addToCollection": True},
+            {"catalogFlag": "pick"},
+            {"catalogFlag": "pick", "addToCollection": 1},
+            {"catalogFlag": "pick", "addToCollection": True, "decision": "undecided"},
+        ):
+            with self.subTest(values=values):
+                self.setUp()
+                self.lua.globals().testPhoto("photo.jpg", 4, 0)
+                self.run_import([self.entry("photo.jpg", **values)], schema_version=2)
+                self.assertEqual(self.lua.globals().TEST_WRITES, 0)
+
+    def test_reject_changes_roll_back_if_any_metadata_write_fails(self) -> None:
+        self.lua.globals().testPhoto("one.jpg", 4, 1)
+        self.lua.globals().testPhoto("two.jpg", 3, 0)
+        self.lua.globals().TEST_FAIL_PHOTO = "two.jpg"
+        self.run_import(
+            [
+                self.entry(
+                    "one.jpg",
+                    decision="pass",
+                    catalogFlag="reject",
+                    addToCollection=False,
+                ),
+                self.entry("two.jpg", catalogFlag="pick", addToCollection=True),
+            ],
+            schema_version=2,
+        )
+        self.assertEqual(self.photos["one.jpg"].metadata.pickStatus, 1)
+        self.assertEqual(self.photos["two.jpg"].metadata.pickStatus, 0)
+        self.assertEqual(
+            self.lua.globals().TEST_MESSAGES[1].title, "Photo Select import failed"
+        )
 
     def test_missing_photos_are_counted_without_importing_or_moving_them(self) -> None:
         self.lua.globals().testPhoto("known.jpg", 2, 0)

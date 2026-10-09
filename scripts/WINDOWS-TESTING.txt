@@ -1,11 +1,19 @@
-PHOTO SELECT 0.2.2 - WINDOWS TEST BUILD
+PHOTO SELECT 0.2.3 - WINDOWS TEST BUILD
 
 GET STARTED
-Run Photo-Select-0.2.2-Windows-x64-Setup.exe to install for your current user.
+Run Photo-Select-0.2.3-Windows-x64-Setup.exe to install for your current user.
 The installer includes the image engine; no Python or Node installation is needed.
 It checks for Microsoft Edge WebView2 and installs the runtime if it is missing
 (an internet connection is needed only for that first runtime installation).
 This test build is unsigned, so Windows may show an unknown-publisher prompt.
+
+UPDATING AN INSTALLED VERSION
+Close Photo Select and run the newer Setup file. No manual uninstall is needed.
+Setup updates the existing installation in its current location. Your projects,
+cached previews, favorites, ratings, tags, collections, and folder scope remain.
+Running the same Setup file again repairs that version. If Photo Select or its
+analysis worker is running, close it and choose Retry. Setup never forces them
+to stop, so pending review changes can finish saving before the update.
 
 Alternatively, extract the entire Portable.zip and run Photo Select.exe. Keep the
 resources directory beside it. The portable app requires WebView2 already installed.
@@ -16,7 +24,12 @@ whether to Include subfolders. New projects default to the selected folder only.
 The choice is saved for rescans and shown under the project name in the sidebar.
 Existing projects retain their previous inclusion of subfolders. Create a new
 project from the same folder to use a different scope. You can browse while
-previews and technical hints are generated.
+previews and technical hints are generated. Automatic first pass defaults on;
+choose Cautious or Stronger before import, or change the mode in the sidebar later.
+Automatic favorites and discards appear after a successful complete analysis.
+Use Undo automatic choices to reset only automatic choices; manual edits remain.
+The photo grid loads more photographs automatically as you scroll near its end.
+There is no Show next photographs button and loading keeps your scroll position.
 Use favorites, stars, tags, comparison, and purpose collections to make a shortlist.
 Every review change is saved to a local project database. You can close and reopen
 the app, or rescan the folder later, without losing confirmed review decisions.
@@ -32,10 +45,19 @@ review the import summary, and apply it.
 The photographs must already be in the active Lightroom catalog at matching paths.
 The import adds a collection, applies only explicitly changed ratings, adds your
 tags, and gives Favorites a Pick flag. Existing keywords and Develop settings are
-preserved. Passed photos never receive a Reject flag. Import is one-way.
+preserved. Include discards as Lightroom Rejects defaults on during export.
+Discards then receive actual Reject flags; extra discards are not added to the
+shortlist collection. Reject flags never delete files. Use the updated 0.2.3 plugin.
+Old schema 1 exports keep their archive-only Pass behavior. Import is one-way.
 
 WHAT THE SUGGESTIONS MEAN
-This version provides conservative similarity groups and technical preview hints.
+This version automatically shortlists technically stronger previews and marks
+clear technical failures as discards. Cautious retains close alternatives; Stronger
+uses a tighter shortlist and discards more clearly weak matching alternatives.
+Unselected photos remain Undecided. Decode failures are never automatic discards.
+Automatic choices include explanations and technical confidence, not predictions
+of personal taste. Manual decisions, ratings, tags, and collections are protected.
+Existing projects start with automatic selection off; run it from the sidebar.
 Recommendations compare detail within a moment. They do not assess artistic merit,
 recognize faces, judge expressions, or understand a photobook topic.
 RAW previews use embedded camera JPEGs where possible. They reflect camera rendering,
@@ -49,9 +71,14 @@ The app does not upload photographs or call a cloud image service.
 USEFUL FIRST TESTS
 - Import a folder with Include subfolders off, then on in a separate project.
 - Rescan both projects and check that each keeps its chosen folder scope.
+- Scroll through a large folder and check that later photographs load automatically.
+- Install the next update over this version, then check that your reviews remain.
 - Favorite and rate a few photographs, restart, then verify those choices persist.
+- Run Cautious and Stronger, override a choice, rerun, and check your edit survives.
+- Undo automatic choices and check that your manual choices remain.
 - Compare alternatives and load a detailed preview.
 - Create a photobook collection, export it, and import it into Lightroom.
+- Confirm exported favorites get Pick flags and discards get Reject flags.
 - Rescan after adding a photograph and check existing decisions remain intact.
 - Stop analysis midway and resume with Rescan.
 

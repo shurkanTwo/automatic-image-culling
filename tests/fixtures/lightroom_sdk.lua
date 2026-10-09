@@ -1,6 +1,7 @@
 -- A small test double for the Lightroom SDK; never opens a real catalog.
 TEST_PHOTOS = {}
 TEST_MESSAGES = {}
+TEST_CONFIRMATIONS = {}
 TEST_COLLECTIONS = {}
 TEST_KEYWORDS = {}
 TEST_WRITES = 0
@@ -99,7 +100,10 @@ local modules = {
     LrApplication = { activeCatalog = function() return catalog end },
     LrDialogs = {
         runOpenPanel = function() return { 'selection.json' } end,
-        confirm = function() return TEST_CONFIRM end,
+        confirm = function(title, message)
+            TEST_CONFIRMATIONS[#TEST_CONFIRMATIONS + 1] = { title = title, message = message }
+            return TEST_CONFIRM
+        end,
         message = function(title, message, severity)
             TEST_MESSAGES[#TEST_MESSAGES + 1] = { title = title, message = message, severity = severity }
         end,

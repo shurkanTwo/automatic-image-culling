@@ -1,4 +1,6 @@
 export type Decision = "undecided" | "favorite" | "pass";
+export type SelectionMode = "cautious" | "stronger";
+export type DecisionSource = "manual" | "automatic";
 export interface Photo {
   id: string;
   path: string;
@@ -16,6 +18,11 @@ export interface Photo {
   rating: number;
   ratingTouched: boolean;
   decision: Decision;
+  decisionSource: DecisionSource;
+  decisionTouched?: boolean;
+  suggestedDecision: Decision | null;
+  suggestionReason: string | null;
+  suggestionConfidence: number | null;
   reviewed: boolean;
   tags: string[];
   analysisError: string | null;
@@ -36,6 +43,9 @@ export interface Project {
   name: string;
   sourceDir: string;
   includeSubfolders: boolean;
+  automaticSelectionEnabled: boolean;
+  selectionMode: SelectionMode;
+  firstPassReady: boolean;
   projectPath: string;
   createdAt: string;
   updatedAt: string;
@@ -63,7 +73,14 @@ export interface AppState {
 export interface ImportProgress {
   projectId: string;
   jobId: string;
-  phase: "scan" | "analysis" | "grouping" | "complete" | "cancelled" | "error";
+  phase:
+    | "scan"
+    | "analysis"
+    | "grouping"
+    | "selection"
+    | "complete"
+    | "cancelled"
+    | "error";
   processed: number;
   total: number;
   currentFile: string | null;
@@ -74,13 +91,16 @@ export interface PhotoPatch {
   ratingTouched?: boolean;
   rating?: number;
   decision?: Decision;
+  decisionSource?: DecisionSource;
+  decisionTouched?: boolean;
   reviewed?: boolean;
   tags?: string[];
 }
 export type Filter = "all" | "favorite" | "unreviewed" | "pass";
 export type Sort = "time" | "quality" | "rating";
 export type Scope =
-  { type: "all" } | { type: "group" | "collection"; id: string };
+  | { type: "all" }
+  | { type: "group" | "collection"; id: string };
 export interface BrowseOptions {
   filter: Filter;
   sort: Sort;

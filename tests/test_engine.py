@@ -141,7 +141,12 @@ class EngineTests(unittest.TestCase):
         )
         self.assertEqual(
             records,
-            [{"type": "scan", "total": 0}, {"type": "groups", "groups": []}, result],
+            [
+                {"type": "scan", "total": 0},
+                {"type": "groups", "groups": []},
+                {"type": "suggestions", "suggestions": []},
+                result,
+            ],
         )
 
     def test_selected_folder_discovery_does_not_visit_inaccessible_descendants(
@@ -353,7 +358,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(failed[0]["previewPath"], "")
         self.assertIsNone(failed[0]["phash"])
         self.assertEqual(records[-1], complete)
-        self.assertEqual(records[-2]["type"], "groups")
+        self.assertEqual(records[-3]["type"], "groups")
+        self.assertEqual(records[-2]["type"], "suggestions")
 
     def test_original_content_and_mtime_unchanged_by_scan_and_detail(self) -> None:
         path = self.save_photo("photo.jpg", orientation=6)
@@ -660,7 +666,7 @@ class EngineTests(unittest.TestCase):
         records = [json.loads(line) for line in process.stdout.splitlines()]
         self.assertEqual(
             [record["type"] for record in records],
-            ["scan", "photo", "progress", "groups", "complete"],
+            ["scan", "photo", "progress", "groups", "suggestions", "complete"],
         )
         self.assertEqual(records[1]["photo"]["filename"], "友人 Straße.jpg")
 
@@ -742,6 +748,7 @@ class EngineTests(unittest.TestCase):
         result = self_test()
         self.assertTrue(result["success"])
         self.assertIn("folder-scope", result["checks"])
+        self.assertIn("automatic-selection", result["checks"])
 
 
 class GroupingTests(unittest.TestCase):

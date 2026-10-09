@@ -10,6 +10,7 @@ import type {
   Photo,
   PhotoPatch,
   Project,
+  SelectionMode,
 } from "./types";
 
 type Bridge = {
@@ -54,13 +55,26 @@ export const api = {
     name: string,
     sourceDir: string,
     includeSubfolders: boolean,
-  ) => call<Project>("create_project", { name, sourceDir, includeSubfolders }),
+    automaticSelectionEnabled = true,
+    selectionMode: SelectionMode = "cautious",
+  ) =>
+    call<Project>("create_project", {
+      name,
+      sourceDir,
+      includeSubfolders,
+      automaticSelectionEnabled,
+      selectionMode,
+    }),
   openProject: (projectPath: string) =>
     call<Project>("open_project", { projectPath }),
   project: (projectId: string) => call<Project>("get_project", { projectId }),
   start: (projectId: string) =>
     call<{ jobId: string }>("start_import", { projectId }),
   cancel: (projectId: string) => call<void>("cancel_import", { projectId }),
+  automaticFirstPass: (projectId: string, selectionMode: SelectionMode) =>
+    call<Project>("automatic_first_pass", { projectId, selectionMode }),
+  clearAutomaticSelection: (projectId: string) =>
+    call<Project>("clear_automatic_selection", { projectId }),
   updatePhoto: (projectId: string, photoId: string, patch: PhotoPatch) =>
     call<Photo>("update_photo", { projectId, photoId, patch }),
   updatePhotos: (projectId: string, photoIds: string[], patch: PhotoPatch) =>
@@ -95,12 +109,19 @@ export const api = {
     destination: string,
     collectionId: string | null,
     onlyFavorites: boolean,
+    includeDiscards = false,
   ) =>
-    call<{ path: string; count: number }>("export_selection", {
+    call<{
+      path: string;
+      count: number;
+      selectedCount?: number;
+      discardCount?: number;
+    }>("export_selection", {
       projectId,
       destination,
       collectionId,
       onlyFavorites,
+      includeDiscards,
     }),
   plugin: () => call<string>("get_lightroom_plugin_path"),
 };
@@ -164,6 +185,7 @@ export async function subscribe<T>(
 export function progressLabel(value: ImportProgress): string {
   if (value.phase === "scan") return "Finding photographs";
   if (value.phase === "grouping") return "Organizing moments";
+  if (value.phase === "selection") return "Choosing favorites and discards";
   if (value.phase === "complete") return "Analysis complete";
   if (value.phase === "cancelled") return "Analysis paused";
   if (value.phase === "error") return "Analysis needs attention";

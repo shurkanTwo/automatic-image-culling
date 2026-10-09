@@ -114,11 +114,13 @@ export default function Inspector({
         </button>
         <button
           className={decision === "pass" ? "chosen" : ""}
-          title="Pass (P) — keeps the original"
-          onClick={() => onEdit({ decision: "pass", reviewed: true }, "Pass")}
+          title="Discard (P) — keeps the original"
+          onClick={() =>
+            onEdit({ decision: "pass", reviewed: true }, "Discard")
+          }
         >
           <Minus size={18} />
-          <span>Pass</span>
+          <span>Discard</span>
           <kbd>P</kbd>
         </button>
         <button
@@ -133,7 +135,9 @@ export default function Inspector({
           <kbd>U</kbd>
         </button>
       </div>
-      <p className="quiet-note">Passing keeps the photo in your archive.</p>
+      <p className="quiet-note">
+        Discarding keeps the original file. You can change this choice.
+      </p>
       <div className="inspector-section">
         <div className="section-label">
           Star rating <span>0–5</span>
@@ -233,6 +237,27 @@ export default function Inspector({
           A second look at technical quality. Your choices always decide what
           stays.
         </p>
+        {photo.suggestedDecision && photo.suggestedDecision !== "undecided" && (
+          <div className="first-pass-reason">
+            <strong>
+              {photo.decisionSource === "automatic"
+                ? "Automatic choice"
+                : "First-pass suggestion"}
+              :{" "}
+              {photo.suggestedDecision === "favorite" ? "Favorite" : "Discard"}
+            </strong>
+            {photo.suggestionReason && <p>{photo.suggestionReason}</p>}
+            {photo.suggestionConfidence != null && (
+              <p className="quiet-note">
+                Confidence: {Math.round(photo.suggestionConfidence * 100)}%
+              </p>
+            )}
+            <p className="quiet-note">
+              Technical signals help narrow the selection; review the photograph
+              before exporting.
+            </p>
+          </div>
+        )}
         <div className="quality-bar">
           <span style={{ width: `${photo.qualityScore}%` }} />
         </div>

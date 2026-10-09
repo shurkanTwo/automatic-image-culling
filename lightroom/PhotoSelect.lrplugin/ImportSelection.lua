@@ -37,7 +37,7 @@ local function importSelection(context)
         title = 'Matching Photo Select photographs', functionContext = context,
     }
     local matched, seen, missing = {}, {}, 0
-    local ratings, favorites, tags = 0, 0, 0
+    local ratings, favorites, discards, tags, members = 0, 0, 0, 0, 0
     for index, entry in ipairs(payload.photos) do
         if progress:isCanceled() then return end
         local photo = catalog:findPhotoByPath(entry.path, false)
@@ -46,7 +46,10 @@ local function importSelection(context)
                 matched[#matched + 1] = { photo = photo, entry = entry }
                 seen[photo.localIdentifier] = true
                 if entry.rating ~= nil then ratings = ratings + 1 end
-                if entry.decision == 'favorite' then favorites = favorites + 1 end
+                local flag = Manifest.catalogFlag(payload, entry)
+                if flag == 'pick' then favorites = favorites + 1 end
+                if flag == 'reject' then discards = discards + 1 end
+                if Manifest.addToCollection(payload, entry) then members = members + 1 end
                 if #entry.tags > 0 then tags = tags + 1 end
             end
         else
@@ -63,16 +66,19 @@ local function importSelection(context)
     end
 
     local summary = string.format(
-        'Add %d photographs to Photo Select / %s.\n\n%d Pick flags, %d explicitly changed star ratings, and tags on %d photographs.\n%d photographs were not found in this catalog and will be skipped.\n\nExisting keywords and Develop settings are preserved. Passed photographs will not receive Reject flags.',
-        #matched, Manifest.collectionName(payload), favorites, ratings, tags, missing)
+        'Add %d photographs to Photo Select / %s.\n\nApply %d Pick flags, %d Reject flags, %d explicitly changed star ratings, and tags on %d photographs.\n%d photographs were not found in this catalog and will be skipped.\n\nReject flags do not delete photographs. Existing keywords and Develop settings are preserved.',
+        members, Manifest.collectionName(payload), favorites, discards, ratings, tags, missing)
     if LrDialogs.confirm('Import this shortlist?', summary, 'Import', 'Cancel') ~= 'ok' then return end
 
     local collection, keywords
     keywords = {}
     -- New SDK objects can only be used after the write gate that creates them returns.
     writeCatalog(catalog, 'Prepare Photo Select shortlist', function()
-        local parent = catalog:createCollectionSet('Photo Select', nil, true)
-        collection = catalog:createCollection(Manifest.collectionName(payload), parent, true)
+        if members > 0 then
+            local parent = catalog:createCollectionSet('Photo Select', nil, true)
+            collection = catalog:createCollection(Manifest.collectionName(payload), parent, true)
+            if not collection then error('Lightroom could not create the selection collection.') end
+        end
         for _, item in ipairs(matched) do
             for _, tag in ipairs(item.entry.tags) do
                 if not keywords[tag] then
@@ -82,24 +88,25 @@ local function importSelection(context)
             end
         end
     end)
-    if not collection then error('Lightroom could not create the selection collection.') end
 
     writeCatalog(catalog, 'Import Photo Select shortlist', function()
         local photos = {}
         for _, item in ipairs(matched) do
             local photo, entry = item.photo, item.entry
             if entry.rating ~= nil then photo:setRawMetadata('rating', entry.rating) end
-            if entry.decision == 'favorite' then photo:setRawMetadata('pickStatus', 1) end
+            local flag = Manifest.catalogFlag(payload, entry)
+            if flag == 'pick' then photo:setRawMetadata('pickStatus', 1)
+            elseif flag == 'reject' then photo:setRawMetadata('pickStatus', -1) end
             for _, tag in ipairs(entry.tags) do
                 photo:addKeyword(keywords[tag])
             end
-            photos[#photos + 1] = photo
+            if Manifest.addToCollection(payload, entry) then photos[#photos + 1] = photo end
         end
-        collection:addPhotos(photos)
+        if collection then collection:addPhotos(photos) end
     end)
     LrDialogs.message('Shortlist imported', string.format(
-        '%d photographs added to Photo Select / %s.\n%d unmatched photographs skipped. You can undo the metadata import using Lightroom\'s Undo command.',
-        #matched, Manifest.collectionName(payload), missing), 'info')
+        '%d photographs added to Photo Select / %s.\n%d Pick flags and %d Reject flags applied.\n%d unmatched photographs skipped. You can undo the metadata import using Lightroom\'s Undo command.',
+        members, Manifest.collectionName(payload), favorites, discards, missing), 'info')
 end
 
 LrTasks.startAsyncTask(function()

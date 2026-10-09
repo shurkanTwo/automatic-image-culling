@@ -154,8 +154,20 @@ fn probes_validate_the_protocol_drain_verbose_output_and_stop_hangs() {
             false,
         ),
         (
-            r#"head -c 131072 /dev/zero >&2; printf '%s\n' '{"type":"self-test","success":true}'"#,
+            r#"head -c 131072 /dev/zero >&2; printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["folder-scope","automatic-selection"]}'"#,
             true,
+        ),
+        (
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.2","checks":["folder-scope","automatic-selection"]}'"#,
+            false,
+        ),
+        (
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["folder-scope"]}'"#,
+            false,
+        ),
+        (
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["automatic-selection"]}'"#,
+            false,
         ),
         ("exec sleep 60", false),
     ] {
@@ -286,4 +298,115 @@ fn detail_timeout_prevents_overlapping_rescan_and_releases_its_reservation() {
     assert!(worker.detail(&project.id, &photo.id).is_err());
     worker.cancel(&project.id).unwrap();
     wait_done(&worker, &project.id);
+}
+
+fn first_pass_fixture() -> (TempDir, Store, String, serde_json::Value) {
+    let temp = TempDir::new().unwrap();
+    let source = temp.path().join("photos");
+    fs::create_dir(&source).unwrap();
+    let original = source.join("a.jpg");
+    fs::write(&original, b"original untouched").unwrap();
+    let store = Store::new(temp.path().join("data")).unwrap();
+    let p = store
+        .create_configured(
+            "Automatic",
+            source.to_str().unwrap(),
+            false,
+            true,
+            "cautious",
+        )
+        .unwrap();
+    let preview = store.cache(&p.id).join("a.jpg");
+    fs::write(&preview, b"preview").unwrap();
+    let photo = serde_json::json!({"id":"aaaaaaaaaaaaaaaaaaaaaaaa","path":original,"filename":"a.jpg","previewPath":preview,"thumbnailPath":preview,"captureTime":"2026-01-01T10:00:00Z","width":6000,"height":4000,"qualityScore":90.0});
+    (temp, store, p.id, photo)
+}
+fn first_pass_stream(photo: &serde_json::Value) -> String {
+    let photo = serde_json::json!({"type":"photo","photo":photo});
+    format!("printf '%s\\n' '{{\"type\":\"scan\",\"total\":1}}' '{photo}' '{{\"type\":\"groups\",\"groups\":[]}}' '{{\"type\":\"suggestions\",\"suggestions\":[{{\"photoId\":\"aaaaaaaaaaaaaaaaaaaaaaaa\",\"decision\":\"favorite\",\"reason\":\"Best frame\",\"confidence\":0.95}}]}}'\n")
+}
+const FIRST_PASS_COMPLETE: &str =
+    "printf '%s\\n' '{\"type\":\"complete\",\"processed\":1,\"total\":1,\"failed\":0}'";
+
+#[test]
+fn automatic_decisions_wait_for_success_and_failed_or_cancelled_streams_never_apply() {
+    for ending in [
+        "exit 1".to_string(),
+        format!("{FIRST_PASS_COMPLETE}\nexit 1"),
+        "exec sleep 60".to_string(),
+        "printf '%s\\n' 'invalid json'".to_string(),
+    ] {
+        let (temp, store, id, photo) = first_pass_fixture();
+        let worker = Workers::new(
+            store.clone(),
+            fake_engine(
+                temp.path(),
+                &format!("{}{ending}", first_pass_stream(&photo)),
+            ),
+            Arc::new(|_, _| {}),
+        );
+        worker.start(&id).unwrap();
+        if ending == "exec sleep 60" {
+            let until = Instant::now() + Duration::from_secs(2);
+            while store.project(&id).unwrap().photos.is_empty() {
+                assert!(Instant::now() < until);
+                thread::sleep(Duration::from_millis(10));
+            }
+            let p = store.project(&id).unwrap();
+            assert_eq!(p.photos[0].decision, "undecided");
+            assert!(p.photos[0].suggested_decision.is_none());
+            worker.cancel(&id).unwrap();
+        }
+        wait_done(&worker, &id);
+        let p = store.project(&id).unwrap();
+        assert!(!p.first_pass_ready);
+        assert_eq!(p.photos[0].decision, "undecided");
+        assert!(p.photos[0].suggested_decision.is_none());
+        assert_eq!(
+            fs::read(photo["path"].as_str().unwrap()).unwrap(),
+            b"original untouched"
+        );
+    }
+}
+
+#[test]
+fn ready_cached_first_pass_applies_without_engine_and_changed_mode_runs_fresh_analysis() {
+    let (temp, store, id, photo) = first_pass_fixture();
+    let engine = fake_engine(
+        temp.path(),
+        &format!("{}{}", first_pass_stream(&photo), FIRST_PASS_COMPLETE),
+    );
+    let worker = Workers::new(store.clone(), engine, Arc::new(|_, _| {}));
+    worker.start(&id).unwrap();
+    wait_done(&worker, &id);
+    assert_eq!(store.project(&id).unwrap().photos[0].decision, "favorite");
+    worker.clear_automatic_selection(&id).unwrap();
+    // Replacing the executable proves same-mode cached application starts no subprocess.
+    let file = temp.path().join("engine.sh");
+    fs::write(&file, "#!/bin/sh\nexit 19\n").unwrap();
+    let p = worker.automatic_first_pass(&id, None).unwrap();
+    assert_eq!(p.photos[0].decision, "favorite");
+    assert!(!worker.is_running(&id));
+    fs::write(
+        &file,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n{}{}",
+            temp.path().join("args.txt").display(),
+            first_pass_stream(&photo),
+            format!("sleep 0.15\n{FIRST_PASS_COMPLETE}")
+        ),
+    )
+    .unwrap();
+    let p = worker.automatic_first_pass(&id, Some("stronger")).unwrap();
+    assert_eq!(p.selection_mode, "stronger");
+    assert_eq!(p.import_status, "running");
+    assert!(worker.automatic_first_pass(&id, None).is_err());
+    assert!(worker.clear_automatic_selection(&id).is_err());
+    wait_done(&worker, &id);
+    let p = store.project(&id).unwrap();
+    assert!(p.first_pass_ready);
+    assert_eq!(p.import_status, "completed");
+    assert!(fs::read_to_string(temp.path().join("args.txt"))
+        .unwrap()
+        .contains("--selection-mode\nstronger"));
 }

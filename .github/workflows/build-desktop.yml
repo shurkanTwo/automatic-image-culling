@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: photo-select-${{ github.ref }}
@@ -90,7 +91,11 @@ jobs:
         run: python scripts/collect_windows_package.py
       - name: Verify bundled RAW decoding and Unicode paths
         run: python scripts/check_bundled_raw.py --worker desktop/src-tauri/resources/engine/photo-select-engine.exe --report artifacts/windows/raw-report.json
-      - name: Verify portable application and installed application
+      - name: Fetch verified older same-branch Windows package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/fetch_windows_baseline.py
+      - name: Verify portable app, native upgrade, data preservation, and repair
         shell: pwsh
         run: ./scripts/smoke_windows_package.ps1
       - name: Upload Windows test package

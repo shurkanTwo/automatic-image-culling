@@ -24,6 +24,7 @@ def validate_self_test(records: list[dict]) -> None:
         "json",
         "heif",
         "folder-scope",
+        "automatic-selection",
     }
     if len(probes) != 1:
         raise RuntimeError("The bundled worker did not produce one self-test result")
