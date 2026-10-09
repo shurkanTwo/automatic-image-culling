@@ -6,10 +6,12 @@ import ctypes
 import hashlib
 import json
 import os
+import queue
 import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -84,6 +86,25 @@ def installer_run(installer: Path, location: Path | None = None, expected=0) -> 
     assert (
         result.returncode == expected
     ), f"{installer.name}: expected exit {expected}, got {result.returncode}"
+
+
+def wait_uninstalled(location: Path, timeout: float = 45) -> None:
+    # NSIS launches a temporary copy of its uninstaller and may let the original
+    # launcher exit before that copy finishes removing files and registration.
+    executable = location / "photo-select.exe"
+    deadline = time.monotonic() + timeout
+    while True:
+        registered = registration()
+        executable_present = executable.exists()
+        if registered is None and not executable_present:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"Fresh fixture uninstallation did not finish within {timeout:g}s: "
+                f"remaining registration={registered!r}; "
+                f"executable present={executable_present} ({executable})"
+            )
+        time.sleep(0.2)
 
 
 def smoke(executable: Path, report: Path, version: str, project_ids=()) -> dict:
@@ -289,15 +310,70 @@ def blocked_running_app(
 def blocked_running_worker(
     executable: Path, installer: Path, data: Path, originals: Path
 ) -> None:
-    # A suspended real bundled worker gives a deterministic process check without
-    # racing its short self-test or introducing artificial application binaries.
+    # Start an actual scan before pausing it so Restart Manager sees an
+    # initialized worker rather than an image suspended at process creation.
+    fixture = Path(
+        tempfile.mkdtemp(
+            prefix="Photo Select active worker ", dir=os.environ["RUNNER_TEMP"]
+        )
+    )
+    source = fixture / "synthetic scan source"
+    source.mkdir()
+    for number in range(100):
+        Image.new("RGB", (256, 192), (number, 87, 123)).save(
+            source / f"synthetic-{number:03d}.png"
+        )
     process = subprocess.Popen(
-        [str(executable), "self-test"],
-        creationflags=0x00000004 | subprocess.CREATE_NO_WINDOW,
+        [
+            str(executable),
+            "scan",
+            "--source",
+            str(source),
+            "--cache",
+            str(fixture / "synthetic scan cache"),
+            "--workers",
+            "1",
+        ],
+        creationflags=subprocess.CREATE_NO_WINDOW,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
     )
+    startup = queue.Queue()
+
+    def read_start_record() -> None:
+        try:
+            line = process.stdout.readline()
+            if not line:
+                raise RuntimeError("Worker closed stdout before reporting scan startup")
+            startup.put(json.loads(line))
+        except (OSError, UnicodeError, ValueError, RuntimeError) as error:
+            startup.put(error)
+
+    reader = threading.Thread(target=read_start_record, daemon=True)
+    reader.start()
+    suspended = False
     try:
+        try:
+            started = startup.get(timeout=45)
+        except queue.Empty:
+            raise AssertionError(
+                "Fixture worker did not report scan startup within 45s"
+            ) from None
+        reader.join(timeout=5)
+        assert not reader.is_alive(), "Fixture worker startup reader did not finish"
+        assert not isinstance(
+            started, Exception
+        ), f"Fixture worker failed to start analysis: {started}"
+        assert started == {"type": "scan", "total": 100}, started
+        assert process.poll() is None, "Fixture worker exited before it could be paused"
+        suspend = ctypes.windll.ntdll.NtSuspendProcess
+        suspend.argtypes = [ctypes.c_void_p]
+        suspend.restype = ctypes.c_long
+        assert suspend(int(process._handle)) == 0, "Could not pause initialized worker"
+        suspended = True
+        assert process.poll() is None, "Fixture worker exited while being paused"
         before = (
             snapshot(executable.parent.parent.parent),
             snapshot(data),
@@ -308,20 +384,29 @@ def blocked_running_worker(
         assert snapshot(executable.parent.parent.parent) == before[0]
         assert_preserved(data, originals, before[1:])
     finally:
-        # Resume it to let its normal self-test run and exit; no forced termination.
-        resume = ctypes.windll.ntdll.NtResumeProcess
-        resume.argtypes = [ctypes.c_void_p]
-        resume.restype = ctypes.c_long
-        assert resume(int(process._handle)) == 0
+        # Resume only after successful suspension and let real analysis complete.
+        if suspended:
+            resume = ctypes.windll.ntdll.NtResumeProcess
+            resume.argtypes = [ctypes.c_void_p]
+            resume.restype = ctypes.c_long
+            assert resume(int(process._handle)) == 0
         try:
             output, error = process.communicate(timeout=90)
         except subprocess.TimeoutExpired:
             process.terminate()
             process.communicate(timeout=15)
             raise AssertionError(
-                "Fixture worker failed to exit after resuming"
+                "Fixture worker failed to finish analysis during teardown"
             ) from None
     assert process.returncode == 0, (output, error)
+    completed = [
+        record
+        for line in output.splitlines()
+        if line and (record := json.loads(line)).get("type") == "complete"
+    ]
+    assert completed == [
+        {"type": "complete", "processed": 100, "total": 100, "failed": 0}
+    ], (completed, error)
     print("Verified running worker blocks installation without termination", flush=True)
 
 
@@ -403,10 +488,7 @@ def main() -> None:
     verify_registration(fresh, version)
     smoke(fresh / "photo-select.exe", packages / "fresh-install-report.json", version)
     installer_run(fresh / "uninstall.exe")
-    assert (
-        registration() is None
-    ), "Fresh fixture uninstaller left its registration behind"
-    assert not (fresh / "photo-select.exe").exists()
+    wait_uninstalled(fresh)
     print("Verified fresh installation and fixture cleanup", flush=True)
 
     originals = temporary / "original photographs"
