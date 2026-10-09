@@ -10,6 +10,7 @@ import queue
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -92,6 +93,10 @@ def installer_run(installer: Path, location: Path | None = None, expected=0) -> 
     if location is not None:
         command += f" /D={location}"
     result = subprocess.run(command, timeout=180, check=False)
+    print(
+        f"Installer {installer.name}: actual exit={result.returncode}, expected exit={expected}",
+        flush=True,
+    )
     assert (
         result.returncode == expected
     ), f"{installer.name}: expected exit {expected}, got {result.returncode}"
@@ -232,47 +237,180 @@ def seed_projects(data_root: Path, originals: Path) -> list[tuple[str, bool]]:
     return projects
 
 
-def windows_for_process(pid: int) -> list[int]:
+def user32_api():
     from ctypes import wintypes
 
-    handles = []
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user32 = ctypes.windll.user32
     user32.GetWindowThreadProcessId.argtypes = [
         wintypes.HWND,
         ctypes.POINTER(wintypes.DWORD),
     ]
     user32.IsWindowVisible.argtypes = [wintypes.HWND]
     user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumChildWindows.argtypes = [wintypes.HWND, callback_type, wintypes.LPARAM]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.PostMessageW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+    ]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.SendMessageTimeoutW.argtypes = [
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.WPARAM,
+        wintypes.LPARAM,
+        wintypes.UINT,
+        wintypes.UINT,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+    return user32, callback_type
+
+
+def window_details(user32, handle: int) -> dict:
+    from ctypes import wintypes
+
+    title = ctypes.create_unicode_buffer(512)
+    classname = ctypes.create_unicode_buffer(256)
+    rectangle = wintypes.RECT()
+    user32.GetWindowTextW(handle, title, len(title))
+    user32.GetClassNameW(handle, classname, len(classname))
+    user32.GetWindowRect(handle, ctypes.byref(rectangle))
+    return {
+        "hwnd": handle,
+        "title": title.value,
+        "class": classname.value,
+        "bounds": [rectangle.left, rectangle.top, rectangle.right, rectangle.bottom],
+        "visible": bool(user32.IsWindowVisible(handle)),
+        "owner": user32.GetWindow(handle, 4) or 0,
+    }
+
+
+def process_windows(pid: int) -> list[dict]:
+    from ctypes import wintypes
+
+    user32, callback_type = user32_api()
+    windows = []
 
     @callback_type
     def callback(handle, _):
         owner = wintypes.DWORD()
         user32.GetWindowThreadProcessId(handle, ctypes.byref(owner))
-        if owner.value == pid and user32.IsWindowVisible(handle):
-            handles.append(handle)
+        if owner.value == pid:
+            details = window_details(user32, handle)
+            children = []
+
+            @callback_type
+            def child_callback(child, _):
+                children.append(window_details(user32, child))
+                return True
+
+            user32.EnumChildWindows(handle, child_callback, 0)
+            details["children"] = children
+            windows.append(details)
         return True
 
     user32.EnumWindows(callback, 0)
-    return handles
+    return windows
 
 
-def close_app(process: subprocess.Popen) -> None:
-    from ctypes import wintypes
+def main_windows(pid: int) -> list[dict]:
+    return [
+        window
+        for window in process_windows(pid)
+        if window["visible"]
+        and not window["owner"]
+        and window["title"] == "Photo Select"
+        and window["bounds"][2] - window["bounds"][0] >= 800
+        and window["bounds"][3] - window["bounds"][1] >= 400
+        and any(
+            child["visible"] and child["class"].startswith("Chrome_")
+            for child in window["children"]
+        )
+    ]
 
-    post = ctypes.windll.user32.PostMessageW
-    post.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-    for handle in windows_for_process(process.pid):
-        post(handle, 0x0010, 0, 0)  # WM_CLOSE requests the app's normal shutdown.
+
+def window_diagnostics(process: subprocess.Popen, label: str) -> None:
+    output = ROOT / "artifacts/windows"
+    output.mkdir(parents=True, exist_ok=True)
+    details = {
+        "pid": process.pid,
+        "exitCode": process.poll(),
+        "windows": process_windows(process.pid),
+    }
+    print(f"Window diagnostics {label}: {json.dumps(details)}", flush=True)
+    (output / f"{label}-diagnostic.json").write_text(
+        json.dumps(details, indent=2), encoding="utf-8"
+    )
     try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        # This CI-owned process is only killed after graceful teardown failed.
-        process.terminate()
-        process.wait(timeout=15)
-        raise AssertionError(
-            "Fixture app failed to close gracefully with WM_CLOSE"
-        ) from None
+        from PIL import ImageGrab
+
+        ImageGrab.grab(all_screens=True).save(output / f"{label}-diagnostic.png")
+    except (OSError, RuntimeError, ImportError) as error:
+        print(f"Could not capture diagnostic screenshot: {error}", flush=True)
+
+
+def close_app(process: subprocess.Popen) -> bool:
+    user32, _ = user32_api()
+    deadline = time.monotonic() + 30
+    started = time.monotonic()
+    last_request = {}
+    print(
+        f"Closing fixture pid={process.pid}, windows={json.dumps(process_windows(process.pid))}",
+        flush=True,
+    )
+    while process.poll() is None and time.monotonic() < deadline:
+        for window in process_windows(process.pid):
+            if (
+                not window["visible"]
+                or window["owner"]
+                or window["title"] != "Photo Select"
+            ):
+                continue
+            handle = window["hwnd"]
+            if time.monotonic() - last_request.get(handle, 0) < 3:
+                continue
+            last_request[handle] = time.monotonic()
+            ctypes.set_last_error(0)
+            posted = user32.PostMessageW(handle, 0x0010, 0, 0)
+            error = ctypes.get_last_error()
+            print(
+                f"WM_CLOSE pid={process.pid}, hwnd={handle}, posted={bool(posted)}, lastError={error}",
+                flush=True,
+            )
+            if time.monotonic() - started >= 10 and process.poll() is None:
+                response = ctypes.c_size_t()
+                ctypes.set_last_error(0)
+                sent = user32.SendMessageTimeoutW(
+                    handle, 0x0112, 0xF060, 0, 3, 2000, ctypes.byref(response)
+                )
+                error = ctypes.get_last_error()
+                print(
+                    f"SC_CLOSE pid={process.pid}, hwnd={handle}, sent={bool(sent)}, lastError={error}",
+                    flush=True,
+                )
+        time.sleep(0.25)
+    if process.poll() is not None:
+        return True
+    window_diagnostics(process, "app-close-timeout")
+    # Teardown owns this synthetic CI process. Clean it up after recording the
+    # failed normal close, and still fail verification rather than hiding it.
+    process.terminate()
+    process.wait(timeout=15)
+    print(
+        "Fixture app required forced cleanup after normal close requests failed",
+        flush=True,
+    )
+    raise AssertionError(
+        "Fixture app failed to close normally with WM_CLOSE and SC_CLOSE"
+    )
 
 
 def assert_preserved(data: Path, originals: Path, before: tuple) -> None:
@@ -288,23 +426,44 @@ def assert_preserved(data: Path, originals: Path, before: tuple) -> None:
 
 def blocked_running_app(
     executable: Path, installer: Path, data: Path, originals: Path
-) -> None:
+) -> bool:
     environment = dict(os.environ)
     environment.pop("PHOTO_SELECT_SMOKE_TEST_OUTPUT", None)
     process = subprocess.Popen(
         [str(executable)], cwd=executable.parent, env=environment
     )
+    closed_gracefully = True
     try:
         deadline = time.monotonic() + 45
-        while not windows_for_process(process.pid):
+        stable_since = None
+        user32, _ = user32_api()
+        while True:
             assert (
                 process.poll() is None
             ), "Fixture application exited before opening its window"
+            windows = main_windows(process.pid)
+            if windows:
+                response = ctypes.c_size_t()
+                responsive = user32.SendMessageTimeoutW(
+                    windows[0]["hwnd"], 0, 0, 0, 3, 1000, ctypes.byref(response)
+                )
+                if responsive:
+                    stable_since = stable_since or time.monotonic()
+                    if time.monotonic() - stable_since >= 5:
+                        print(
+                            f"Fixture main window ready: pid={process.pid}, {json.dumps(windows)}",
+                            flush=True,
+                        )
+                        break
+                else:
+                    stable_since = None
+            else:
+                stable_since = None
             if time.monotonic() >= deadline:
-                raise AssertionError("Fixture application failed to open its window")
+                raise AssertionError(
+                    "Fixture application failed to initialize its main WebView window within 45s"
+                )
             time.sleep(0.2)
-        # Let startup persistence and the initial state request complete before hashing.
-        time.sleep(2)
         before = (
             snapshot(executable.parent),
             snapshot(data, ignore_browser_cache=True),
@@ -317,13 +476,37 @@ def blocked_running_app(
         ), "Blocked installer changed app files"
         assert_preserved(data, originals, before[1:])
     finally:
+        original_error = sys.exc_info()[1]
+        if original_error is not None:
+            try:
+                window_diagnostics(process, "app-block-failure")
+            except (OSError, ValueError, RuntimeError) as diagnostic_error:
+                print(
+                    f"Could not save window diagnostics: {diagnostic_error}; "
+                    f"preserving original error: {original_error}",
+                    flush=True,
+                )
         if process.poll() is None:
-            close_app(process)
-    assert process.returncode == 0, "Fixture application did not close normally"
+            try:
+                closed_gracefully = close_app(process)
+            except (
+                AssertionError,
+                OSError,
+                subprocess.SubprocessError,
+            ) as cleanup_error:
+                if original_error is None:
+                    raise
+                print(
+                    f"Secondary fixture cleanup failure: {cleanup_error}; preserving original error: {original_error}",
+                    flush=True,
+                )
+    if closed_gracefully:
+        assert process.returncode == 0, "Fixture application did not close normally"
     print(
         "Verified running application blocks installation without termination",
         flush=True,
     )
+    return closed_gracefully
 
 
 def blocked_running_worker(
@@ -541,7 +724,9 @@ def main() -> None:
     user_file.write_text("Files outside managed resources must survive installation")
     user_file_hash = digest(user_file)
     obsolete = stale_files(installed)
-    blocked_running_app(installed / "photo-select.exe", installer, data_root, originals)
+    app_closed_gracefully = blocked_running_app(
+        installed / "photo-select.exe", installer, data_root, originals
+    )
     blocked_running_worker(
         installed / "resources/engine/photo-select-engine.exe",
         installer,
@@ -561,6 +746,14 @@ def main() -> None:
         packages / "upgrade-report.json",
         version,
         projects,
+    )
+    assert_preserved(data_root, originals, before)
+    print(
+        "Verify installer refusal and normal GUI close on the updated application",
+        flush=True,
+    )
+    updated_app_closed_gracefully = blocked_running_app(
+        installed / "photo-select.exe", installer, data_root, originals
     )
     assert_preserved(data_root, originals, before)
 
@@ -596,6 +789,8 @@ def main() -> None:
         "sameVersionRepair": "passed",
         "registeredCustomLocationRetained": True,
         "runningAppAndWorkerBlockedWithoutTermination": True,
+        "fixtureApplicationClosedGracefully": app_closed_gracefully,
+        "updatedApplicationClosedGracefully": updated_app_closed_gracefully,
         "resourceJunctionRejectedBeforeCleanup": True,
         "staleBundledResourcesRemoved": True,
         "missingBundledPluginRestored": True,

@@ -98,6 +98,14 @@ jobs:
       - name: Verify portable app, native upgrade, data preservation, and repair
         shell: pwsh
         run: ./scripts/smoke_windows_package.ps1
+      - name: Upload installation failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-installation-diagnostics-${{ github.run_id }}
+          path: artifacts/windows/*diagnostic*
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload Windows test package
         uses: actions/upload-artifact@v4
         with:
