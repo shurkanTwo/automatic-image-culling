@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from scripts.verify_windows_installation import (
@@ -57,7 +58,7 @@ class InstallationPreservationTests(unittest.TestCase):
             preview.write_bytes(old_preview)
             assert_preserved(data, originals, before)
             database = project_dir / "project.cullproj"
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute(
                     "UPDATE photos SET data = '{}' WHERE id = ?", ("a" * 24,)
                 )

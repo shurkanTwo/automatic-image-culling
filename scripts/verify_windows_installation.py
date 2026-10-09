@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 from PIL import Image
@@ -204,7 +205,7 @@ def seed_projects(data_root: Path, originals: Path) -> list[tuple[str, bool]]:
             "name": "Photobook shortlist",
             "photoIds": [photo_id],
         }
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.executescript(
                 "CREATE TABLE meta(singleton INTEGER PRIMARY KEY,data TEXT NOT NULL);"
                 "CREATE TABLE photos(id TEXT PRIMARY KEY,data TEXT NOT NULL);"
