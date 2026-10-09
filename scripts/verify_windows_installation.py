@@ -643,13 +643,51 @@ def blocked_resource_junction(
         check=True,
         capture_output=True,
     )
+
+    def log_junction_state(label: str) -> dict:
+        try:
+            attributes = getattr(os.lstat(junction), "st_file_attributes", None)
+            present = True
+        except FileNotFoundError:
+            attributes = None
+            present = False
+        state = {
+            "junction": str(junction),
+            "junctionPresent": present,
+            "fileAttributes": attributes,
+            "isReparsePoint": attributes is not None and bool(attributes & 0x400),
+            "sentinel": str(sentinel),
+            "sentinelPresent": sentinel.exists(),
+            "sentinelSha256": digest(sentinel) if sentinel.is_file() else None,
+        }
+        print(f"Resource junction {label}: {json.dumps(state)}", flush=True)
+        return state
+
     try:
+        created = log_junction_state("before install")
+        assert created[
+            "isReparsePoint"
+        ], "Fixture did not create a native resource junction"
         installer_run(installer, expected=3)
         assert digest(sentinel) == expected, "Installer traversed a resource junction"
         assert_preserved(data, originals, before[1:])
     finally:
-        # On Windows rmdir removes a directory junction without traversing its target.
-        os.rmdir(junction)
+        original_error = sys.exc_info()[1]
+        try:
+            remaining = log_junction_state("after install, before fixture cleanup")
+            if remaining["junctionPresent"]:
+                # rmdir removes the junction without traversing its outside target.
+                os.rmdir(junction)
+            elif original_error is None:
+                raise AssertionError("Refused installer removed the resource junction")
+        except (AssertionError, OSError) as cleanup_error:
+            if original_error is None:
+                raise
+            print(
+                f"Secondary junction cleanup failure: {cleanup_error}; "
+                f"preserving original error: {original_error}",
+                flush=True,
+            )
     assert (
         snapshot(installed) == before[0]
     ), "Refused junction install changed app files"

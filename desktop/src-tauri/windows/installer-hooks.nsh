@@ -54,8 +54,9 @@ Function PhotoSelectCheckResourceTree
     ${Else}
       photo_select_tree_next:
         System::Call '*$4(&v44, &w260 .r3)'
-        ${If} $3 <> "."
-        ${AndIf} $3 <> ".."
+        ; LogicLib != compares strings; <> converts filenames to integers.
+        ${If} $3 != "."
+        ${AndIf} $3 != ".."
           Push "$0\$3"
           Call PhotoSelectCheckResourceTree
         ${EndIf}

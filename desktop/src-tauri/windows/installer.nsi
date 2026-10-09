@@ -563,7 +563,8 @@ Function .onInit
 
   ; Run in .onInit as silent installers never visit PageReinstall.
   ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-  ${If} $R1 <> ""
+  ; Use the string operator: LogicLib <> interprets a path as an integer.
+  ${If} $R1 != ""
     ; Honor the registered directory even when a caller supplies /D.
     Call RestorePreviousInstallLocation
     ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
