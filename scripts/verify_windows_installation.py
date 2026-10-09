@@ -28,16 +28,24 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def snapshot(root: Path) -> dict:
+def snapshot(root: Path, *, ignore_browser_cache: bool = False) -> dict:
     # The app rewrites this convenience index on startup; compare its content.
+    # WebView2 owns EBWebView: its browser profile is mutable and can stay locked
+    # after the parent app exits. Photo Select projects and image caches are in
+    # projects/, so keep hashing every app-owned file while excluding that profile.
+    paths = []
+    for child in root.iterdir():
+        if ignore_browser_cache and child.name == "EBWebView":
+            continue
+        paths.extend(child.rglob("*") if child.is_dir() else [child])
     return {
         str(path.relative_to(root)): (
             json.loads(path.read_text())
-            if path.name == "recent-projects.json"
+            if ignore_browser_cache and path == root / "recent-projects.json"
             else digest(path)
         )
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and not path.name.endswith(("-wal", "-shm"))
+        for path in sorted(paths)
+        if path.is_file()
     }
 
 
@@ -267,7 +275,13 @@ def close_app(process: subprocess.Popen) -> None:
 
 
 def assert_preserved(data: Path, originals: Path, before: tuple) -> None:
-    assert snapshot(data) == before[0], "Project database, reviews, or cache changed"
+    actual = snapshot(data, ignore_browser_cache=True)
+    changed = [
+        key
+        for key in sorted(actual.keys() | before[0].keys())
+        if actual.get(key) != before[0].get(key)
+    ]
+    assert not changed, f"Project database, reviews, or cache changed: {changed[:15]}"
     assert snapshot(originals) == before[1], "Original photograph bytes changed"
 
 
@@ -290,7 +304,11 @@ def blocked_running_app(
             time.sleep(0.2)
         # Let startup persistence and the initial state request complete before hashing.
         time.sleep(2)
-        before = snapshot(executable.parent), snapshot(data), snapshot(originals)
+        before = (
+            snapshot(executable.parent),
+            snapshot(data, ignore_browser_cache=True),
+            snapshot(originals),
+        )
         installer_run(installer, expected=2)
         assert process.poll() is None, "Installer terminated the running application"
         assert (
@@ -376,7 +394,7 @@ def blocked_running_worker(
         assert process.poll() is None, "Fixture worker exited while being paused"
         before = (
             snapshot(executable.parent.parent.parent),
-            snapshot(data),
+            snapshot(data, ignore_browser_cache=True),
             snapshot(originals),
         )
         installer_run(installer, expected=2)
@@ -425,7 +443,11 @@ def stale_files(installed: Path) -> list[Path]:
 def blocked_resource_junction(
     installed: Path, installer: Path, temporary: Path, data: Path, originals: Path
 ) -> None:
-    before = snapshot(installed), snapshot(data), snapshot(originals)
+    before = (
+        snapshot(installed),
+        snapshot(data, ignore_browser_cache=True),
+        snapshot(originals),
+    )
     outside = temporary / "outside bundled resources"
     outside.mkdir()
     sentinel = outside / "must survive.txt"
@@ -493,7 +515,7 @@ def main() -> None:
 
     originals = temporary / "original photographs"
     projects = seed_projects(data_root, originals)
-    before = snapshot(data_root), snapshot(originals)
+    before = snapshot(data_root, ignore_browser_cache=True), snapshot(originals)
     baseline_path = (
         Path(os.environ["RUNNER_TEMP"]) / "photo-select-upgrade-baseline/baseline.json"
     )
