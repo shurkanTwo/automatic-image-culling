@@ -35,6 +35,7 @@ export interface Project {
   id: string;
   name: string;
   sourceDir: string;
+  includeSubfolders: boolean;
   projectPath: string;
   createdAt: string;
   updatedAt: string;
@@ -48,6 +49,7 @@ export interface ProjectSummary {
   id: string;
   name: string;
   sourceDir: string;
+  includeSubfolders: boolean;
   projectPath: string;
   photoCount: number;
   favoriteCount: number;

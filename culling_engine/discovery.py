@@ -147,8 +147,10 @@ def _is_generated_detail(path: Path) -> bool:
         return False
 
 
-def discover_images(source: Path, cache: Path) -> list[Path]:
-    """Walk recursively without symlink loops or ingesting our own cache."""
+def discover_images(
+    source: Path, cache: Path, *, include_subfolders: bool = True
+) -> list[Path]:
+    """Discover originals in the chosen scope without ingesting our own cache."""
     source = source.resolve(strict=True)
     cache = cache.resolve()
     if not source.is_dir():
@@ -156,7 +158,7 @@ def discover_images(source: Path, cache: Path) -> list[Path]:
     if source == cache or source.is_relative_to(cache):
         raise ValueError("Source directory must not be inside the preview cache")
     legacy_analysis = source / "analysis"
-    has_legacy_outputs = any(
+    has_legacy_outputs = include_subfolders and any(
         (legacy_analysis / marker).is_file()
         for marker in ("analysis.json", "report.html", "decisions.json")
     )
@@ -170,14 +172,18 @@ def discover_images(source: Path, cache: Path) -> list[Path]:
         source, followlinks=False, onerror=_raise_directory_error
     ):
         base = Path(directory)
-        names[:] = sorted(
-            name
-            for name in names
-            if name.casefold() not in PRODUCT_DIRECTORIES
-            and not _is_directory_link(base / name)
-            and (base / name) not in legacy_directories
-            and (base / name).resolve().is_relative_to(source)
-            and not (base / name).resolve().is_relative_to(cache)
+        names[:] = (
+            sorted(
+                name
+                for name in names
+                if name.casefold() not in PRODUCT_DIRECTORIES
+                and not _is_directory_link(base / name)
+                and (base / name) not in legacy_directories
+                and (base / name).resolve().is_relative_to(source)
+                and not (base / name).resolve().is_relative_to(cache)
+            )
+            if include_subfolders
+            else []
         )
         for name in sorted(files):
             path = base / name

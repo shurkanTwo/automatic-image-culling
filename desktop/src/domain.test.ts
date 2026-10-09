@@ -49,6 +49,7 @@ const project: Project = {
   id: "p",
   name: "Trip",
   sourceDir: "/photos",
+  includeSubfolders: true,
   projectPath: "/p.db",
   createdAt: "",
   updatedAt: "",

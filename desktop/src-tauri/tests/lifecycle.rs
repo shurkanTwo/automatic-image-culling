@@ -56,6 +56,65 @@ impl Fixture {
     }
 }
 #[test]
+fn folder_scope_is_persisted_and_preserved_when_reopening() {
+    let f = Fixture::new();
+    assert!(f.store.project(&f.id).unwrap().include_subfolders);
+    for include_subfolders in [false, true] {
+        let created = f
+            .store
+            .create_with_options("Folder scope", &f.source, include_subfolders)
+            .unwrap();
+        assert_eq!(created.include_subfolders, include_subfolders);
+        assert_eq!(
+            serde_json::to_value(&created).unwrap()["includeSubfolders"],
+            include_subfolders
+        );
+        let restarted = Store::new(f.temp.path().join("appdata")).unwrap();
+        assert_eq!(
+            restarted.project(&created.id).unwrap().include_subfolders,
+            include_subfolders
+        );
+        assert_eq!(
+            restarted
+                .open(&created.project_path)
+                .unwrap()
+                .include_subfolders,
+            include_subfolders
+        );
+        let summary = restarted
+            .summaries()
+            .unwrap()
+            .into_iter()
+            .find(|summary| summary.id == created.id)
+            .unwrap();
+        assert_eq!(summary.include_subfolders, include_subfolders);
+    }
+}
+#[test]
+fn legacy_projects_without_folder_scope_remain_recursive() {
+    let f = Fixture::new();
+    let project = f.store.project(&f.id).unwrap();
+    let mut metadata = serde_json::to_value(&project).unwrap();
+    metadata
+        .as_object_mut()
+        .unwrap()
+        .remove("includeSubfolders");
+    f.store
+        .connection(&f.id)
+        .unwrap()
+        .execute(
+            "UPDATE meta SET data = ?1 WHERE singleton = 1",
+            [serde_json::to_string(&metadata).unwrap()],
+        )
+        .unwrap();
+    let restarted = Store::new(f.temp.path().join("appdata")).unwrap();
+    let opened = restarted.open(&project.project_path).unwrap();
+    assert!(opened.include_subfolders);
+    restarted.set_status(&f.id, "completed", None).unwrap();
+    assert!(restarted.project(&f.id).unwrap().include_subfolders);
+    assert!(restarted.summaries().unwrap()[0].include_subfolders);
+}
+#[test]
 fn projects_and_manual_review_survive_restart() {
     let f = Fixture::new();
     let p = f.add("a");

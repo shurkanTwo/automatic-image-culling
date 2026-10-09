@@ -1,7 +1,7 @@
-PHOTO SELECT 0.2.1 - WINDOWS TEST BUILD
+PHOTO SELECT 0.2.2 - WINDOWS TEST BUILD
 
 GET STARTED
-Run Photo-Select-0.2.1-Windows-x64-Setup.exe to install for your current user.
+Run Photo-Select-0.2.2-Windows-x64-Setup.exe to install for your current user.
 The installer includes the image engine; no Python or Node installation is needed.
 It checks for Microsoft Edge WebView2 and installs the runtime if it is missing
 (an internet connection is needed only for that first runtime installation).
@@ -11,8 +11,12 @@ Alternatively, extract the entire Portable.zip and run Photo Select.exe. Keep th
 resources directory beside it. The portable app requires WebView2 already installed.
 
 YOUR FIRST TRIP
-Create a project and choose a folder containing your photographs. Subfolders are
-included. You can browse while previews and technical hints are generated.
+Choose a folder containing your photographs. Before starting import, choose
+whether to Include subfolders. New projects default to the selected folder only.
+The choice is saved for rescans and shown under the project name in the sidebar.
+Existing projects retain their previous inclusion of subfolders. Create a new
+project from the same folder to use a different scope. You can browse while
+previews and technical hints are generated.
 Use favorites, stars, tags, comparison, and purpose collections to make a shortlist.
 Every review change is saved to a local project database. You can close and reopen
 the app, or rescan the folder later, without losing confirmed review decisions.
@@ -43,7 +47,8 @@ Windows stores projects and image caches under:
 The app does not upload photographs or call a cloud image service.
 
 USEFUL FIRST TESTS
-- Import a folder with nested folders and repeated camera filenames.
+- Import a folder with Include subfolders off, then on in a separate project.
+- Rescan both projects and check that each keeps its chosen folder scope.
 - Favorite and rate a few photographs, restart, then verify those choices persist.
 - Compare alternatives and load a detailed preview.
 - Create a photobook collection, export it, and import it into Lightroom.

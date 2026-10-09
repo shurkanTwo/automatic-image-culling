@@ -28,6 +28,7 @@ export function testProject(count = 4): Project {
     id: "test-project",
     name: "Review trip",
     sourceDir: "/photos",
+    includeSubfolders: true,
     projectPath: "/project.cullproj",
     photos,
     groups: [],

@@ -135,6 +135,11 @@ export default function App() {
   const [pluginPath, setPluginPath] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [importAction, setImportAction] = useState(false);
+  const [importDirectory, setImportDirectory] = useState<string | null>(null);
+  const [includeSubfolders, setIncludeSubfolders] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const creatingProjectRef = useRef(false);
   const [dismissedImportError, setDismissedImportError] = useState<
     string | null
   >(null);
@@ -263,7 +268,13 @@ export default function App() {
   }
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (!project || exportOpen || collectionName !== null || pluginPath)
+      if (
+        !project ||
+        exportOpen ||
+        collectionName !== null ||
+        pluginPath ||
+        importDirectory
+      )
         return;
       const target = event.target as HTMLElement;
       if (target.matches("input, textarea, select") || target.isContentEditable)
@@ -309,7 +320,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
   useEffect(() => {
-    if (!exportOpen && collectionName === null && !pluginPath) return;
+    if (
+      !exportOpen &&
+      collectionName === null &&
+      !pluginPath &&
+      !importDirectory
+    )
+      return;
     const previousFocus = document.activeElement as HTMLElement | null;
     const modal = document.querySelector(
       ".modal-backdrop:last-of-type .modal",
@@ -317,20 +334,28 @@ export default function App() {
     const focusable = () =>
       Array.from(
         modal?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input, select, textarea, [tabindex="0"]',
+          ':is(button, input, select, textarea, [tabindex="0"]):not(:disabled)',
         ) ?? [],
       );
     (
       modal?.querySelector<HTMLElement>("input, select") ?? focusable()[0]
     )?.focus();
     function handleDialogKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !exporting) {
+      if (event.key === "Escape") {
+        event.preventDefault();
         if (pluginPath) setPluginPath(null);
-        else if (exportOpen) setExportOpen(false);
-        else setCollectionName(null);
+        else if (exportOpen) {
+          if (!exporting) setExportOpen(false);
+        } else if (importDirectory) {
+          if (!creatingProjectRef.current) setImportDirectory(null);
+        } else setCollectionName(null);
       }
       if (event.key !== "Tab") return;
       const controls = focusable();
+      if (!controls.length) {
+        event.preventDefault();
+        return;
+      }
       const first = controls[0];
       const last = controls.at(-1);
       if (!modal?.contains(document.activeElement)) {
@@ -349,7 +374,13 @@ export default function App() {
       window.removeEventListener("keydown", handleDialogKey);
       previousFocus?.focus();
     };
-  }, [exportOpen, collectionName !== null, pluginPath, exporting]);
+  }, [
+    exportOpen,
+    collectionName !== null,
+    pluginPath,
+    exporting,
+    importDirectory,
+  ]);
   async function openRecent(path: string) {
     setLoading(true);
     try {
@@ -371,14 +402,40 @@ export default function App() {
     }
   }
   async function newProject() {
+    if (loading || importDirectory) return;
+    setLoading(true);
     try {
       const directory = await chooseFolder();
       if (!directory) return;
-      setLoading(true);
+      setIncludeSubfolders(false);
+      setCreateError(null);
+      setImportDirectory(directory);
+    } catch (reason) {
+      report(reason);
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function startNewProject() {
+    if (!importDirectory || creatingProjectRef.current) return;
+    creatingProjectRef.current = true;
+    setCreatingProject(true);
+    setCreateError(null);
+    let created = false;
+    try {
+      commitDrafts();
+      if (!(await waitForSaves())) return;
       const name =
-        directory.split(/[\\/]/).filter(Boolean).at(-1) || "My photographs";
-      const value = await api.createProject(name, directory);
+        importDirectory.split(/[\\/]/).filter(Boolean).at(-1) ||
+        "My photographs";
+      const value = await api.createProject(
+        name,
+        importDirectory,
+        includeSubfolders,
+      );
+      created = true;
       load(value);
+      setImportDirectory(null);
       setSelected([]);
       setView("grid");
       setOptions({
@@ -390,13 +447,15 @@ export default function App() {
       await api.start(value.id);
       await workspace.refresh();
     } catch (reason) {
-      report(reason);
+      if (created) report(reason);
+      else setCreateError(String(reason));
     } finally {
-      setLoading(false);
+      creatingProjectRef.current = false;
+      setCreatingProject(false);
     }
   }
   async function rescan() {
-    if (!project || importAction) return;
+    if (!project || importAction || creatingProjectRef.current) return;
     setImportAction(true);
     try {
       await api.start(project.id);
@@ -543,7 +602,11 @@ export default function App() {
                 <div className="landing-actions">
                   <button
                     className="primary-button"
-                    disabled={loading || state?.engineAvailable === false}
+                    disabled={
+                      loading ||
+                      creatingProject ||
+                      state?.engineAvailable === false
+                    }
                     onClick={() => void newProject()}
                   >
                     {loading ? (
@@ -555,7 +618,7 @@ export default function App() {
                   </button>
                   <button
                     className="secondary-button"
-                    disabled={loading}
+                    disabled={loading || creatingProject}
                     onClick={() => {
                       void chooseProject()
                         .then((path) => {
@@ -617,7 +680,7 @@ export default function App() {
                     <button
                       key={recent.id}
                       className="recent-card"
-                      disabled={loading}
+                      disabled={loading || creatingProject}
                       onClick={() => void openRecent(recent.projectPath)}
                     >
                       <div className="recent-icon">
@@ -640,7 +703,7 @@ export default function App() {
           </main>
           <footer className="landing-footer">
             Photo Select <span>For the photographs that matter.</span>
-            <span>v{state?.version ?? "0.2.1"}</span>
+            <span>v{state?.version ?? "0.2.2"}</span>
           </footer>
         </>
       ) : (
@@ -652,7 +715,7 @@ export default function App() {
             </div>
             <button
               className="back-button"
-              disabled={saving > 0}
+              disabled={saving > 0 || creatingProject}
               onClick={() => void goToProjects()}
             >
               <ArrowLeft size={14} />
@@ -661,6 +724,11 @@ export default function App() {
             <div className="project-title">
               <h1>{project.name}</h1>
               <span>{project.photos.length.toLocaleString()} photographs</span>
+              <small className="project-import-scope">
+                {project.includeSubfolders
+                  ? "Includes subfolders"
+                  : "Folder only"}
+              </small>
             </div>
             <nav aria-label="Library filters" className="library-nav">
               {filters.map((filter) => {
@@ -787,7 +855,10 @@ export default function App() {
               <button
                 className="text-button"
                 disabled={
-                  processing || importAction || state?.engineAvailable === false
+                  processing ||
+                  importAction ||
+                  creatingProject ||
+                  state?.engineAvailable === false
                 }
                 onClick={() => void rescan()}
               >
@@ -1220,6 +1291,84 @@ export default function App() {
           >
             <X size={14} />
           </button>
+        </div>
+      )}
+      {importDirectory && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              !creatingProjectRef.current
+            )
+              setImportDirectory(null);
+          }}
+        >
+          <form
+            className="modal import-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-title"
+            aria-describedby="import-folder import-scope"
+            aria-busy={creatingProject}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void startNewProject();
+            }}
+          >
+            <div className="modal-symbol">
+              <FolderPlus size={24} />
+            </div>
+            <h2 id="import-title">Import photographs</h2>
+            <p>Choose which photographs to include in this project.</p>
+            <div className="import-folder" id="import-folder">
+              <strong>Photo folder</strong>
+              <span>{importDirectory}</span>
+            </div>
+            <label className="import-subfolders">
+              <input
+                type="checkbox"
+                checked={includeSubfolders}
+                disabled={creatingProject}
+                aria-describedby="import-scope"
+                onChange={(event) => setIncludeSubfolders(event.target.checked)}
+              />
+              Include subfolders
+            </label>
+            <p id="import-scope">
+              {includeSubfolders
+                ? "Import photographs in this folder and all of its subfolders."
+                : "Import only photographs directly in this folder. Subfolders are skipped."}{" "}
+              Future rescans use this same scope.
+            </p>
+            {createError && (
+              <p className="inline-error" role="alert">
+                {createError}
+              </p>
+            )}
+            <div className="import-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={creatingProject}
+                onClick={() => setImportDirectory(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={creatingProject}
+              >
+                {creatingProject ? (
+                  <LoaderCircle className="spin" size={16} />
+                ) : (
+                  <FolderPlus size={16} />
+                )}
+                Start import
+              </button>
+            </div>
+          </form>
         </div>
       )}
       {collectionName !== null && (

@@ -75,6 +75,8 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub source_dir: String,
+    #[serde(default = "include_subfolders_by_default")]
+    pub include_subfolders: bool,
     pub project_path: String,
     pub created_at: String,
     pub updated_at: String,
@@ -84,12 +86,16 @@ pub struct Project {
     pub import_status: String,
     pub import_error: Option<String>,
 }
+fn include_subfolders_by_default() -> bool {
+    true
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSummary {
     pub id: String,
     pub name: String,
     pub source_dir: String,
+    pub include_subfolders: bool,
     pub project_path: String,
     pub photo_count: usize,
     pub favorite_count: usize,
@@ -237,6 +243,14 @@ impl Store {
         Ok(())
     }
     pub fn create(&self, name: &str, source: &str) -> Result<Project> {
+        self.create_with_options(name, source, true)
+    }
+    pub fn create_with_options(
+        &self,
+        name: &str,
+        source: &str,
+        include_subfolders: bool,
+    ) -> Result<Project> {
         let name = valid_name(name)?;
         let source =
             fs::canonicalize(source).map_err(|e| format!("Cannot open source folder: {e}"))?;
@@ -261,6 +275,7 @@ impl Store {
             id: id.clone(),
             name,
             source_dir: path_string(&source),
+            include_subfolders,
             project_path: path_string(&path),
             created_at: now(),
             updated_at: now(),
@@ -365,6 +380,7 @@ impl Store {
                     id: p.id,
                     name: p.name,
                     source_dir: p.source_dir,
+                    include_subfolders: p.include_subfolders,
                     project_path: p.project_path,
                     photo_count: p.photos.len(),
                     favorite_count: p.photos.iter().filter(|v| v.decision == "favorite").count(),

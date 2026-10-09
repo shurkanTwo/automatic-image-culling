@@ -235,6 +235,9 @@ impl Workers {
             .arg(&project.source_dir)
             .arg("--cache")
             .arg(path_string(&cache));
+        if !project.include_subfolders {
+            command.arg("--no-subfolders");
+        }
         let mut child = ManagedChild::spawn(&mut command)
             .map_err(|e| format!("Cannot start analysis engine: {e}"))?;
         let stdout = child.stdout.take().ok_or("Engine stdout unavailable")?;

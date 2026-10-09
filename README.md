@@ -2,19 +2,19 @@
 
 A local desktop companion for the first pass through a trip, event, or everyday photo collection. Compare similar photographs, choose favorites, and build purpose-specific collections before returning to Lightroom Classic.
 
-Version 0.2.1 improves the persistent review workspace with safer autosave, additive bulk tags, atomic undo, offline review, and a more reliable Lightroom handoff. Originals are read-only: Favorite and Pass record your choices without moving, deleting, or rewriting photographs.
+Version 0.2.2 adds an explicit choice to include subfolders when importing a photo folder. The choice is saved with each project and reused for rescans. Originals are read-only: Favorite and Pass record your choices without moving, deleting, or rewriting photographs.
 
 ## Windows test package
 
-The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.1-Windows-x64` artifact.
+The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.2-Windows-x64` artifact.
 
-Run `Photo-Select-0.2.1-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
+Run `Photo-Select-0.2.2-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
 
 For portable use, extract the entire portable ZIP and run `Photo Select.exe` with its `resources` folder beside it. Portable use requires an installed WebView2 runtime. Both versions store projects under `%LOCALAPPDATA%\com.shurkantwo.photoselect\projects`.
 
 ## Review a photo collection
 
-1. Choose the folder containing a trip or event. Subfolders are scanned, and previews appear as processing progresses. Import can be cancelled and restarted.
+1. Choose the folder containing a trip or event. Before starting import, choose whether to **Include subfolders**; new projects default to photos directly inside the selected folder. The scope is shown in the project sidebar, and rescans reuse it. Existing projects retain their previous inclusion of subfolders. To choose a different scope, create a new project from the same folder. Previews appear as processing progresses. Import can be cancelled and restarted.
 2. Browse the grid, inspect a photograph, or compare two to four photographs with linked zoom and pan. **100%** prepares full-resolution previews and maps one image pixel to one physical display pixel, including scaled displays and comparison images with different dimensions. **Fit** returns to the full frame.
 3. Use **F** for Favorite, **P** for Pass, **U** for Undecided, and **0–5** for a rating. Arrow keys navigate, **Enter** opens inspection, **G** returns to the grid, and **C** opens comparison. Ctrl/Shift-click selects several photographs; Ctrl+Z undoes review changes.
 4. Add tags and collections such as “Japan photobook.” When several photos are selected, entered tags are added to each photo's existing tags. Reviews save to a local SQLite project automatically; closing commits a focused tag draft before waiting for saves. Rescanning preserves ratings, decisions, tags, and collections.
@@ -100,7 +100,7 @@ xvfb-run -a dbus-run-session -- python scripts/check_native_ui.py \
   --application desktop/src-tauri/target/debug/photo-select --output build/native-review
 ```
 
-Keep the development server running for a debug build. The check uses a temporary data directory and synthetic originals; it verifies rendered previews, stars and favorites, bulk tags, undo, comparison, full-resolution viewing, export, and a focused draft saved on native close.
+Keep the development server running for a debug build. The check uses a temporary data directory and synthetic originals; it verifies folder-only and recursive import scopes across rescans and reopening, rendered previews, stars and favorites, bulk tags, undo, comparison, full-resolution viewing, export, and a focused draft saved on native close.
 
 ## Legacy prototype and license
 

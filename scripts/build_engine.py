@@ -16,7 +16,15 @@ ROOT = Path(__file__).resolve().parent.parent
 def validate_self_test(records: list[dict]) -> None:
     expected = json.loads((ROOT / "desktop/package.json").read_text())["version"]
     probes = [record for record in records if record.get("type") == "self-test"]
-    required = {"decode", "orientation", "cache", "detail", "json", "heif"}
+    required = {
+        "decode",
+        "orientation",
+        "cache",
+        "detail",
+        "json",
+        "heif",
+        "folder-scope",
+    }
     if len(probes) != 1:
         raise RuntimeError("The bundled worker did not produce one self-test result")
     probe = probes[0]

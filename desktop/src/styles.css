@@ -1604,6 +1604,54 @@ kbd {
   width: 100%;
   margin-top: 3px;
 }
+.project-import-scope {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.import-folder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  margin-bottom: 20px;
+  border: 1px solid #486138;
+  border-radius: 6px;
+  background: #1f2b18;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.import-folder strong {
+  color: #a4b995;
+  font-size: 11px;
+}
+.modal .import-subfolders {
+  flex-direction: row;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.modal .import-subfolders input {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.import-actions {
+  display: flex;
+  gap: 10px;
+}
+.import-actions .secondary-button {
+  flex: 1;
+  justify-content: center;
+}
+.import-actions .primary-button {
+  flex: 2;
+  margin-top: 0;
+  width: auto;
+}
 .export-help {
   padding: 16px;
   background: #1f2c18;

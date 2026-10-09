@@ -30,9 +30,9 @@ def self_test() -> dict[str, Any]:
             capabilities[dependency] = True
         except ImportError:
             capabilities[dependency] = False
-    checks = ["decode", "orientation", "cache", "detail", "json"]
+    checks = ["decode", "orientation", "cache", "detail", "json", "folder-scope"]
     with tempfile.TemporaryDirectory(prefix="photo-select-self-test-") as temporary:
-        base = Path(temporary)
+        base = Path(temporary).resolve()
         source = base / "source"
         source.mkdir()
         rgb = Image.new("RGB", (120, 80), (95, 150, 220))
@@ -46,8 +46,13 @@ def self_test() -> dict[str, Any]:
             rgb.save(source / "phone.heic", format="HEIF")
             expected_count += 1
             checks.append("heif")
+        nested = source / "nested"
+        nested.mkdir()
+        rgb.save(nested / "nested.png")
         records: list[dict[str, Any]] = []
-        summary = scan(source, base / "cache", records.append, workers=1)
+        summary = scan(
+            source, base / "cache", records.append, workers=1, include_subfolders=False
+        )
         if summary != {
             "type": "complete",
             "processed": expected_count,
@@ -56,6 +61,8 @@ def self_test() -> dict[str, Any]:
         }:
             raise RuntimeError(f"Synthetic scan failed: {summary}")
         photos = [record["photo"] for record in records if record["type"] == "photo"]
+        if any(Path(photo["path"]).parent != source for photo in photos):
+            raise RuntimeError("Selected-folder scope check failed")
         rotated = next(photo for photo in photos if photo["filename"] == "rotated.jpg")
         if (rotated["width"], rotated["height"]) != (80, 120):
             raise RuntimeError("EXIF orientation check failed")
@@ -67,7 +74,24 @@ def self_test() -> dict[str, Any]:
             photo["previewPath"]: Path(photo["previewPath"]).stat().st_mtime_ns
             for photo in photos
         }
-        scan(source, base / "cache", lambda record: None, workers=1)
+        recursive_records: list[dict[str, Any]] = []
+        recursive_summary = scan(
+            source, base / "cache", recursive_records.append, workers=1
+        )
+        recursive_paths = {
+            record["photo"]["path"]
+            for record in recursive_records
+            if record["type"] == "photo"
+        }
+        if recursive_summary != {
+            "type": "complete",
+            "processed": expected_count + 1,
+            "total": expected_count + 1,
+            "failed": 0,
+        } or recursive_paths != {photo["path"] for photo in photos} | {
+            str(nested / "nested.png")
+        }:
+            raise RuntimeError("Include-subfolders scope check failed")
         if any(
             Path(path).stat().st_mtime_ns != value
             for path, value in cache_times.items()
@@ -103,6 +127,11 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--source", required=True, type=Path)
     scan_parser.add_argument("--cache", required=True, type=Path)
     scan_parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    scan_parser.add_argument(
+        "--no-subfolders",
+        action="store_true",
+        help="Analyze only images directly in the source folder",
+    )
     detail_parser = commands.add_parser(
         "detail", help="Generate a full-resolution oriented JPEG"
     )
@@ -123,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.command == "scan":
             scan(
-                arguments.source, arguments.cache, emit_json, workers=arguments.workers
+                arguments.source,
+                arguments.cache,
+                emit_json,
+                workers=arguments.workers,
+                include_subfolders=not arguments.no_subfolders,
             )
         elif arguments.command == "detail":
             emit_json(generate_detail(arguments.source, arguments.output))

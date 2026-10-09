@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Photo Select",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "identifier": "com.shurkantwo.photoselect"
   },
   "photo": {
@@ -40,6 +40,7 @@
     "id": "string",
     "name": "string",
     "sourceDir": "absolute directory",
+    "includeSubfolders": "boolean; saved import scope; legacy projects default to true",
     "projectPath": "absolute sqlite project file",
     "createdAt": "ISO8601",
     "updatedAt": "ISO8601",
@@ -53,6 +54,7 @@
     "id": "string",
     "name": "string",
     "sourceDir": "string",
+    "includeSubfolders": "boolean",
     "projectPath": "string",
     "photoCount": "number",
     "favoriteCount": "number",
@@ -66,7 +68,8 @@
     "create_project": {
       "args": {
         "name": "string",
-        "sourceDir": "string"
+        "sourceDir": "string",
+        "includeSubfolders": "boolean; optional, defaults to false for new projects"
       },
       "returns": "Project"
     },
@@ -166,7 +169,7 @@
     "project-updated": "{projectId:string}"
   },
   "engine": {
-    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR",
+    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR [--no-subfolders]; recursive unless --no-subfolders is supplied",
     "detailCLI": "python -m culling_engine detail --source FILE --output FILE",
     "probeCLI": "python -m culling_engine self-test",
     "protocol": "one JSON object per stdout line; diagnostics ONLY stderr; UTF-8; flush every line",

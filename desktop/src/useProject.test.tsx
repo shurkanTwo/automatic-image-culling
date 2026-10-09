@@ -39,6 +39,7 @@ const project: Project = {
   id: "project",
   name: "Family",
   sourceDir: "/photos",
+  includeSubfolders: true,
   projectPath: "/project.cullproj",
   createdAt: "",
   updatedAt: "",

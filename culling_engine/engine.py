@@ -236,7 +236,12 @@ def _public_photo(photo: dict[str, Any]) -> dict[str, Any]:
 
 
 def scan(
-    source: Path, cache: Path, emit: Emitter, *, workers: int = DEFAULT_WORKERS
+    source: Path,
+    cache: Path,
+    emit: Emitter,
+    *,
+    workers: int = DEFAULT_WORKERS,
+    include_subfolders: bool = True,
 ) -> dict[str, Any]:
     """Bound pending futures so a batch does not allocate thousands of decoders."""
     if not 1 <= workers <= 8:
@@ -244,7 +249,7 @@ def scan(
     source = source.resolve(strict=True)
     cache = cache.resolve()
     str(cache).encode("utf-8")
-    paths = discover_images(source, cache)
+    paths = discover_images(source, cache, include_subfolders=include_subfolders)
     cache.mkdir(parents=True, exist_ok=True)
     emit({"type": "scan", "total": len(paths)})
     results: list[dict[str, Any]] = []

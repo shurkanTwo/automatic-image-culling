@@ -50,8 +50,11 @@ function call<T>(
 }
 export const api = {
   state: () => call<AppState>("get_app_state"),
-  createProject: (name: string, sourceDir: string) =>
-    call<Project>("create_project", { name, sourceDir }),
+  createProject: (
+    name: string,
+    sourceDir: string,
+    includeSubfolders: boolean,
+  ) => call<Project>("create_project", { name, sourceDir, includeSubfolders }),
   openProject: (projectPath: string) =>
     call<Project>("open_project", { projectPath }),
   project: (projectId: string) => call<Project>("get_project", { projectId }),

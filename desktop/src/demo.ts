@@ -38,6 +38,7 @@ function initialProject(): Project {
     id: "demo-alpine",
     name: "Alpine weekend",
     sourceDir: "/Demo/Alpine weekend",
+    includeSubfolders: true,
     projectPath: "/Demo/alpine.photoselect",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -67,7 +68,7 @@ function initialProject(): Project {
 function readProject(): Project {
   try {
     const stored = localStorage.getItem(key);
-    if (stored) return JSON.parse(stored);
+    if (stored) return { includeSubfolders: true, ...JSON.parse(stored) };
   } catch {
     /* Start a clean explicit demo if its stored data is invalid. */
   }
@@ -86,13 +87,14 @@ export async function demoInvoke<T>(
   switch (command) {
     case "get_app_state":
       result = {
-        version: "0.2.1",
+        version: "0.2.2",
         engineAvailable: true,
         projects: [
           {
             id: project.id,
             name: project.name,
             sourceDir: project.sourceDir,
+            includeSubfolders: project.includeSubfolders,
             projectPath: project.projectPath,
             photoCount: project.photos.length,
             favoriteCount: project.photos.filter(
@@ -108,7 +110,12 @@ export async function demoInvoke<T>(
       result = project;
       break;
     case "create_project":
-      project = { ...initialProject(), name: String(args.name) };
+      project = {
+        ...initialProject(),
+        name: String(args.name),
+        sourceDir: String(args.sourceDir),
+        includeSubfolders: args.includeSubfolders === true,
+      };
       save();
       result = project;
       break;

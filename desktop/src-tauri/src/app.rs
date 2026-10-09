@@ -35,8 +35,15 @@ async fn get_app_state(state: State<'_, Workers>) -> Result<AppState> {
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-fn create_project(state: State<'_, Workers>, name: String, source_dir: String) -> Result<Project> {
-    state.store.create(&name, &source_dir)
+fn create_project(
+    state: State<'_, Workers>,
+    name: String,
+    source_dir: String,
+    include_subfolders: Option<bool>,
+) -> Result<Project> {
+    state
+        .store
+        .create_with_options(&name, &source_dir, include_subfolders.unwrap_or(false))
 }
 #[tauri::command]
 fn open_project(state: State<'_, Workers>, project_path: String) -> Result<Project> {

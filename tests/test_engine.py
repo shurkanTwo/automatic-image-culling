@@ -71,6 +71,192 @@ class EngineTests(unittest.TestCase):
             self.assertNotIn("decision", photo)
             json.dumps(photo, allow_nan=False)
 
+    def test_discovery_scope_includes_only_the_selected_folder_when_disabled(
+        self,
+    ) -> None:
+        direct = self.save_photo("photo.jpg")
+        nested = self.save_photo("day1/photo.jpg")
+        deep = self.save_photo("day1/more/photo.jpg")
+        self.assertEqual(
+            discover_images(self.source, self.cache, include_subfolders=False),
+            [direct],
+        )
+        self.assertEqual(
+            set(discover_images(self.source, self.cache, include_subfolders=True)),
+            {direct, nested, deep},
+        )
+        self.assertEqual(
+            discover_images(self.source, self.cache),
+            discover_images(self.source, self.cache, include_subfolders=True),
+        )
+
+    def test_scan_scope_filters_nested_images_and_keeps_root_photo_identity(
+        self,
+    ) -> None:
+        direct = self.save_photo("photo.jpg")
+        nested = self.save_photo("day1/photo.jpg")
+        photos_by_scope = {}
+        for include_subfolders, expected in (
+            (False, {direct}),
+            (True, {direct, nested}),
+        ):
+            with self.subTest(include_subfolders=include_subfolders):
+                records = []
+                result = scan(
+                    self.source,
+                    self.cache,
+                    records.append,
+                    workers=1,
+                    include_subfolders=include_subfolders,
+                )
+                photos = [
+                    record["photo"] for record in records if record["type"] == "photo"
+                ]
+                self.assertEqual(
+                    result,
+                    {
+                        "type": "complete",
+                        "processed": len(expected),
+                        "total": len(expected),
+                        "failed": 0,
+                    },
+                )
+                self.assertEqual(
+                    {photo["path"] for photo in photos},
+                    {str(path) for path in expected},
+                )
+                photos_by_scope[include_subfolders] = next(
+                    photo for photo in photos if photo["path"] == str(direct)
+                )
+        self.assertEqual(photos_by_scope[False], photos_by_scope[True])
+
+    def test_selected_folder_scan_is_empty_when_images_are_only_nested(self) -> None:
+        self.save_photo("day1/photo.jpg")
+        records = []
+        result = scan(
+            self.source, self.cache, records.append, workers=1, include_subfolders=False
+        )
+        self.assertEqual(
+            result, {"type": "complete", "processed": 0, "total": 0, "failed": 0}
+        )
+        self.assertEqual(
+            records,
+            [{"type": "scan", "total": 0}, {"type": "groups", "groups": []}, result],
+        )
+
+    def test_selected_folder_discovery_does_not_visit_inaccessible_descendants(
+        self,
+    ) -> None:
+        direct = self.save_photo("photo.jpg")
+        self.save_photo("analysis/hidden.jpg")
+        self.save_photo("inaccessible/hidden.jpg")
+        original_scandir = os.scandir
+        original_is_file = Path.is_file
+
+        def guarded_scandir(path):
+            if Path(path) != self.source:
+                raise PermissionError(f"Cannot list descendant: {path}")
+            return original_scandir(path)
+
+        def guarded_is_file(path):
+            if path.parent != self.source:
+                raise AssertionError(f"Unexpected descendant metadata probe: {path}")
+            return original_is_file(path)
+
+        with patch(
+            "culling_engine.discovery.os.scandir", side_effect=guarded_scandir
+        ), patch.object(Path, "is_file", guarded_is_file):
+            self.assertEqual(
+                discover_images(self.source, self.cache, include_subfolders=False),
+                [direct],
+            )
+        with patch(
+            "culling_engine.discovery.os.scandir", side_effect=guarded_scandir
+        ), self.assertRaises(PermissionError):
+            discover_images(self.source, self.cache, include_subfolders=True)
+
+    def test_discovery_preserves_root_and_cache_safety_errors_in_both_scopes(
+        self,
+    ) -> None:
+        for include_subfolders in (False, True):
+            with self.subTest(include_subfolders=include_subfolders):
+                with self.assertRaises(ValueError):
+                    discover_images(
+                        self.source, self.source, include_subfolders=include_subfolders
+                    )
+                with patch(
+                    "culling_engine.discovery.os.scandir",
+                    side_effect=PermissionError("Cannot list root"),
+                ), self.assertRaises(PermissionError):
+                    discover_images(
+                        self.source,
+                        self.cache,
+                        include_subfolders=include_subfolders,
+                    )
+                records = []
+                with patch(
+                    "culling_engine.discovery.os.scandir",
+                    side_effect=PermissionError("Cannot list root"),
+                ), self.assertRaises(PermissionError):
+                    scan(
+                        self.source,
+                        self.cache,
+                        records.append,
+                        workers=1,
+                        include_subfolders=include_subfolders,
+                    )
+                self.assertEqual(records, [])
+
+    def test_cli_no_subfolders_filters_nested_photos_and_default_remains_recursive(
+        self,
+    ) -> None:
+        direct = self.save_photo("photo.jpg")
+        nested = self.save_photo("day1/photo.jpg")
+        for flags, expected in (
+            (["--no-subfolders"], {direct}),
+            ([], {direct, nested}),
+        ):
+            with self.subTest(flags=flags):
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "culling_engine",
+                        "scan",
+                        "--source",
+                        str(self.source),
+                        "--cache",
+                        str(self.cache),
+                        "--workers",
+                        "1",
+                        *flags,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
+                )
+                self.assertEqual(process.returncode, 0, process.stderr)
+                records = [json.loads(line) for line in process.stdout.splitlines()]
+                self.assertEqual(records[0], {"type": "scan", "total": len(expected)})
+                self.assertEqual(
+                    records[-1],
+                    {
+                        "type": "complete",
+                        "processed": len(expected),
+                        "total": len(expected),
+                        "failed": 0,
+                    },
+                )
+                self.assertEqual(
+                    {
+                        record["photo"]["path"]
+                        for record in records
+                        if record["type"] == "photo"
+                    },
+                    {str(path) for path in expected},
+                )
+
     def test_cache_invalidation_by_source_size_and_mtime(self) -> None:
         path = self.save_photo("photo.jpg")
         first = analyze_photo(path, self.cache)
@@ -553,7 +739,9 @@ class EngineTests(unittest.TestCase):
             )
 
     def test_smoke_test_uses_temporary_synthetic_images(self) -> None:
-        self.assertTrue(self_test()["success"])
+        result = self_test()
+        self.assertTrue(result["success"])
+        self.assertIn("folder-scope", result["checks"])
 
 
 class GroupingTests(unittest.TestCase):

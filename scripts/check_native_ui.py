@@ -151,9 +151,13 @@ def make_photos(source: Path) -> dict[Path, tuple[str, int]]:
                 (offset, 120, offset + 60, height - 120), fill=(240, 200, 80)
             )
         image.save(source / f"写真{index}.png")
+    nested = source / "subfolder"
+    nested.mkdir()
+    image.save(nested / "nested.png")
     return {
         path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
-        for path in source.iterdir()
+        for path in source.rglob("*")
+        if path.is_file()
     }
 
 
@@ -163,21 +167,51 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
     if not state["engineAvailable"]:
         raise RuntimeError("The native application cannot access its image worker")
     project = view.invoke(
-        "create_project", {"name": "Native review", "sourceDir": str(source)}
+        "create_project",
+        {
+            "name": "Native review",
+            "sourceDir": str(source),
+            "includeSubfolders": False,
+        },
     )
     project_id = project["id"]
     arguments = {"projectId": project_id}
     view.invoke("start_import", arguments)
 
-    def completed():
-        current = view.invoke("get_project", arguments)
-        if current["importStatus"] == "failed":
-            raise RuntimeError(current["importError"])
-        return current if current["importStatus"] == "completed" else None
+    def wait_for_import(project_id: str):
+        def completed():
+            current = view.invoke("get_project", {"projectId": project_id})
+            if current["importStatus"] == "failed":
+                raise RuntimeError(current["importError"])
+            return current if current["importStatus"] == "completed" else None
 
-    project = view.wait(completed)
-    if len(project["photos"]) != 3:
-        raise RuntimeError("Native import did not produce all three photographs")
+        return view.wait(completed)
+
+    project = wait_for_import(project_id)
+    if project["includeSubfolders"] is not False or len(project["photos"]) != 3:
+        raise RuntimeError("Native folder-only import did not preserve its scope")
+    recursive = view.invoke(
+        "create_project",
+        {
+            "name": "Native recursive review",
+            "sourceDir": str(source),
+            "includeSubfolders": True,
+        },
+    )
+    view.invoke("start_import", {"projectId": recursive["id"]})
+    recursive = wait_for_import(recursive["id"])
+    if len(recursive["photos"]) != 4 or not any(
+        photo["filename"] == "nested.png" for photo in recursive["photos"]
+    ):
+        raise RuntimeError("Native recursive import did not include nested photographs")
+    for expected, count in ((recursive, 4), (project, 3)):
+        reopened = view.invoke("open_project", {"projectPath": expected["projectPath"]})
+        if reopened["includeSubfolders"] is not expected["includeSubfolders"]:
+            raise RuntimeError("Opening a project changed its saved import scope")
+        view.invoke("start_import", {"projectId": expected["id"]})
+        rescanned = wait_for_import(expected["id"])
+        if len(rescanned["photos"]) != count:
+            raise RuntimeError("Native rescan did not reuse its saved import scope")
     ids = {photo["filename"]: photo["id"] for photo in project["photos"]}
     view.invoke(
         "update_photo",
@@ -187,7 +221,12 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
     view.wait(
         lambda: view.execute("return Boolean(document.querySelector('.recent-card'));")
     )
-    view.click(".recent-card")
+    recent_index = view.execute(
+        "return [...document.querySelectorAll('.recent-card')].findIndex(card => card.querySelector('strong').textContent === 'Native review');"
+    )
+    if recent_index < 0:
+        raise RuntimeError("Native review project was missing from recent projects")
+    view.click(f".recent-card:nth-child({recent_index + 1})")
     view.wait(
         lambda: view.execute(
             "return document.querySelectorAll('.photo-card img').length === 3 && [...document.querySelectorAll('.photo-card img')].every(image => image.naturalWidth > 0);"
@@ -323,6 +362,9 @@ def review_journey(view: NativeWebview, source: Path, output: Path) -> dict:
         "success": True,
         "version": state["version"],
         "nativeIpc": True,
+        "folderOnlyImport": True,
+        "recursiveImport": True,
+        "folderScopePreservedOnReopenAndRescan": True,
         "nativePreviewAssets": True,
         "favoriteAndRating": True,
         "bulkTagsPreserved": True,
@@ -347,10 +389,11 @@ def main() -> None:
         workdir = Path(temporary)
         os.environ["XDG_DATA_HOME"] = str(workdir / "data")
         os.environ["XDG_CACHE_HOME"] = str(workdir / "cache")
-        originals = make_photos(workdir / "旅 photos with spaces")
+        source = workdir / "旅 photos with spaces"
+        originals = make_photos(source)
         view = NativeWebview(args.application.resolve(strict=True), args.port)
         try:
-            report = review_journey(view, next(iter(originals)).parent, output)
+            report = review_journey(view, source, output)
         finally:
             view.close()
         for path, fingerprint in originals.items():

@@ -14,6 +14,101 @@ use tempfile::TempDir;
 
 #[test]
 #[ignore = "Requires installed Python engine dependencies; set PHOTO_SELECT_PYTHON to their interpreter"]
+fn real_engine_folder_scope_survives_reopening_and_rescan() {
+    let temporary = TempDir::new().unwrap();
+    let source = temporary.path().join("originals");
+    let nested = source.join("album");
+    fs::create_dir_all(&nested).unwrap();
+    let python = std::env::var("PHOTO_SELECT_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let write_photo = |path: &std::path::Path| {
+        let status = Command::new(&python)
+            .args([
+                "-c",
+                "from PIL import Image; import sys; Image.new('RGB', (600,400), (45,90,180)).save(sys.argv[1])",
+            ])
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    write_photo(&source.join("root.jpg"));
+    write_photo(&nested.join("nested.jpg"));
+    let originals: Vec<_> = [source.join("root.jpg"), nested.join("nested.jpg")]
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    let data_root = temporary.path().join("appdata");
+    let store = Store::new(data_root.clone()).unwrap();
+    let root_only = store
+        .create_with_options("Root only", source.to_str().unwrap(), false)
+        .unwrap();
+    let recursive = store
+        .create_with_options("Recursive", source.to_str().unwrap(), true)
+        .unwrap();
+    let scan = |store: &Store, project_id: &str, expected: &[&str]| {
+        let workers = Workers::new(
+            store.clone(),
+            Engine::discover(PathBuf::from("/no-bundled-engine")),
+            Arc::new(|_, _| {}),
+        );
+        workers.start(project_id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while workers.is_running(project_id) {
+            assert!(Instant::now() < deadline, "analysis timed out");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let project = store.project(project_id).unwrap();
+        assert_eq!(
+            project.import_status, "completed",
+            "{:?}",
+            project.import_error
+        );
+        let mut filenames: Vec<_> = project.photos.iter().map(|p| p.filename.as_str()).collect();
+        filenames.sort();
+        let mut expected = expected.to_vec();
+        expected.sort();
+        assert_eq!(filenames, expected);
+    };
+    scan(&store, &root_only.id, &["root.jpg"]);
+    scan(&store, &recursive.id, &["root.jpg", "nested.jpg"]);
+
+    write_photo(&source.join("new-root.jpg"));
+    write_photo(&nested.join("new-nested.jpg"));
+    let reopened = Store::new(data_root).unwrap();
+    assert!(
+        !reopened
+            .open(&root_only.project_path)
+            .unwrap()
+            .include_subfolders
+    );
+    assert!(
+        reopened
+            .open(&recursive.project_path)
+            .unwrap()
+            .include_subfolders
+    );
+    scan(&reopened, &root_only.id, &["root.jpg", "new-root.jpg"]);
+    scan(
+        &reopened,
+        &recursive.id,
+        &["root.jpg", "nested.jpg", "new-root.jpg", "new-nested.jpg"],
+    );
+    for (path, bytes) in originals {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+#[ignore = "Requires installed Python engine dependencies; set PHOTO_SELECT_PYTHON to their interpreter"]
 fn real_engine_import_detail_and_rescan_preserve_originals_and_review() {
     let temporary = TempDir::new().unwrap();
     let source = temporary.path().join("originals");

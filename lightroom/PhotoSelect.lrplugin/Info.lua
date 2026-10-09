@@ -7,5 +7,5 @@ return {
     LrLibraryMenuItems = {
         { title = 'Import Photo Select shortlist...', file = 'ImportSelection.lua' },
     },
-    VERSION = { major = 0, minor = 2, revision = 1, build = 1 },
+    VERSION = { major = 0, minor = 2, revision = 2, build = 1 },
 }
