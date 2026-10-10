@@ -1,5 +1,5 @@
 use photo_select::{
-    core::{PhotoPatch, Store},
+    core::{path_string, PhotoPatch, Store},
     worker::{Engine, Workers},
 };
 use std::{
@@ -133,7 +133,7 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
     assert!(!preferred
         .photos
         .iter()
-        .any(|p| PathBuf::from(&p.path) == untouched));
+        .any(|p| p.path == path_string(&untouched)));
     let retained = preferred.photos.iter().find(|p| p.id == jpeg_id).unwrap();
     assert!(retained.raw_companion_retained);
     assert!(retained.analysis_error.is_none());
@@ -163,11 +163,11 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
     assert!(preferred
         .photos
         .iter()
-        .any(|p| PathBuf::from(&p.path) == other_folder));
+        .any(|p| p.path == path_string(&other_folder)));
     assert!(preferred
         .photos
         .iter()
-        .any(|p| PathBuf::from(&p.path) == edited));
+        .any(|p| p.path == path_string(&edited)));
     // Retained JPEGs have no new suggestion, but do not invalidate fresh RAW suggestions.
     reopened
         .apply_cached_first_pass(&project.id, "cautious")
@@ -210,10 +210,7 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
         .unwrap();
     let all = scan(&reopened, &keep_all.id);
     assert_eq!(all.photos.len(), 8);
-    assert!(all
-        .photos
-        .iter()
-        .any(|p| PathBuf::from(&p.path) == untouched));
+    assert!(all.photos.iter().any(|p| p.path == path_string(&untouched)));
     assert!(all.photos.iter().all(|p| !p.raw_companion_retained));
     for (path, bytes) in originals {
         assert_eq!(fs::read(path).unwrap(), bytes);
