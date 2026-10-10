@@ -41,6 +41,11 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
     for path in [&untouched, &reviewed, &edited, &other_folder] {
         write_jpeg(path);
     }
+    // Windows temporary directories can use 8.3 aliases. The store canonicalizes
+    // originals to their long names before stripping the device-path prefix.
+    let untouched_path = path_string(&fs::canonicalize(&untouched).unwrap());
+    let edited_path = path_string(&fs::canonicalize(&edited).unwrap());
+    let other_folder_path = path_string(&fs::canonicalize(&other_folder).unwrap());
     let data_root = temporary.path().join("appdata");
     let store = Store::new(data_root.clone()).unwrap();
     let project = store
@@ -130,10 +135,7 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
     let preferred = scan(&reopened, &project.id);
     assert!(preferred.first_pass_ready);
     assert_eq!(preferred.photos.len(), 7);
-    assert!(!preferred
-        .photos
-        .iter()
-        .any(|p| p.path == path_string(&untouched)));
+    assert!(!preferred.photos.iter().any(|p| p.path == untouched_path));
     let retained = preferred.photos.iter().find(|p| p.id == jpeg_id).unwrap();
     assert!(retained.raw_companion_retained);
     assert!(retained.analysis_error.is_none());
@@ -160,14 +162,14 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
         .unwrap()
         .analysis_error
         .is_none());
-    assert!(preferred
-        .photos
-        .iter()
-        .any(|p| p.path == path_string(&other_folder)));
-    assert!(preferred
-        .photos
-        .iter()
-        .any(|p| p.path == path_string(&edited)));
+    assert!(
+        preferred.photos.iter().any(|p| p.path == other_folder_path),
+        "Other-folder JPEG {:?} (canonical {:?}) absent from imported paths {:?}",
+        other_folder,
+        other_folder_path,
+        preferred.photos.iter().map(|p| &p.path).collect::<Vec<_>>()
+    );
+    assert!(preferred.photos.iter().any(|p| p.path == edited_path));
     // Retained JPEGs have no new suggestion, but do not invalidate fresh RAW suggestions.
     reopened
         .apply_cached_first_pass(&project.id, "cautious")
@@ -210,7 +212,7 @@ fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan(
         .unwrap();
     let all = scan(&reopened, &keep_all.id);
     assert_eq!(all.photos.len(), 8);
-    assert!(all.photos.iter().any(|p| p.path == path_string(&untouched)));
+    assert!(all.photos.iter().any(|p| p.path == untouched_path));
     assert!(all.photos.iter().all(|p| !p.raw_companion_retained));
     for (path, bytes) in originals {
         assert_eq!(fs::read(path).unwrap(), bytes);
