@@ -47,6 +47,7 @@ const project: Project = {
   name: "Family",
   sourceDir: "/photos",
   includeSubfolders: true,
+  preferRaw: false,
   automaticSelectionEnabled: false,
   selectionMode: "cautious",
   firstPassReady: false,

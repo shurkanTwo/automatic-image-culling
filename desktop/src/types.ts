@@ -26,6 +26,7 @@ export interface Photo {
   reviewed: boolean;
   tags: string[];
   analysisError: string | null;
+  rawCompanionRetained?: boolean;
 }
 export interface Group {
   id: string;
@@ -43,6 +44,7 @@ export interface Project {
   name: string;
   sourceDir: string;
   includeSubfolders: boolean;
+  preferRaw: boolean;
   automaticSelectionEnabled: boolean;
   selectionMode: SelectionMode;
   firstPassReady: boolean;
@@ -60,6 +62,7 @@ export interface ProjectSummary {
   name: string;
   sourceDir: string;
   includeSubfolders: boolean;
+  preferRaw: boolean;
   projectPath: string;
   photoCount: number;
   favoriteCount: number;

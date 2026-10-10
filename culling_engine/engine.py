@@ -6,6 +6,7 @@ import json
 import math
 import os
 import tempfile
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime
@@ -17,6 +18,7 @@ from PIL import Image
 
 from .analysis import analyze_image
 from .discovery import (
+    ImportPlan,
     SourceIdentity,
     camera_name,
     capture_time,
@@ -247,6 +249,7 @@ def scan(
     workers: int = DEFAULT_WORKERS,
     include_subfolders: bool = True,
     selection_mode: str = "cautious",
+    prefer_raw: bool = False,
 ) -> dict[str, Any]:
     """Bound pending futures so a batch does not allocate thousands of decoders."""
     if not 1 <= workers <= 8:
@@ -257,21 +260,23 @@ def scan(
     cache = cache.resolve()
     str(cache).encode("utf-8")
     paths = discover_images(source, cache, include_subfolders=include_subfolders)
+    plan = ImportPlan(paths, prefer_raw=prefer_raw)
+    total = len(plan.initial_paths)
     cache.mkdir(parents=True, exist_ok=True)
-    emit({"type": "scan", "total": len(paths)})
+    emit({"type": "scan", "total": total})
     results: list[dict[str, Any]] = []
     failed = 0
     processed = 0
     pending: dict[Future[dict[str, Any]], Path] = {}
-    iterator = iter(paths)
+    queued = deque(plan.initial_paths)
     with ThreadPoolExecutor(
         max_workers=workers, thread_name_prefix="photo-select"
     ) as pool:
 
         def submit_next() -> bool:
-            path = next(iterator, None)
-            if path is None:
+            if not queued:
                 return False
+            path = queued.popleft()
             pending[pool.submit(analyze_photo, path, cache)] = path
             return True
 
@@ -282,6 +287,7 @@ def scan(
             completed, _ = wait(pending, return_when=FIRST_COMPLETED)
             for future in completed:
                 path = pending.pop(future)
+                successful = False
                 try:
                     photo = future.result()
                 # Worker errors are isolated; protocol writes remain fatal.
@@ -296,19 +302,24 @@ def scan(
                     )
                 else:
                     results.append(photo)
+                    successful = photo["analysisError"] is None
                     failed += int(photo["analysisError"] is not None)
                     emit({"type": "photo", "photo": _public_photo(photo)})
+                fallback = plan.record_result(path, successful=successful)
+                total += len(fallback)
+                queued.extend(fallback)
                 processed += 1
                 emit(
                     {
                         "type": "progress",
                         "processed": processed,
-                        "total": len(paths),
+                        "total": total,
                         "currentFile": display_path(path),
                         "failed": failed,
                     }
                 )
                 submit_next()
+    emit({"type": "excluded", "paths": [str(path) for path in plan.excluded_paths]})
     groups = group_photos(results)
     emit({"type": "groups", "groups": groups})
     emit(
@@ -320,7 +331,7 @@ def scan(
     complete = {
         "type": "complete",
         "processed": processed,
-        "total": len(paths),
+        "total": total,
         "failed": failed,
     }
     emit(complete)

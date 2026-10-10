@@ -1,7 +1,7 @@
-PHOTO SELECT 0.2.3 - WINDOWS TEST BUILD
+PHOTO SELECT 0.2.4 - WINDOWS TEST BUILD
 
 GET STARTED
-Run Photo-Select-0.2.3-Windows-x64-Setup.exe to install for your current user.
+Run Photo-Select-0.2.4-Windows-x64-Setup.exe to install for your current user.
 The installer includes the image engine; no Python or Node installation is needed.
 It checks for Microsoft Edge WebView2 and installs the runtime if it is missing
 (an internet connection is needed only for that first runtime installation).
@@ -47,8 +47,21 @@ The import adds a collection, applies only explicitly changed ratings, adds your
 tags, and gives Favorites a Pick flag. Existing keywords and Develop settings are
 preserved. Include discards as Lightroom Rejects defaults on during export.
 Discards then receive actual Reject flags; extra discards are not added to the
-shortlist collection. Reject flags never delete files. Use the updated 0.2.3 plugin.
+shortlist collection. Reject flags never delete files. Use the updated 0.2.4 plugin.
 Old schema 1 exports keep their archive-only Pass behavior. Import is one-way.
+
+RAW + JPEG PAIRS
+Enable Prefer RAW when a matching JPEG exists during import to review the RAW
+once when a camera has saved both formats. The option defaults off. Matching uses
+the filename without its extension, ignoring case, in the same folder. JPEG-only
+shots and edited filenames remain included. Photos in different folders are not
+paired. If matching RAWs cannot be analyzed, their JPEG companions stay available
+alongside the RAW errors. All original files remain untouched.
+
+Rescans reuse this saved preference. If a RAW is added later, an untouched JPEG
+companion leaves the review grid. Existing manual decisions, ratings, tags and
+collection choices are preserved with an explanatory note. Create a new project
+to change the preference. Selected RAWs are exported by their original paths.
 
 WHAT THE SUGGESTIONS MEAN
 This version automatically shortlists technically stronger previews and marks
@@ -71,6 +84,8 @@ The app does not upload photographs or call a cloud image service.
 USEFUL FIRST TESTS
 - Import a folder with Include subfolders off, then on in a separate project.
 - Rescan both projects and check that each keeps its chosen folder scope.
+- Import RAW + JPEG pairs with RAW preference on and off, then reopen and rescan.
+- Check JPEG-only shots remain included and matching RAWs are exported to Lightroom.
 - Scroll through a large folder and check that later photographs load automatically.
 - Install the next update over this version, then check that your reviews remain.
 - Favorite and rate a few photographs, restart, then verify those choices persist.

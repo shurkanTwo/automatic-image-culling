@@ -13,6 +13,7 @@ from typing import Any
 from PIL import Image
 
 from . import __version__
+from .discovery import ImportPlan, discover_images
 from .engine import CONFIG_VERSION, DEFAULT_WORKERS, generate_detail, scan
 
 
@@ -38,6 +39,7 @@ def self_test() -> dict[str, Any]:
         "json",
         "folder-scope",
         "automatic-selection",
+        "raw-jpeg-pairs",
     ]
     with tempfile.TemporaryDirectory(prefix="photo-select-self-test-") as temporary:
         base = Path(temporary).resolve()
@@ -131,6 +133,50 @@ def self_test() -> dict[str, Any]:
         detail = generate_detail(source / "rotated.jpg", base / "detail.jpg")
         if (detail["width"], detail["height"]) != (80, 120):
             raise RuntimeError("Full-resolution detail check failed")
+        paired_source = base / "pairs"
+        paired_source.mkdir()
+        raw = paired_source / "capture.NEF"
+        raw.write_bytes(b"Synthetic invalid RAW for JPEG fallback check")
+        jpeg = paired_source / "CAPTURE.JPG"
+        rgb.save(jpeg)
+        pair_paths = discover_images(paired_source, base / "pair-cache")
+        pair_plan = ImportPlan(pair_paths, prefer_raw=True)
+        if (
+            pair_plan.initial_paths != (raw,)
+            or pair_plan.record_result(raw, successful=True)
+            or pair_plan.excluded_paths != (jpeg,)
+        ):
+            raise RuntimeError("RAW/JPEG pairing plan check failed")
+        fallback_records: list[dict[str, Any]] = []
+        fallback_summary = scan(
+            paired_source,
+            base / "pair-cache",
+            fallback_records.append,
+            workers=1,
+            prefer_raw=True,
+        )
+        fallback_photos = [
+            record["photo"] for record in fallback_records if record["type"] == "photo"
+        ]
+        if (
+            fallback_summary
+            != {"type": "complete", "processed": 2, "total": 2, "failed": 1}
+            or {photo["path"] for photo in fallback_photos} != {str(raw), str(jpeg)}
+            or next(
+                record["paths"]
+                for record in fallback_records
+                if record["type"] == "excluded"
+            )
+            or not any(
+                photo["path"] == str(raw) and photo["analysisError"]
+                for photo in fallback_photos
+            )
+            or not any(
+                photo["path"] == str(jpeg) and not photo["analysisError"]
+                for photo in fallback_photos
+            )
+        ):
+            raise RuntimeError("RAW/JPEG decoding fallback check failed")
     return {
         "type": "self-test",
         "success": True,
@@ -158,6 +204,11 @@ def _parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--source", required=True, type=Path)
     scan_parser.add_argument("--cache", required=True, type=Path)
     scan_parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    scan_parser.add_argument(
+        "--prefer-raw",
+        action="store_true",
+        help="Skip same-folder JPEG companions only when matching RAW analysis succeeds",
+    )
     scan_parser.add_argument(
         "--selection-mode",
         choices=("cautious", "stronger"),
@@ -195,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
                 workers=arguments.workers,
                 include_subfolders=not arguments.no_subfolders,
                 selection_mode=arguments.selection_mode,
+                prefer_raw=arguments.prefer_raw,
             )
         elif arguments.command == "detail":
             emit_json(generate_detail(arguments.source, arguments.output))

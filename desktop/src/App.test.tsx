@@ -65,7 +65,7 @@ beforeEach(() => {
   HTMLElement.prototype.setPointerCapture = vi.fn();
   stored = testProject();
   vi.mocked(api.state).mockImplementation(async () => ({
-    version: "0.2.3",
+    version: "0.2.4",
     engineAvailable: true,
     projects: [
       {
@@ -73,6 +73,7 @@ beforeEach(() => {
         name: stored.name,
         sourceDir: stored.sourceDir,
         includeSubfolders: stored.includeSubfolders,
+        preferRaw: stored.preferRaw,
         projectPath: stored.projectPath,
         photoCount: stored.photos.length,
         favoriteCount: 0,
@@ -94,6 +95,7 @@ beforeEach(() => {
       includeSubfolders,
       automaticSelectionEnabled = true,
       selectionMode = "cautious",
+      preferRaw = false,
     ) => {
       stored = {
         ...testProject(),
@@ -102,6 +104,7 @@ beforeEach(() => {
         includeSubfolders,
         automaticSelectionEnabled,
         selectionMode,
+        preferRaw,
       };
       return structuredClone(stored);
     },
@@ -514,6 +517,7 @@ describe("automatic first pass and Lightroom discards", () => {
         false,
         true,
         "stronger",
+        false,
       ),
     );
     await waitFor(() => expect(api.start).toHaveBeenCalledTimes(1));
@@ -541,6 +545,7 @@ describe("automatic first pass and Lightroom discards", () => {
         false,
         false,
         "cautious",
+        false,
       ),
     );
   });
@@ -704,6 +709,64 @@ describe("automatic first pass and Lightroom discards", () => {
 });
 describe("folder import scope", () => {
   it.each([false, true])(
+    "saves preferRaw=%s at import and keeps the saved choice through rescans",
+    async (preferRaw) => {
+      const dialog = await chooseImportFolder();
+      const preference = within(dialog).getByRole("checkbox", {
+        name: "Prefer RAW when a matching JPEG exists",
+      }) as HTMLInputElement;
+      expect(preference.checked).toBe(false);
+      expect(preference.getAttribute("aria-describedby")).toBe(
+        "import-raw-preference",
+      );
+      expect(
+        document.getElementById("import-raw-preference")?.textContent,
+      ).toContain("in the same folder");
+      expect(dialog.textContent).toContain("JPEG-only photos remain included");
+      expect(dialog.textContent).toContain("stays as a fallback");
+      if (preferRaw) fireEvent.click(preference);
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Start import" }),
+      );
+      await waitFor(() =>
+        expect(api.createProject).toHaveBeenCalledExactlyOnceWith(
+          "New trip",
+          "/photos/New trip",
+          false,
+          true,
+          "cautious",
+          preferRaw,
+        ),
+      );
+      const choice = preferRaw
+        ? "RAW preferred for pairs"
+        : "RAW + JPEG separately";
+      await screen.findByText(choice);
+      expect(screen.getByText(choice).getAttribute("title")).toBe(
+        "Create a new project to change folder scope or RAW preference.",
+      );
+      expect(
+        screen.queryByRole("checkbox", {
+          name: "Prefer RAW when a matching JPEG exists",
+        }),
+      ).toBeNull();
+      const rescan = screen.getByRole("button", { name: "Rescan folder" });
+      await waitFor(() => expect(rescan.hasAttribute("disabled")).toBe(false));
+      fireEvent.click(rescan);
+      await waitFor(() => expect(api.start).toHaveBeenCalledTimes(2));
+      expect(stored.preferRaw).toBe(preferRaw);
+      expect(screen.getByText(choice)).toBeTruthy();
+      expect(api.createProject).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("shows the separate RAW and JPEG default when opening a legacy project", async () => {
+    delete (stored as Partial<Project>).preferRaw;
+    await openWorkspace();
+    expect(screen.getByText("RAW + JPEG separately")).toBeTruthy();
+    expect(screen.queryByText("RAW preferred for pairs")).toBeNull();
+    expect(api.createProject).not.toHaveBeenCalled();
+  });
+  it.each([false, true])(
     "creates a project with includeSubfolders=%s only after Start import and preserves scope through rescans",
     async (includeSubfolders) => {
       const dialog = await chooseImportFolder();
@@ -729,6 +792,7 @@ describe("folder import scope", () => {
         includeSubfolders,
         true,
         "cautious",
+        false,
       );
       await waitFor(() => expect(api.start).toHaveBeenCalledTimes(1));
       expect(
@@ -758,6 +822,11 @@ describe("folder import scope", () => {
     fireEvent.click(
       within(dialog).getByRole("checkbox", { name: "Include subfolders" }),
     );
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", {
+        name: "Prefer RAW when a matching JPEG exists",
+      }),
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.createProject).not.toHaveBeenCalled();
@@ -772,6 +841,13 @@ describe("folder import scope", () => {
       (
         screen.getByRole("checkbox", {
           name: "Include subfolders",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: "Prefer RAW when a matching JPEG exists",
         }) as HTMLInputElement
       ).checked,
     ).toBe(false);
@@ -803,6 +879,10 @@ describe("folder import scope", () => {
       name: "Include subfolders",
     }) as HTMLInputElement;
     fireEvent.click(checkbox);
+    const rawPreference = within(dialog).getByRole("checkbox", {
+      name: "Prefer RAW when a matching JPEG exists",
+    }) as HTMLInputElement;
+    fireEvent.click(rawPreference);
     vi.mocked(api.createProject).mockRejectedValueOnce(
       new Error("Disk is full"),
     );
@@ -812,6 +892,7 @@ describe("folder import scope", () => {
     await within(dialog).findByRole("alert");
     expect(dialog.textContent).toContain("Disk is full");
     expect(checkbox.checked).toBe(true);
+    expect(rawPreference.checked).toBe(true);
     expect(api.start).not.toHaveBeenCalled();
     let resolveCreate!: (value: Project) => void;
     vi.mocked(api.createProject).mockImplementationOnce(
@@ -825,6 +906,7 @@ describe("folder import scope", () => {
     await waitFor(() => expect(api.createProject).toHaveBeenCalledTimes(2));
     expect(start.hasAttribute("disabled")).toBe(true);
     expect(checkbox.disabled).toBe(true);
+    expect(rawPreference.disabled).toBe(true);
     expect(
       within(dialog)
         .getByRole("button", { name: "Cancel" })

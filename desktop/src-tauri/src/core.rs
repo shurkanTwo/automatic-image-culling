@@ -14,6 +14,8 @@ pub type Result<T> = std::result::Result<T, String>;
 pub fn now() -> String {
     Utc::now().to_rfc3339()
 }
+const RETAINED_JPEG_HINT: &str = "Matching RAW preferred; JPEG retained to preserve your review";
+const ORIGINAL_UNAVAILABLE_ERROR: &str = "Original file was unavailable during the latest import (missing, unreadable, or unsupported). Cached previews and review decisions are preserved.";
 fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -60,6 +62,8 @@ pub struct Photo {
     pub tags: Vec<String>,
     #[serde(default)]
     pub analysis_error: Option<String>,
+    #[serde(default)]
+    pub raw_companion_retained: bool,
 }
 fn manual() -> String {
     "manual".into()
@@ -99,6 +103,8 @@ pub struct Project {
     pub source_dir: String,
     #[serde(default = "include_subfolders_by_default")]
     pub include_subfolders: bool,
+    #[serde(default)]
+    pub prefer_raw: bool,
     pub project_path: String,
     pub created_at: String,
     pub updated_at: String,
@@ -124,6 +130,8 @@ pub struct ProjectSummary {
     pub name: String,
     pub source_dir: String,
     pub include_subfolders: bool,
+    #[serde(default)]
+    pub prefer_raw: bool,
     pub project_path: String,
     pub photo_count: usize,
     pub favorite_count: usize,
@@ -292,7 +300,7 @@ impl Store {
         source: &str,
         include_subfolders: bool,
     ) -> Result<Project> {
-        self.create_configured(name, source, include_subfolders, false, "cautious")
+        self.create_configured(name, source, include_subfolders, false, "cautious", false)
     }
     pub fn create_configured(
         &self,
@@ -301,6 +309,7 @@ impl Store {
         include_subfolders: bool,
         automatic_selection_enabled: bool,
         selection_mode: &str,
+        prefer_raw: bool,
     ) -> Result<Project> {
         validate_selection_mode(selection_mode)?;
         let name = valid_name(name)?;
@@ -328,6 +337,7 @@ impl Store {
             name,
             source_dir: path_string(&source),
             include_subfolders,
+            prefer_raw,
             project_path: path_string(&path),
             created_at: now(),
             updated_at: now(),
@@ -436,6 +446,7 @@ impl Store {
                     name: p.name,
                     source_dir: p.source_dir,
                     include_subfolders: p.include_subfolders,
+                    prefer_raw: p.prefer_raw,
                     project_path: p.project_path,
                     photo_count: p.photos.len(),
                     favorite_count: p.photos.iter().filter(|v| v.decision == "favorite").count(),
@@ -527,6 +538,7 @@ impl Store {
         photo.tags.clear();
         photo.detail_path = None;
         photo.group_id = None;
+        photo.raw_companion_retained = false;
         if let Some(old) = previous {
             photo.rating = old.rating;
             photo.rating_touched = old.rating_touched;
@@ -707,20 +719,78 @@ impl Store {
         seen: &HashSet<String>,
         suggestions: Option<&[Suggestion]>,
     ) -> Result<()> {
+        self.finish_scan_with_exclusions(id, seen, suggestions, &[])
+    }
+    pub fn finish_scan_with_exclusions(
+        &self,
+        id: &str,
+        seen: &HashSet<String>,
+        suggestions: Option<&[Suggestion]>,
+        exclusions: &[String],
+    ) -> Result<()> {
         let mut db = self.connection(id)?;
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(error)?;
         let mut photos: Vec<Photo> = read_items(&tx, "photos")?;
+        let mut project = read_meta(&tx)?;
+        let excluded = validate_raw_exclusions(&project, &photos, seen, exclusions)?;
         if let Some(suggestions) = suggestions {
             validate_suggestions(&photos, seen, suggestions)?;
         }
+        let collections: Vec<Collection> = read_items(&tx, "collections")?;
+        let collected: HashSet<_> = collections
+            .iter()
+            .flat_map(|c| c.photo_ids.iter())
+            .collect();
+        let mut removed = HashSet::new();
+        let mut retained = HashSet::new();
         for photo in &mut photos {
-            if !seen.contains(&photo.id) {
+            if !excluded.contains(&photo.path) {
+                continue;
+            }
+            let has_review = photo.reviewed
+                || photo.rating_touched
+                || photo.rating != 0
+                || photo.decision_touched
+                || (photo.decision_source == "manual" && photo.decision != "undecided")
+                || !photo.tags.is_empty()
+                || collected.contains(&photo.id);
+            if has_review {
+                retained.insert(photo.id.clone());
+                if photo.analysis_error.as_deref() == Some(ORIGINAL_UNAVAILABLE_ERROR) {
+                    photo.analysis_error = None;
+                }
+                // The skipped JPEG has no fresh analysis to support its prior automatic choice.
+                if photo.decision_source == "automatic" {
+                    photo.decision = undecided();
+                    photo.decision_source = manual();
+                    photo.decision_touched = false;
+                }
+                photo.raw_companion_retained = true;
+                photo.group_id = None;
                 photo.suggested_decision = None;
                 photo.suggestion_reason = None;
                 photo.suggestion_confidence = None;
-                photo.analysis_error=Some("Original file was unavailable during the latest import (missing, unreadable, or unsupported). Cached previews and review decisions are preserved.".into());
+                if !photo.hints.iter().any(|hint| hint == RETAINED_JPEG_HINT) {
+                    photo.hints.push(RETAINED_JPEG_HINT.into());
+                }
+                write_item(&tx, "photos", &photo.id, photo)?;
+            } else {
+                removed.insert(photo.id.clone());
+                tx.execute("DELETE FROM photos WHERE id=?1", [&photo.id])
+                    .map_err(error)?;
+            }
+        }
+        photos.retain(|photo| !removed.contains(&photo.id));
+        for photo in &mut photos {
+            if !seen.contains(&photo.id) && !retained.contains(&photo.id) {
+                photo.raw_companion_retained = false;
+                photo.hints.retain(|hint| hint != RETAINED_JPEG_HINT);
+                photo.suggested_decision = None;
+                photo.suggestion_reason = None;
+                photo.suggestion_confidence = None;
+                photo.analysis_error = Some(ORIGINAL_UNAVAILABLE_ERROR.into());
                 photo.group_id = None;
                 write_item(&tx, "photos", &photo.id, photo)?;
             }
@@ -746,7 +816,6 @@ impl Store {
                 write_item(&tx, "groups_data", &group.id, &group)?;
             }
         }
-        let mut project = read_meta(&tx)?;
         project.first_pass_ready = suggestions.is_some();
         if let Some(suggestions) = suggestions {
             let by_id: HashMap<_, _> = suggestions
@@ -805,6 +874,7 @@ impl Store {
         if photos
             .iter()
             .filter(|p| p.analysis_error.is_none())
+            .filter(|p| !p.raw_companion_retained)
             .any(|p| p.suggested_decision.is_none() || p.suggestion_confidence.is_none())
         {
             return Err("Automatic suggestions are incomplete".into());
@@ -1014,6 +1084,86 @@ impl Store {
             discard_count,
         })
     }
+}
+fn validate_raw_exclusions(
+    project: &Project,
+    photos: &[Photo],
+    seen: &HashSet<String>,
+    exclusions: &[String],
+) -> Result<HashSet<String>> {
+    if exclusions.is_empty() {
+        return Ok(HashSet::new());
+    }
+    if !project.prefer_raw && !exclusions.is_empty() {
+        return Err("Engine excluded JPEGs without the saved RAW preference".into());
+    }
+    let source = PathBuf::from(path_string(&canonical_or_lexical(Path::new(
+        &project.source_dir,
+    ))?));
+    let mut imported = HashSet::new();
+    let mut matching_raws = HashSet::new();
+    for photo in photos.iter().filter(|p| seen.contains(&p.id)) {
+        let original = Path::new(&photo.path);
+        imported.insert(photo.path.as_str());
+        let extension = original
+            .extension()
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if photo.analysis_error.is_none()
+            && [
+                "arw", "srf", "sr2", "crw", "cr2", "cr3", "nef", "nrw", "orf", "rw2", "raf", "pef",
+                "ptx", "dng", "rwl", "3fr", "fff", "iiq", "kdc", "dcr", "mos", "mrw", "erf", "srw",
+                "raw",
+            ]
+            .contains(&extension.as_str())
+            && original.is_file()
+        {
+            ensure_within(original, &source)?;
+            matching_raws.insert(raw_pair_key(original)?);
+        }
+    }
+    let mut unique = HashSet::new();
+    for excluded in exclusions {
+        valid_absolute_path(Path::new(excluded))?;
+        let path = PathBuf::from(path_string(
+            &fs::canonicalize(excluded).map_err(|e| format!("Invalid excluded original: {e}"))?,
+        ));
+        ensure_within(&path, &source)?;
+        let extension = path
+            .extension()
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !path.is_file()
+            || !["jpg", "jpeg", "jpe"].contains(&extension.as_str())
+            || (!project.include_subfolders && path.parent() != Some(source.as_path()))
+            || !unique.insert(path_string(&path))
+        {
+            return Err("Invalid or duplicate excluded JPEG original".into());
+        }
+        if imported.contains(path_string(&path).as_str()) {
+            return Err("Excluded JPEG was also imported".into());
+        }
+        if !matching_raws.contains(&raw_pair_key(&path)?) {
+            return Err("Excluded JPEG has no successfully analyzed matching RAW".into());
+        }
+    }
+    Ok(unique)
+}
+fn raw_pair_key(path: &Path) -> Result<(String, String)> {
+    let parent = path.parent().ok_or("Invalid original parent folder")?;
+    let parent = path_string(parent);
+    let parent = if cfg!(windows) {
+        parent.to_lowercase()
+    } else {
+        parent
+    };
+    let stem = path
+        .file_stem()
+        .and_then(|v| v.to_str())
+        .ok_or("Invalid original filename")?;
+    Ok((parent, caseless::default_case_fold_str(stem)))
 }
 fn validate_suggestions(
     photos: &[Photo],

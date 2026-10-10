@@ -42,6 +42,7 @@ fn create_project(
     include_subfolders: Option<bool>,
     automatic_selection_enabled: Option<bool>,
     selection_mode: Option<String>,
+    prefer_raw: Option<bool>,
 ) -> Result<Project> {
     state.store.create_configured(
         &name,
@@ -49,6 +50,7 @@ fn create_project(
         include_subfolders.unwrap_or(false),
         automatic_selection_enabled.unwrap_or(true),
         selection_mode.as_deref().unwrap_or("cautious"),
+        prefer_raw.unwrap_or(false),
     )
 }
 #[tauri::command]

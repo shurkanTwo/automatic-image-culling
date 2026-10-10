@@ -55,6 +55,7 @@ function initialProject(): Project {
     name: "Alpine weekend",
     sourceDir: "/Demo/Alpine weekend",
     includeSubfolders: true,
+    preferRaw: false,
     automaticSelectionEnabled: true,
     selectionMode: "cautious",
     firstPassReady: true,
@@ -95,6 +96,7 @@ function readProject(): Project {
         selectionMode: "cautious",
         firstPassReady: false,
         ...value,
+        preferRaw: value.preferRaw === true,
         photos: value.photos.map((photo: Photo) => ({
           ...photo,
           decisionSource: photo.decisionSource ?? "manual",
@@ -142,7 +144,7 @@ export async function demoInvoke<T>(
   switch (command) {
     case "get_app_state":
       result = {
-        version: "0.2.3",
+        version: "0.2.4",
         engineAvailable: true,
         projects: [
           {
@@ -150,6 +152,7 @@ export async function demoInvoke<T>(
             name: project.name,
             sourceDir: project.sourceDir,
             includeSubfolders: project.includeSubfolders,
+            preferRaw: project.preferRaw,
             projectPath: project.projectPath,
             photoCount: project.photos.length,
             favoriteCount: project.photos.filter(
@@ -170,6 +173,7 @@ export async function demoInvoke<T>(
         name: String(args.name),
         sourceDir: String(args.sourceDir),
         includeSubfolders: args.includeSubfolders === true,
+        preferRaw: args.preferRaw === true,
         automaticSelectionEnabled: args.automaticSelectionEnabled !== false,
         selectionMode:
           args.selectionMode === "stronger" ? "stronger" : "cautious",

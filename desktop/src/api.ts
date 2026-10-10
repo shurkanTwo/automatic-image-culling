@@ -57,6 +57,7 @@ export const api = {
     includeSubfolders: boolean,
     automaticSelectionEnabled = true,
     selectionMode: SelectionMode = "cautious",
+    preferRaw = false,
   ) =>
     call<Project>("create_project", {
       name,
@@ -64,6 +65,7 @@ export const api = {
       includeSubfolders,
       automaticSelectionEnabled,
       selectionMode,
+      preferRaw,
     }),
   openProject: (projectPath: string) =>
     call<Project>("open_project", { projectPath }),

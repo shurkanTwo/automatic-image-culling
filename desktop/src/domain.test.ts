@@ -55,6 +55,7 @@ const project: Project = {
   name: "Trip",
   sourceDir: "/photos",
   includeSubfolders: true,
+  preferRaw: false,
   automaticSelectionEnabled: false,
   selectionMode: "cautious",
   firstPassReady: false,

@@ -52,6 +52,7 @@ impl Fixture {
             suggestion_confidence: None,
             tags: vec![],
             analysis_error: None,
+            raw_companion_retained: false,
         }
     }
     fn add(&self, key: &str) -> Photo {
@@ -59,6 +60,384 @@ impl Fixture {
         self.store.ingest_photo(&self.id, p.clone()).unwrap();
         p
     }
+}
+#[test]
+fn retained_raw_companion_jpegs_preserve_decode_errors_and_clear_unavailable_markers() {
+    for unavailable in [false, true] {
+        let mut f = Fixture::new();
+        f.id = f
+            .store
+            .create_configured(
+                "Retained diagnostics",
+                &f.source,
+                false,
+                false,
+                "cautious",
+                true,
+            )
+            .unwrap()
+            .id;
+        let mut jpeg = f.photo("a");
+        if !unavailable {
+            jpeg.analysis_error = Some("Cannot decode JPEG: truncated image data".into());
+        }
+        f.store.ingest_photo(&f.id, jpeg.clone()).unwrap();
+        f.store
+            .update_photos(
+                &f.id,
+                &[jpeg.id.clone()],
+                &PhotoPatch {
+                    rating: Some(4),
+                    decision: Some("favorite".into()),
+                    reviewed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        if unavailable {
+            f.store.finish_scan(&f.id, &Default::default()).unwrap();
+        }
+        let mut raw = jpeg.clone();
+        raw.id = "bbbbbbbbbbbbbbbbbbbbbbbb".into();
+        raw.path = Path::new(&f.source).join("a.DNG").to_str().unwrap().into();
+        raw.analysis_error = None;
+        fs::write(&raw.path, b"raw original").unwrap();
+        f.store.ingest_photo(&f.id, raw.clone()).unwrap();
+        f.store
+            .finish_scan_with_exclusions(&f.id, &[raw.id].into_iter().collect(), None, &[jpeg.path])
+            .unwrap();
+        let project = f.store.project(&f.id).unwrap();
+        let retained = project.photos.iter().find(|p| p.id == jpeg.id).unwrap();
+        assert_eq!(
+            retained.analysis_error.as_deref(),
+            if unavailable {
+                None
+            } else {
+                Some("Cannot decode JPEG: truncated image data")
+            }
+        );
+        assert_eq!(retained.decision, "favorite");
+        assert_eq!(retained.decision_source, "manual");
+        assert_eq!(retained.rating, 4);
+        assert!(retained.reviewed);
+        assert!(retained.raw_companion_retained);
+    }
+}
+#[test]
+fn retained_raw_companion_jpegs_retire_automatic_choices_but_keep_tags_and_collections() {
+    for (decision, tagged) in [("pass", false), ("favorite", false), ("favorite", true)] {
+        let mut f = Fixture::new();
+        f.id = f
+            .store
+            .create_configured("Retained choices", &f.source, false, true, "cautious", true)
+            .unwrap()
+            .id;
+        let jpeg = f.add("a");
+        f.store
+            .finish_scan_with_suggestions(
+                &f.id,
+                &[jpeg.id.clone()].into_iter().collect(),
+                Some(&[proposal(&jpeg, decision)]),
+            )
+            .unwrap();
+        if tagged {
+            // Undo can restore automatic provenance together with a preexisting tag list.
+            f.store
+                .update_photos(
+                    &f.id,
+                    &[jpeg.id.clone()],
+                    &PhotoPatch {
+                        tags: Some(vec!["Album".into()]),
+                        decision_source: Some("automatic".into()),
+                        decision_touched: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+        } else {
+            let collection = f.store.create_collection(&f.id, "Album").unwrap();
+            f.store
+                .update_collection(&f.id, &collection.id, None, Some(vec![jpeg.id.clone()]))
+                .unwrap();
+        }
+        let prior = f.store.project(&f.id).unwrap();
+        assert_eq!(prior.photos[0].decision_source, "automatic");
+        assert_eq!(prior.photos[0].decision, decision);
+        let mut raw = jpeg.clone();
+        raw.id = "bbbbbbbbbbbbbbbbbbbbbbbb".into();
+        raw.path = Path::new(&f.source).join("a.DNG").to_str().unwrap().into();
+        fs::write(&raw.path, b"raw original").unwrap();
+        f.store.ingest_photo(&f.id, raw.clone()).unwrap();
+        f.store
+            .finish_scan_with_exclusions(
+                &f.id,
+                &[raw.id.clone()].into_iter().collect(),
+                Some(&[proposal(&raw, "favorite")]),
+                &[jpeg.path],
+            )
+            .unwrap();
+        f.store.apply_cached_first_pass(&f.id, "cautious").unwrap();
+        let project = f.store.project(&f.id).unwrap();
+        let retained = project.photos.iter().find(|p| p.id == jpeg.id).unwrap();
+        assert_eq!(retained.decision, "undecided");
+        assert_eq!(retained.decision_source, "manual");
+        assert!(!retained.decision_touched);
+        assert!(retained.suggested_decision.is_none());
+        assert!(retained.raw_companion_retained);
+        if tagged {
+            assert_eq!(retained.tags, vec!["Album"]);
+        } else {
+            assert_eq!(project.collections[0].photo_ids, vec![jpeg.id]);
+        }
+    }
+}
+#[test]
+fn preferred_raw_replaces_only_untouched_jpegs_and_preserves_review() {
+    let mut f = Fixture::new();
+    f.id = f
+        .store
+        .create_configured("Pairs", &f.source, false, true, "cautious", true)
+        .unwrap()
+        .id;
+    let mut jpegs = Vec::new();
+    let mut raws = Vec::new();
+    for (index, key) in ["a", "b", "c", "d", "e", "f"].into_iter().enumerate() {
+        let jpeg = f.add(key);
+        let mut raw = jpeg.clone();
+        raw.id = format!("{:024x}", index + 1);
+        raw.path = Path::new(&f.source)
+            .join(format!("{key}.DNG"))
+            .to_str()
+            .unwrap()
+            .into();
+        fs::write(&raw.path, b"raw original").unwrap();
+        f.store.ingest_photo(&f.id, raw.clone()).unwrap();
+        jpegs.push(jpeg);
+        raws.push(raw);
+    }
+    for (index, patch) in [
+        (
+            1,
+            PhotoPatch {
+                decision: Some("undecided".into()),
+                reviewed: Some(false),
+                ..Default::default()
+            },
+        ),
+        (
+            2,
+            PhotoPatch {
+                rating: Some(0),
+                ..Default::default()
+            },
+        ),
+        (
+            3,
+            PhotoPatch {
+                tags: Some(vec!["Album".into()]),
+                ..Default::default()
+            },
+        ),
+        (
+            4,
+            PhotoPatch {
+                reviewed: Some(true),
+                ..Default::default()
+            },
+        ),
+    ] {
+        f.store
+            .update_photos(&f.id, &[jpegs[index].id.clone()], &patch)
+            .unwrap();
+    }
+    let collection = f.store.create_collection(&f.id, "Collection").unwrap();
+    f.store
+        .update_collection(&f.id, &collection.id, None, Some(vec![jpegs[5].id.clone()]))
+        .unwrap();
+    f.store
+        .ingest_groups(
+            &f.id,
+            vec![Group {
+                id: "raw-group".into(),
+                label: "RAWs".into(),
+                photo_ids: raws.iter().map(|p| p.id.clone()).collect(),
+                recommended_photo_ids: vec![raws[0].id.clone()],
+            }],
+        )
+        .unwrap();
+    let seen = raws.iter().map(|p| p.id.clone()).collect();
+    let excluded: Vec<_> = jpegs.iter().map(|p| p.path.clone()).collect();
+    f.store
+        .finish_scan_with_exclusions(&f.id, &seen, None, &excluded)
+        .unwrap();
+    let project = f.store.project(&f.id).unwrap();
+    assert_eq!(project.photos.len(), 11);
+    assert!(!project.photos.iter().any(|p| p.id == jpegs[0].id));
+    for jpeg in &jpegs[1..] {
+        let retained = project.photos.iter().find(|p| p.id == jpeg.id).unwrap();
+        assert!(retained.analysis_error.is_none());
+        assert!(retained.raw_companion_retained);
+        assert!(retained
+            .hints
+            .iter()
+            .any(|h| h == "Matching RAW preferred; JPEG retained to preserve your review"));
+        assert!(retained.group_id.is_none());
+    }
+    assert!(
+        project
+            .photos
+            .iter()
+            .find(|p| p.id == jpegs[1].id)
+            .unwrap()
+            .decision_touched
+    );
+    assert!(
+        project
+            .photos
+            .iter()
+            .find(|p| p.id == jpegs[2].id)
+            .unwrap()
+            .rating_touched
+    );
+    assert_eq!(
+        project
+            .photos
+            .iter()
+            .find(|p| p.id == jpegs[3].id)
+            .unwrap()
+            .tags,
+        vec!["Album"]
+    );
+    assert!(
+        project
+            .photos
+            .iter()
+            .find(|p| p.id == jpegs[4].id)
+            .unwrap()
+            .reviewed
+    );
+    assert_eq!(project.collections[0].photo_ids, vec![jpegs[5].id.clone()]);
+    for jpeg in &jpegs {
+        assert_eq!(fs::read(&jpeg.path).unwrap(), b"original bytes untouched");
+    }
+}
+#[test]
+fn raw_exclusion_matching_uses_unicode_casefold_and_restores_jpeg_on_fresh_import() {
+    for (jpeg_stem, raw_stem) in [("Straße", "STRASSE"), ("ΟΣ", "ος")] {
+        let mut f = Fixture::new();
+        f.id = f
+            .store
+            .create_configured("Unicode pairs", &f.source, false, false, "cautious", true)
+            .unwrap()
+            .id;
+        let mut jpeg = f.photo(jpeg_stem);
+        jpeg.id = "aaaaaaaaaaaaaaaaaaaaaaaa".into();
+        f.store.ingest_photo(&f.id, jpeg.clone()).unwrap();
+        f.store
+            .update_photos(
+                &f.id,
+                &[jpeg.id.clone()],
+                &PhotoPatch {
+                    reviewed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut raw = jpeg.clone();
+        raw.id = "bbbbbbbbbbbbbbbbbbbbbbbb".into();
+        raw.path = Path::new(&f.source)
+            .join(format!("{raw_stem}.DNG"))
+            .to_str()
+            .unwrap()
+            .into();
+        fs::write(&raw.path, b"raw original").unwrap();
+        f.store.ingest_photo(&f.id, raw.clone()).unwrap();
+        f.store
+            .finish_scan_with_exclusions(
+                &f.id,
+                &[raw.id].into_iter().collect(),
+                None,
+                &[jpeg.path.clone()],
+            )
+            .unwrap();
+        assert!(
+            f.store
+                .project(&f.id)
+                .unwrap()
+                .photos
+                .iter()
+                .find(|p| p.id == jpeg.id)
+                .unwrap()
+                .raw_companion_retained
+        );
+        f.store.ingest_photo(&f.id, jpeg.clone()).unwrap();
+        let reimported = f
+            .store
+            .project(&f.id)
+            .unwrap()
+            .photos
+            .into_iter()
+            .find(|p| p.id == jpeg.id)
+            .unwrap();
+        assert!(!reimported.raw_companion_retained);
+        assert!(!reimported
+            .hints
+            .iter()
+            .any(|hint| hint.contains("JPEG retained")));
+        assert!(reimported.reviewed);
+    }
+}
+#[test]
+fn raw_preference_is_saved_and_legacy_projects_keep_all_formats() {
+    let f = Fixture::new();
+    assert!(!f.store.project(&f.id).unwrap().prefer_raw);
+    for prefer_raw in [false, true] {
+        let created = f
+            .store
+            .create_configured(
+                "RAW preference",
+                &f.source,
+                true,
+                false,
+                "cautious",
+                prefer_raw,
+            )
+            .unwrap();
+        let restarted = Store::new(f.temp.path().join("appdata")).unwrap();
+        assert_eq!(
+            restarted.open(&created.project_path).unwrap().prefer_raw,
+            prefer_raw
+        );
+        let summary = restarted
+            .summaries()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id == created.id)
+            .unwrap();
+        assert_eq!(summary.prefer_raw, prefer_raw);
+        assert_eq!(
+            serde_json::to_value(&created).unwrap()["preferRaw"],
+            prefer_raw
+        );
+    }
+    let project = f.store.project(&f.id).unwrap();
+    let mut metadata = serde_json::to_value(&project).unwrap();
+    metadata.as_object_mut().unwrap().remove("preferRaw");
+    f.store
+        .connection(&f.id)
+        .unwrap()
+        .execute(
+            "UPDATE meta SET data=?1 WHERE singleton=1",
+            [serde_json::to_string(&metadata).unwrap()],
+        )
+        .unwrap();
+    assert!(
+        !Store::new(f.temp.path().join("appdata"))
+            .unwrap()
+            .open(&project.project_path)
+            .unwrap()
+            .prefer_raw
+    );
 }
 #[test]
 fn folder_scope_is_persisted_and_preserved_when_reopening() {

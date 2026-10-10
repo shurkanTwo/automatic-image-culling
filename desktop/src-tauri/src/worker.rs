@@ -136,7 +136,7 @@ impl Engine {
                 v["success"] == true
                     && v["version"] == env!("CARGO_PKG_VERSION")
                     && v["checks"].as_array().is_some_and(|checks| {
-                        ["folder-scope", "automatic-selection"]
+                        ["folder-scope", "automatic-selection", "raw-jpeg-pairs"]
                             .iter()
                             .all(|required| {
                                 checks.iter().any(|check| check.as_str() == Some(required))
@@ -171,6 +171,7 @@ struct ScanSummary {
     failed: u64,
     seen: HashSet<String>,
     suggestions: Option<Vec<Suggestion>>,
+    exclusions: Vec<String>,
 }
 struct Job {
     id: String,
@@ -262,6 +263,9 @@ impl Workers {
         if !project.include_subfolders {
             command.arg("--no-subfolders");
         }
+        if project.prefer_raw {
+            command.arg("--prefer-raw");
+        }
         let mut child = ManagedChild::spawn(&mut command)
             .map_err(|e| format!("Cannot start analysis engine: {e}"))?;
         let stdout = child.stdout.take().ok_or("Engine stdout unavailable")?;
@@ -315,10 +319,11 @@ impl Workers {
             } else {
                 match (result, status) {
                     (Ok(summary), Ok(s)) if s.success() => {
-                        match workers.store.finish_scan_with_suggestions(
+                        match workers.store.finish_scan_with_exclusions(
                             &project_id,
                             &summary.seen,
                             summary.suggestions.as_deref(),
+                            &summary.exclusions,
                         ) {
                             Ok(()) => ("complete", None),
                             Err(error) => ("error", Some(error)),
@@ -383,6 +388,7 @@ impl Workers {
         let mut complete = false;
         let mut seen = HashSet::new();
         let mut suggestions = None;
+        let mut exclusions = None;
         let mut grouped = false;
         let mut last_update = Instant::now() - Duration::from_secs(1);
         loop {
@@ -397,6 +403,7 @@ impl Workers {
                     failed,
                     seen,
                     suggestions,
+                    exclusions: exclusions.unwrap_or_default(),
                 });
             }
             if line.trim().is_empty() {
@@ -420,7 +427,7 @@ impl Workers {
                     phase = Some("scan");
                 }
                 "photo" => {
-                    if grouped || suggestions.is_some() {
+                    if grouped || suggestions.is_some() || exclusions.is_some() {
                         return Err("Engine sent photos after grouping".into());
                     }
                     let photo: Photo = serde_json::from_value(
@@ -450,6 +457,22 @@ impl Workers {
                     .map_err(|e| e.to_string())?;
                     self.store.ingest_groups(project_id, groups)?;
                     phase = Some("grouping");
+                }
+                "excluded" => {
+                    if grouped || suggestions.is_some() || exclusions.is_some() {
+                        return Err("Engine sent duplicate or misplaced RAW exclusions".into());
+                    }
+                    let paths: Vec<String> = serde_json::from_value(
+                        record
+                            .get("paths")
+                            .cloned()
+                            .ok_or("Missing excluded paths")?,
+                    )
+                    .map_err(|e| format!("Invalid excluded paths: {e}"))?;
+                    if paths.iter().collect::<HashSet<_>>().len() != paths.len() {
+                        return Err("Engine sent duplicate excluded paths".into());
+                    }
+                    exclusions = Some(paths);
                 }
                 "suggestions" => {
                     if !grouped || suggestions.is_some() {
@@ -521,6 +544,7 @@ impl Workers {
             failed,
             seen,
             suggestions,
+            exclusions: exclusions.unwrap_or_default(),
         })
     }
     pub fn automatic_first_pass(

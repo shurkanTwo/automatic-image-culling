@@ -139,6 +139,8 @@ def smoke(executable: Path, report: Path, version: str, project_ids=()) -> dict:
         for project_id, scope in project_ids:
             project = summaries[project_id]
             assert project["includeSubfolders"] is scope, project
+            if tuple(map(int, version.split("."))) >= (0, 2, 4):
+                assert project["preferRaw"] is False, project
             assert project["photoCount"] == 1 and project["favoriteCount"] == 1, project
     print(f"Verified native app {version}: {report.name}", flush=True)
     return data
@@ -834,6 +836,7 @@ def main() -> None:
         "missingBundledPluginRestored": True,
         "filesOutsideBundledResourcesPreserved": True,
         "reviewTagsScopeCollectionsDatabaseAndCachePreserved": True,
+        "legacyRawPreferenceDefaultsToSeparatePhotos": True,
         "originalPhotographBytesPreserved": True,
         "projects": [
             {"id": project_id, "includeSubfolders": scope}

@@ -2,13 +2,13 @@
 
 A local desktop companion for the first pass through a trip, event, or everyday photo collection. Compare similar photographs, choose favorites, and build purpose-specific collections before returning to Lightroom Classic.
 
-Version 0.2.3 adds an automatic first pass with Cautious and Stronger modes, Lightroom Reject flag export, direct Windows updates, and automatic loading as you scroll through the photo grid. The saved choice to include subfolders is reused for rescans. Originals are read-only: Favorite and Discard record your choices without moving, deleting, or rewriting photographs.
+Version 0.2.4 adds an optional RAW preference for camera RAW + JPEG pairs. The app also offers an automatic first pass with Cautious and Stronger modes, Lightroom Reject flag export, direct Windows updates, and automatic loading as you scroll through the photo grid. Import preferences are saved for rescans. Originals are read-only: Favorite and Discard record your choices without moving, deleting, or rewriting photographs.
 
 ## Windows test package
 
-The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.3-Windows-x64` artifact.
+The **Build Photo Select desktop** GitHub Actions workflow produces an x64 installer, a portable ZIP, a Lightroom plugin ZIP, and `START-HERE.txt`. Download its `Photo-Select-0.2.4-Windows-x64` artifact.
 
-Run `Photo-Select-0.2.3-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
+Run `Photo-Select-0.2.4-Windows-x64-Setup.exe`. Python, Rust, and Node are bundled or unnecessary at runtime. The installer installs WebView2 if it is missing; that first installation may need an internet connection. This test build is unsigned.
 
 To update an installed version, close Photo Select and run the newer Setup file. Setup keeps the existing installation location and updates the app directly, preserving projects, previews, review choices, and import settings. There is no need to uninstall the previous version. Running the same installer again repairs that version. If the app or its analysis worker is still running, interactive Setup asks you to close it and retry; silent Setup stops with an error. Setup never forces the app to close with unsaved reviews.
 
@@ -32,6 +32,12 @@ JPEG, PNG, TIFF, WebP, HEIF/HEIC, and LibRaw-supported RAW formats are supported
 
 If originals are unavailable during a successful rescan, their cached previews, full-resolution details, and review choices remain available. They receive an availability note and are removed from current analysis suggestions. Reviewed selections can still be exported while the source drive is offline. An unreadable folder stops the rescan with an error instead of reporting a misleading empty result.
 
+When a camera produces files such as `DSCF0001.RAF` and `DSCF0001.JPG`, enable **Prefer RAW when a matching JPEG exists** during import to review the RAW once. The option defaults off. Pairing uses the same filename stem, ignoring case, in the same folder. JPEG-only shots, edited filenames and photos in different folders remain included. A failed RAW preview keeps the matching JPEG available, together with the RAW error. Skipped JPEGs stay on disk and receive no discard rating.
+
+The preference is saved per project and reused on rescans. Create a new project to change it. If a matching RAW appears on a later rescan, an untouched JPEG companion leaves that project's review grid; a manually reviewed, rated, tagged or collected JPEG remains with a note explaining why. Its original file and saved choices stay intact. Lightroom exports refer to the selected original RAW paths.
+
+Lightroom Classic's **Preferences → General → Treat JPEG files next to raw files as separate photos** controls a similar choice. When deselected, a paired JPEG is treated as a companion to the RAW; when selected, both appear as separate catalog photos. See [Adobe's import preferences](https://helpx.adobe.com/lightroom-classic/desktop/import-photos/file-import-formats-settings.html). Photo Select's setting is independent of Lightroom's preference.
+
 ## Lightroom Classic handoff
 
 Use **Lightroom connection** in the app to locate `PhotoSelect.lrplugin`. Add that folder through Lightroom Classic’s **File → Plug-in Manager**. The separate plugin ZIP contains the same folder.
@@ -40,7 +46,7 @@ After exporting a selection JSON, run **Library → Plug-in Extras → Import Ph
 
 The import creates or adds to a collection within the `Photo Select` collection set. Favorites become Picks. **Include discards as Lightroom Rejects** is enabled by default in the export dialog; it includes project discards even when they are outside your chosen collection, without adding those extra discards to that collection. The plugin applies actual Reject flags; it never deletes photographs. Only ratings explicitly set in Photo Select are applied; untouched ratings stay unchanged. Tags become additional keywords. Develop settings are preserved. A busy catalog reports an import failure that can be retried; the metadata selection is applied in one transaction.
 
-Use the bundled 0.2.3 plugin for new schema 2 exports. It also accepts old schema 1 exports, preserving their earlier behavior where Pass did not set Reject flags.
+Use the bundled 0.2.4 plugin for new schema 2 exports. It also accepts old schema 1 exports, preserving their earlier behavior where Pass did not set Reject flags.
 
 This is an additive, one-way handoff. Reimporting does not remove collection members or previously applied keywords. Exported Pick/Reject choices overwrite flags for those photos; undecided entries leave existing flags unchanged. Lightroom ratings and edits are not synchronized back to Photo Select. The Lua importer is tested against an SDK test double; the actual Lightroom catalog integration still needs testing in Lightroom Classic.
 
@@ -82,6 +88,8 @@ python -m black --check culling_engine engine_entry.py scripts tests
 python -m ruff check culling_engine engine_entry.py scripts tests
 python -m unittest discover -s tests -v
 python -m culling_engine self-test
+python scripts/check_bundled_raw.py --download-fixture build/fixtures/camera.CR2
+export PHOTO_SELECT_RAW_FIXTURE="$PWD/build/fixtures/camera.CR2"
 cd desktop
 npm test
 npm run build
@@ -91,7 +99,7 @@ cargo test --no-default-features --locked
 cargo test --no-default-features --locked --test engine_integration -- --ignored
 ```
 
-The optional Rust integration test requires `PHOTO_SELECT_PYTHON` for generating test images. It exercises the real worker, automatic favorites/discards, both selection modes, protected manual Undecided choices, clearing automation, corrupt-image isolation, full-resolution details, rescan persistence, Reject export, and unchanged original bytes. Set `PHOTO_SELECT_ENGINE` to test the bundled worker instead of the Python module.
+The optional Rust integration tests use Python to generate test images; set `PHOTO_SELECT_PYTHON` if the interpreter with the engine dependencies is not the default Python. The RAW pairing test also requires `PHOTO_SELECT_RAW_FIXTURE`, as set above. They exercise the real worker, RAW + JPEG preferences and fallback, protected companion reviews, automatic favorites/discards, both selection modes, protected manual Undecided choices, clearing automation, corrupt-image isolation, full-resolution details, rescan persistence, Reject export, and unchanged original bytes. Set `PHOTO_SELECT_ENGINE` to test the bundled worker instead of the Python module.
 
 Windows packaging runs on a native Windows runner. After the checks, run `npm run tauri -- build --bundles nsis` in `desktop`, then `python scripts/collect_windows_package.py` from the repository root. The workflow verifies matching component versions, bundled decoder capabilities, real RAW decoding in Unicode paths, and actual launches of both the portable and installed app. It also checks same-version repair, preserved project data, and safe refusal to replace a running app. When an unexpired earlier build is available on the same branch, it downloads that installer and verifies an actual upgrade in the earlier installation's custom location. The pinned upstream RAW test photograph is downloaded for verification and is not included in the app.
 
@@ -107,10 +115,11 @@ cd desktop/src-tauri
 cargo build --locked
 cd ../..
 xvfb-run -a dbus-run-session -- python scripts/check_native_ui.py \
-  --application desktop/src-tauri/target/debug/photo-select --output build/native-review
+  --application desktop/src-tauri/target/debug/photo-select --output build/native-review \
+  --raw-fixture build/fixtures/camera.CR2
 ```
 
-Keep the development server running for a debug build. The check uses a temporary data directory and synthetic originals; it verifies automatic first-pass choices and manual protection across modes, undo and rescan behavior, Lightroom Reject exports, actual large-grid scrolling, dark controls and unobstructed thumbnail selection, folder-only and recursive scopes across rescans and reopening, rendered previews, stars and favorites, bulk tags, undo, comparison, full-resolution viewing, export, and a focused draft saved on native close.
+Keep the development server running for a debug build. The check uses a temporary data directory, synthetic originals and the pinned RAW fixture. It verifies RAW + JPEG preferences across reopening and rescans, preserved companion reviews, export of original RAW paths, automatic first-pass choices and manual protection across modes, undo and rescan behavior, Lightroom Reject exports, actual large-grid scrolling, dark controls and unobstructed thumbnail selection, folder-only and recursive scopes across rescans and reopening, rendered previews, stars and favorites, bulk tags, undo, comparison, full-resolution viewing, export, and a focused draft saved on native close. Omit `--raw-fixture` to run the other checks alone.
 
 ## Legacy prototype and license
 

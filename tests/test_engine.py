@@ -143,6 +143,7 @@ class EngineTests(unittest.TestCase):
             records,
             [
                 {"type": "scan", "total": 0},
+                {"type": "excluded", "paths": []},
                 {"type": "groups", "groups": []},
                 {"type": "suggestions", "suggestions": []},
                 result,
@@ -666,7 +667,15 @@ class EngineTests(unittest.TestCase):
         records = [json.loads(line) for line in process.stdout.splitlines()]
         self.assertEqual(
             [record["type"] for record in records],
-            ["scan", "photo", "progress", "groups", "suggestions", "complete"],
+            [
+                "scan",
+                "photo",
+                "progress",
+                "excluded",
+                "groups",
+                "suggestions",
+                "complete",
+            ],
         )
         self.assertEqual(records[1]["photo"]["filename"], "友人 Straße.jpg")
 
@@ -749,6 +758,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertIn("folder-scope", result["checks"])
         self.assertIn("automatic-selection", result["checks"])
+        self.assertIn("raw-jpeg-pairs", result["checks"])
 
 
 class GroupingTests(unittest.TestCase):

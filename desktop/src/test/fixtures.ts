@@ -34,6 +34,7 @@ export function testProject(count = 4): Project {
     name: "Review trip",
     sourceDir: "/photos",
     includeSubfolders: true,
+    preferRaw: false,
     automaticSelectionEnabled: false,
     selectionMode: "cautious",
     firstPassReady: false,

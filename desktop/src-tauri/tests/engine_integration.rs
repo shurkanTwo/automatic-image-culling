@@ -13,6 +13,230 @@ use std::{
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "Requires Python engine dependencies and PHOTO_SELECT_RAW_FIXTURE pointing to the pinned Canon CR2 fixture"]
+fn real_raw_preference_replaces_unreviewed_jpegs_but_preserves_review_on_rescan() {
+    let fixture = PathBuf::from(
+        std::env::var("PHOTO_SELECT_RAW_FIXTURE")
+            .expect("Set PHOTO_SELECT_RAW_FIXTURE to the pinned Canon CR2 fixture"),
+    );
+    assert!(fixture.is_file(), "RAW fixture is unavailable");
+    let temporary = TempDir::new().unwrap();
+    let source = temporary.path().join("旅の写真 with spaces");
+    let nested = source.join("別の folder");
+    fs::create_dir_all(&nested).unwrap();
+    let python = std::env::var("PHOTO_SELECT_PYTHON").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    });
+    let write_jpeg = |path: &std::path::Path| {
+        assert!(Command::new(&python).args(["-c", "from PIL import Image; import sys; Image.new('RGB', (600,400), (45,90,180)).save(sys.argv[1])"]).arg(path).status().unwrap().success());
+    };
+    let untouched = source.join("Straße.JPG");
+    let reviewed = source.join("東京の街.JPEG");
+    let edited = source.join("Straße-edited.jpg");
+    let other_folder = nested.join("Straße.jpg");
+    for path in [&untouched, &reviewed, &edited, &other_folder] {
+        write_jpeg(path);
+    }
+    let data_root = temporary.path().join("appdata");
+    let store = Store::new(data_root.clone()).unwrap();
+    let project = store
+        .create_configured(
+            "RAW preference",
+            source.to_str().unwrap(),
+            true,
+            true,
+            "cautious",
+            true,
+        )
+        .unwrap();
+    let scan = |store: &Store, id: &str| {
+        let workers = Workers::new(
+            store.clone(),
+            Engine::discover(PathBuf::from("/no-bundled-engine")),
+            Arc::new(|_, _| {}),
+        );
+        workers.start(id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while workers.is_running(id) {
+            assert!(Instant::now() < deadline, "RAW analysis timed out");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let result = store.project(id).unwrap();
+        assert_eq!(
+            result.import_status, "completed",
+            "{:?}",
+            result.import_error
+        );
+        result
+    };
+    let initial = scan(&store, &project.id);
+    assert_eq!(initial.photos.len(), 4);
+    let jpeg = initial
+        .photos
+        .iter()
+        .find(|p| p.filename == "東京の街.JPEG")
+        .unwrap();
+    let jpeg_id = jpeg.id.clone();
+    store
+        .update_photos(
+            &project.id,
+            &[jpeg_id.clone()],
+            &PhotoPatch {
+                rating: Some(4),
+                decision: Some("favorite".into()),
+                reviewed: Some(true),
+                tags: Some(vec!["Album".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let collection = store.create_collection(&project.id, "Album").unwrap();
+    store
+        .update_collection(
+            &project.id,
+            &collection.id,
+            None,
+            Some(vec![jpeg_id.clone()]),
+        )
+        .unwrap();
+    let raw = source.join("STRASSE.CR2");
+    let reviewed_raw = source.join("東京の街.CR2");
+    for path in [&raw, &reviewed_raw] {
+        fs::copy(&fixture, path).unwrap();
+    }
+    let broken_raw = source.join("broken.CR2");
+    fs::write(&broken_raw, b"invalid RAW").unwrap();
+    let fallback = source.join("broken.JPG");
+    write_jpeg(&fallback);
+    let originals: Vec<_> = [
+        &untouched,
+        &reviewed,
+        &edited,
+        &other_folder,
+        &raw,
+        &reviewed_raw,
+        &broken_raw,
+        &fallback,
+    ]
+    .into_iter()
+    .map(|path| (path.clone(), fs::read(path).unwrap()))
+    .collect();
+    let reopened = Store::new(data_root).unwrap();
+    assert!(reopened.open(&project.project_path).unwrap().prefer_raw);
+    let preferred = scan(&reopened, &project.id);
+    assert!(preferred.first_pass_ready);
+    assert_eq!(preferred.photos.len(), 7);
+    assert!(!preferred
+        .photos
+        .iter()
+        .any(|p| PathBuf::from(&p.path) == untouched));
+    let retained = preferred.photos.iter().find(|p| p.id == jpeg_id).unwrap();
+    assert!(retained.raw_companion_retained);
+    assert!(retained.analysis_error.is_none());
+    assert!(retained
+        .hints
+        .iter()
+        .any(|h| h == "Matching RAW preferred; JPEG retained to preserve your review"));
+    assert_eq!(retained.rating, 4);
+    assert_eq!(retained.decision, "favorite");
+    assert_eq!(retained.tags, vec!["Album"]);
+    assert!(retained.reviewed);
+    assert_eq!(preferred.collections[0].photo_ids, vec![jpeg_id.clone()]);
+    assert!(preferred
+        .photos
+        .iter()
+        .find(|p| p.filename == "broken.CR2")
+        .unwrap()
+        .analysis_error
+        .is_some());
+    assert!(preferred
+        .photos
+        .iter()
+        .find(|p| p.filename == "broken.JPG")
+        .unwrap()
+        .analysis_error
+        .is_none());
+    assert!(preferred
+        .photos
+        .iter()
+        .any(|p| PathBuf::from(&p.path) == other_folder));
+    assert!(preferred
+        .photos
+        .iter()
+        .any(|p| PathBuf::from(&p.path) == edited));
+    // Retained JPEGs have no new suggestion, but do not invalidate fresh RAW suggestions.
+    reopened
+        .apply_cached_first_pass(&project.id, "cautious")
+        .unwrap();
+    let raw_photo = preferred
+        .photos
+        .iter()
+        .find(|p| p.filename == "STRASSE.CR2")
+        .unwrap();
+    reopened
+        .update_photos(
+            &project.id,
+            &[raw_photo.id.clone()],
+            &PhotoPatch {
+                decision: Some("favorite".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let manifest = temporary.path().join("selection.json");
+    reopened
+        .export(&project.id, manifest.to_str().unwrap(), None, true)
+        .unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    assert!(exported["photos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["path"] == raw_photo.path));
+    let keep_all = reopened
+        .create_configured(
+            "Keep both formats",
+            source.to_str().unwrap(),
+            true,
+            false,
+            "cautious",
+            false,
+        )
+        .unwrap();
+    let all = scan(&reopened, &keep_all.id);
+    assert_eq!(all.photos.len(), 8);
+    assert!(all
+        .photos
+        .iter()
+        .any(|p| PathBuf::from(&p.path) == untouched));
+    assert!(all.photos.iter().all(|p| !p.raw_companion_retained));
+    for (path, bytes) in originals {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+    // Missing originals retain their existing unavailable status rather than a pairing claim.
+    fs::remove_file(&reviewed).unwrap();
+    let missing = scan(&reopened, &project.id);
+    let retained = missing.photos.iter().find(|p| p.id == jpeg_id).unwrap();
+    assert!(!retained.raw_companion_retained);
+    assert!(!retained
+        .hints
+        .iter()
+        .any(|hint| hint.contains("JPEG retained")));
+    assert!(retained
+        .analysis_error
+        .as_ref()
+        .unwrap()
+        .contains("unavailable"));
+    assert_eq!(retained.rating, 4);
+    assert_eq!(retained.decision, "favorite");
+}
+
+#[test]
 #[ignore = "Requires installed Python engine dependencies; set PHOTO_SELECT_PYTHON to their interpreter"]
 fn real_engine_folder_scope_survives_reopening_and_rescan() {
     let temporary = TempDir::new().unwrap();
@@ -281,6 +505,7 @@ Image.new('RGB', (1200, 800), (0, 0, 0)).save(source / 'blank.jpg')
             false,
             true,
             "cautious",
+            false,
         )
         .unwrap();
     let engine = Engine::discover(PathBuf::from("/no-bundled-engine"));

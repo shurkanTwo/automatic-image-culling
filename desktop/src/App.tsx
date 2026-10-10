@@ -141,6 +141,7 @@ export default function App() {
   const [importAction, setImportAction] = useState(false);
   const [importDirectory, setImportDirectory] = useState<string | null>(null);
   const [includeSubfolders, setIncludeSubfolders] = useState(false);
+  const [preferRaw, setPreferRaw] = useState(false);
   const [automaticSelectionEnabled, setAutomaticSelectionEnabled] =
     useState(true);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("cautious");
@@ -527,6 +528,7 @@ export default function App() {
       const directory = await chooseFolder();
       if (!directory) return;
       setIncludeSubfolders(false);
+      setPreferRaw(false);
       setAutomaticSelectionEnabled(true);
       setSelectionMode("cautious");
       setCreateError(null);
@@ -555,6 +557,7 @@ export default function App() {
         includeSubfolders,
         automaticSelectionEnabled,
         selectionMode,
+        preferRaw,
       );
       created = true;
       load(value);
@@ -861,7 +864,7 @@ export default function App() {
           </main>
           <footer className="landing-footer">
             Photo Select <span>For the photographs that matter.</span>
-            <span>v{state?.version ?? "0.2.3"}</span>
+            <span>v{state?.version ?? "0.2.4"}</span>
           </footer>
         </>
       ) : (
@@ -886,6 +889,14 @@ export default function App() {
                 {project.includeSubfolders
                   ? "Includes subfolders"
                   : "Folder only"}
+              </small>
+              <small
+                className="project-import-scope"
+                title="Create a new project to change folder scope or RAW preference."
+              >
+                {project.preferRaw
+                  ? "RAW preferred for pairs"
+                  : "RAW + JPEG separately"}
               </small>
             </div>
             <nav aria-label="Library filters" className="library-nav">
@@ -1538,7 +1549,6 @@ export default function App() {
               <FolderPlus size={24} />
             </div>
             <h2 id="import-title">Import photographs</h2>
-            <p>Choose which photographs to include in this project.</p>
             <div className="import-folder" id="import-folder">
               <strong>Photo folder</strong>
               <span>{importDirectory}</span>
@@ -1555,9 +1565,25 @@ export default function App() {
             </label>
             <p id="import-scope">
               {includeSubfolders
-                ? "Import photographs in this folder and all of its subfolders."
+                ? "Include this folder and all of its subfolders."
                 : "Import only photographs directly in this folder. Subfolders are skipped."}{" "}
-              Future rescans use this same scope.
+              Rescans keep this scope.
+            </p>
+            <label className="import-subfolders">
+              <input
+                type="checkbox"
+                checked={preferRaw}
+                disabled={creatingProject}
+                aria-describedby="import-raw-preference"
+                onChange={(event) => setPreferRaw(event.target.checked)}
+              />
+              Prefer RAW when a matching JPEG exists
+            </label>
+            <p id="import-raw-preference">
+              Same filename excluding the extension, in the same folder.
+              JPEG-only photos remain included. If a RAW cannot be read, its
+              JPEG stays as a fallback. Originals stay untouched; rescans keep
+              this preference.
             </p>
             <label className="import-subfolders">
               <input
@@ -1572,9 +1598,8 @@ export default function App() {
               Automatic first pass
             </label>
             <p id="import-first-pass">
-              After analysis, preselect technically strong photographs and mark
-              obvious problems as discards. Review these choices; originals and
-              your star ratings stay untouched.
+              Preselect favorites and mark obvious discards after analysis.
+              Review the choices; star ratings stay untouched.
             </p>
             <label className="first-pass-mode-label">
               Selection mode
@@ -1590,9 +1615,7 @@ export default function App() {
                 <option value="stronger">Stronger — a tighter shortlist</option>
               </select>
             </label>
-            <p className="quiet-note">
-              Technical quality cannot decide which moments matter to you.
-            </p>
+            <p className="quiet-note">You choose which moments matter.</p>
             {createError && (
               <p className="inline-error" role="alert">
                 {createError}

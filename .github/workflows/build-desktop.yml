@@ -58,6 +58,12 @@ jobs:
         run: |
           npm test
           npm run build
+      - name: Fetch pinned RAW integration fixture
+        shell: pwsh
+        run: |
+          python scripts/check_bundled_raw.py --download-fixture build/fixtures/camera.CR2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PHOTO_SELECT_RAW_FIXTURE=$((Resolve-Path build/fixtures/camera.CR2).Path)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Rust persistence and engine integration tests
         working-directory: desktop/src-tauri
         shell: pwsh
@@ -90,7 +96,7 @@ jobs:
         id: package
         run: python scripts/collect_windows_package.py
       - name: Verify bundled RAW decoding and Unicode paths
-        run: python scripts/check_bundled_raw.py --worker desktop/src-tauri/resources/engine/photo-select-engine.exe --report artifacts/windows/raw-report.json
+        run: python scripts/check_bundled_raw.py --worker desktop/src-tauri/resources/engine/photo-select-engine.exe --fixture build/fixtures/camera.CR2 --report artifacts/windows/raw-report.json
       - name: Fetch verified older same-branch Windows package
         env:
           GH_TOKEN: ${{ github.token }}

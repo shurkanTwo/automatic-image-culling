@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -159,6 +160,112 @@ def make_photos(source: Path) -> dict[Path, tuple[str, int]]:
         for path in source.rglob("*")
         if path.is_file()
     }
+
+
+def raw_jpeg_journey(
+    view: NativeWebview, source: Path, fixture: Path, output: Path
+) -> None:
+    """Check real RAW pairing across IPC, rescans, review retention and export."""
+    source.mkdir()
+    for name in ("paired.jpg", "manual.jpg", "JPEG only.jpg"):
+        Image.new("RGB", (200, 150), (90, 145, 210)).save(source / name)
+    project = view.invoke(
+        "create_project",
+        {
+            "name": "RAW preferred review",
+            "sourceDir": str(source),
+            "preferRaw": True,
+            "automaticSelectionEnabled": False,
+        },
+    )
+    args = {"projectId": project["id"]}
+
+    def import_project(arguments):
+        view.invoke("start_import", arguments)
+
+        def completed():
+            current = view.invoke("get_project", arguments)
+            if current["importStatus"] == "failed":
+                raise RuntimeError(current["importError"])
+            return current if current["importStatus"] == "completed" else None
+
+        return view.wait(completed)
+
+    project = import_project(args)
+    if not project["preferRaw"] or len(project["photos"]) != 3:
+        raise RuntimeError("RAW preference hid JPEG-only shots")
+    manual = next(
+        photo for photo in project["photos"] if photo["filename"] == "manual.jpg"
+    )
+    view.invoke(
+        "update_photo",
+        {**args, "photoId": manual["id"], "patch": {"rating": 5, "tags": ["family"]}},
+    )
+    collection = view.invoke("create_collection", {**args, "name": "Saved JPEG review"})
+    view.invoke(
+        "update_collection",
+        {**args, "collectionId": collection["id"], "photoIds": [manual["id"]]},
+    )
+    raw_paths = {source / "paired.CR2", source / "manual.CR2"}
+    for path in raw_paths:
+        shutil.copyfile(fixture, path)
+    fingerprints = {
+        path: (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        for path in source.iterdir()
+    }
+    project = import_project(args)
+    filenames = {photo["filename"] for photo in project["photos"]}
+    if filenames != {"paired.CR2", "manual.CR2", "manual.jpg", "JPEG only.jpg"}:
+        raise RuntimeError(f"RAW rescan kept wrong photos: {filenames}")
+    retained = next(photo for photo in project["photos"] if photo["id"] == manual["id"])
+    if (
+        not retained["rawCompanionRetained"]
+        or retained["rating"] != 5
+        or retained["tags"] != ["family"]
+        or retained["analysisError"]
+        or project["collections"][0]["photoIds"] != [manual["id"]]
+    ):
+        raise RuntimeError("RAW rescan lost the existing JPEG review")
+    view.invoke("automatic_first_pass", {**args, "selectionMode": "cautious"})
+    view.invoke("clear_automatic_selection", args)
+    for photo in project["photos"]:
+        if Path(photo["path"]) in raw_paths:
+            view.invoke(
+                "update_photo",
+                {**args, "photoId": photo["id"], "patch": {"decision": "favorite"}},
+            )
+    exported = output / "raw-preferred-selection.json"
+    view.invoke(
+        "export_selection",
+        {**args, "destination": str(exported), "onlyFavorites": True},
+    )
+    if {
+        Path(photo["path"]) for photo in json.loads(exported.read_text())["photos"]
+    } != raw_paths:
+        raise RuntimeError(
+            "RAW preference exported a JPEG companion instead of the RAW"
+        )
+    reopened = view.invoke("open_project", {"projectPath": project["projectPath"]})
+    if not reopened["preferRaw"] or len(import_project(args)["photos"]) != 4:
+        raise RuntimeError("Reopen/rescan lost the RAW preference or saved JPEG review")
+    separate = view.invoke(
+        "create_project",
+        {
+            "name": "RAW and JPEG separately",
+            "sourceDir": str(source),
+            "preferRaw": False,
+            "automaticSelectionEnabled": False,
+        },
+    )
+    separate = import_project({"projectId": separate["id"]})
+    if separate["preferRaw"] or len(separate["photos"]) != 5:
+        raise RuntimeError("Disabling RAW preference did not import both formats")
+    for path, fingerprint in fingerprints.items():
+        if (
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            path.stat().st_mtime_ns,
+        ) != fingerprint:
+            raise RuntimeError("RAW pairing changed an original")
 
 
 def automatic_selection_journey(
@@ -538,6 +645,7 @@ def main() -> None:
     parser.add_argument("--application", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--port", type=int, default=4444)
+    parser.add_argument("--raw-fixture", type=Path)
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -552,9 +660,26 @@ def main() -> None:
             view.wait(
                 lambda: view.execute("return Boolean(window.__TAURI_INTERNALS__);")
             )
+            if args.raw_fixture:
+                raw_jpeg_journey(
+                    view,
+                    workdir / "RAW and JPEG photographs",
+                    args.raw_fixture.resolve(strict=True),
+                    output,
+                )
             automatic_selection_journey(view, workdir / "automatic photos", output)
             automatic_grid_journey(view, workdir / "grid photos")
             report = review_journey(view, source, output)
+            if args.raw_fixture:
+                report.update(
+                    {
+                        "rawPreferenceToggle": True,
+                        "rawPreferencePreservedOnReopenAndRescan": True,
+                        "rawCompanionReviewPreserved": True,
+                        "rawOriginalLightroomExport": True,
+                        "rawPairOriginalsUnchanged": True,
+                    }
+                )
         except Exception:
             try:
                 (output / "native-failure.json").write_text(

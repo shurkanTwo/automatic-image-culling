@@ -154,25 +154,32 @@ fn probes_validate_the_protocol_drain_verbose_output_and_stop_hangs() {
             false,
         ),
         (
-            r#"head -c 131072 /dev/zero >&2; printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["folder-scope","automatic-selection"]}'"#,
+            r#"head -c 131072 /dev/zero >&2; printf '%s\n' '{"type":"self-test","success":true,"version":"CURRENT","checks":["folder-scope","automatic-selection","raw-jpeg-pairs"]}'"#,
             true,
         ),
         (
-            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.2","checks":["folder-scope","automatic-selection"]}'"#,
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.2","checks":["folder-scope","automatic-selection","raw-jpeg-pairs"]}'"#,
             false,
         ),
         (
-            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["folder-scope"]}'"#,
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"CURRENT","checks":["folder-scope"]}'"#,
             false,
         ),
         (
-            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"0.2.3","checks":["automatic-selection"]}'"#,
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"CURRENT","checks":["automatic-selection"]}'"#,
+            false,
+        ),
+        (
+            r#"printf '%s\n' '{"type":"self-test","success":true,"version":"CURRENT","checks":["folder-scope","automatic-selection"]}'"#,
             false,
         ),
         ("exec sleep 60", false),
     ] {
         let temp = TempDir::new().unwrap();
-        let engine = fake_engine(temp.path(), body);
+        let engine = fake_engine(
+            temp.path(),
+            &body.replace("CURRENT", env!("CARGO_PKG_VERSION")),
+        );
         let started = Instant::now();
         assert_eq!(engine.probe(Duration::from_millis(150)), expected);
         assert!(started.elapsed() < Duration::from_secs(2));
@@ -301,6 +308,9 @@ fn detail_timeout_prevents_overlapping_rescan_and_releases_its_reservation() {
 }
 
 fn first_pass_fixture() -> (TempDir, Store, String, serde_json::Value) {
+    first_pass_fixture_with_raw(false)
+}
+fn first_pass_fixture_with_raw(prefer_raw: bool) -> (TempDir, Store, String, serde_json::Value) {
     let temp = TempDir::new().unwrap();
     let source = temp.path().join("photos");
     fs::create_dir(&source).unwrap();
@@ -314,12 +324,136 @@ fn first_pass_fixture() -> (TempDir, Store, String, serde_json::Value) {
             false,
             true,
             "cautious",
+            prefer_raw,
         )
         .unwrap();
     let preview = store.cache(&p.id).join("a.jpg");
     fs::write(&preview, b"preview").unwrap();
     let photo = serde_json::json!({"id":"aaaaaaaaaaaaaaaaaaaaaaaa","path":original,"filename":"a.jpg","previewPath":preview,"thumbnailPath":preview,"captureTime":"2026-01-01T10:00:00Z","width":6000,"height":4000,"qualityScore":90.0});
     (temp, store, p.id, photo)
+}
+#[test]
+fn raw_exclusions_commit_only_after_clean_success_and_never_modify_originals() {
+    for ending in [
+        "exit 1",
+        "exec sleep 60",
+        "printf '%s\\n' 'invalid json'",
+        "complete-failed",
+        "complete",
+    ] {
+        let (temp, store, id, jpeg) = first_pass_fixture_with_raw(true);
+        store
+            .ingest_photo(&id, serde_json::from_value(jpeg.clone()).unwrap())
+            .unwrap();
+        let raw_path = temp.path().join("photos/a.DNG");
+        fs::write(&raw_path, b"raw original").unwrap();
+        let mut raw = jpeg.clone();
+        raw["id"] = serde_json::json!("bbbbbbbbbbbbbbbbbbbbbbbb");
+        raw["path"] = serde_json::json!(raw_path);
+        let photo = serde_json::json!({"type":"photo", "photo":raw});
+        let excluded = serde_json::json!({"type":"excluded", "paths":[jpeg["path"]]});
+        let finish = match ending {
+            "complete" => FIRST_PASS_COMPLETE.to_string(),
+            "complete-failed" => format!("{FIRST_PASS_COMPLETE}\nexit 1"),
+            other => other.to_string(),
+        };
+        let worker = Workers::new(store.clone(), fake_engine(temp.path(), &format!("printf '%s\\n' '{{\"type\":\"scan\",\"total\":1}}' '{photo}' '{excluded}' '{{\"type\":\"groups\",\"groups\":[]}}'\n{finish}")), Arc::new(|_, _| {}));
+        worker.start(&id).unwrap();
+        if ending == "exec sleep 60" {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while store.project(&id).unwrap().photos.len() != 2 {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(10));
+            }
+            worker.cancel(&id).unwrap();
+        }
+        wait_done(&worker, &id);
+        let result = store.project(&id).unwrap();
+        assert_eq!(
+            result.photos.iter().any(|p| p.filename == "a.jpg"),
+            ending != "complete",
+            "{ending}"
+        );
+        assert_eq!(
+            result.import_status == "completed",
+            ending == "complete",
+            "{:?}",
+            result.import_error
+        );
+        assert_eq!(
+            fs::read(jpeg["path"].as_str().unwrap()).unwrap(),
+            b"original untouched"
+        );
+        assert_eq!(fs::read(raw_path).unwrap(), b"raw original");
+    }
+}
+#[test]
+fn malformed_or_unmatched_raw_exclusions_fail_without_removing_jpeg_rows() {
+    for paths in [
+        serde_json::json!(["relative.jpg"]),
+        serde_json::json!([42]),
+        serde_json::json!([]),
+        serde_json::json!(["duplicate"]),
+        serde_json::json!(["unmatched"]),
+        serde_json::json!(["failed-raw"]),
+        serde_json::json!(["outside-source"]),
+        serde_json::json!(["nested"]),
+        serde_json::json!(["not-jpeg"]),
+        serde_json::json!(["preference-off"]),
+    ] {
+        let preference_off = paths == serde_json::json!(["preference-off"]);
+        let (temp, store, id, jpeg) = first_pass_fixture_with_raw(!preference_off);
+        store
+            .ingest_photo(&id, serde_json::from_value(jpeg.clone()).unwrap())
+            .unwrap();
+        let raw_path = temp.path().join("photos/a.DNG");
+        fs::write(&raw_path, b"raw original").unwrap();
+        let mut raw = jpeg.clone();
+        raw["id"] = serde_json::json!("bbbbbbbbbbbbbbbbbbbbbbbb");
+        raw["path"] = serde_json::json!(raw_path);
+        let mut paths = paths;
+        let repeated = paths == serde_json::json!([]);
+        if paths == serde_json::json!(["duplicate"]) {
+            paths = serde_json::json!([jpeg["path"], jpeg["path"]]);
+        } else if paths == serde_json::json!(["unmatched"]) {
+            let unrelated = temp.path().join("photos/unrelated.jpg");
+            fs::write(&unrelated, b"unrelated original").unwrap();
+            paths = serde_json::json!([unrelated]);
+        } else if paths == serde_json::json!(["failed-raw"]) {
+            raw["analysisError"] = serde_json::json!("Cannot decode RAW");
+            paths = serde_json::json!([jpeg["path"]]);
+        } else if paths == serde_json::json!(["outside-source"]) {
+            let outside = temp.path().join("a.jpg");
+            fs::write(&outside, b"outside original").unwrap();
+            paths = serde_json::json!([outside]);
+        } else if paths == serde_json::json!(["nested"]) {
+            let nested = temp.path().join("photos/nested");
+            fs::create_dir(&nested).unwrap();
+            let jpeg = nested.join("a.jpg");
+            let nested_raw = nested.join("a.DNG");
+            fs::write(&jpeg, b"nested original").unwrap();
+            fs::write(&nested_raw, b"nested raw").unwrap();
+            raw["path"] = serde_json::json!(nested_raw);
+            paths = serde_json::json!([jpeg]);
+        } else if paths == serde_json::json!(["not-jpeg"]) {
+            paths = serde_json::json!([raw_path]);
+        } else if preference_off {
+            paths = serde_json::json!([jpeg["path"]]);
+        }
+        let photo = serde_json::json!({"type":"photo", "photo":raw});
+        let excluded = serde_json::json!({"type":"excluded", "paths":paths});
+        let extra = if repeated {
+            format!("'{excluded}'")
+        } else {
+            String::new()
+        };
+        let worker = Workers::new(store.clone(), fake_engine(temp.path(), &format!("printf '%s\\n' '{{\"type\":\"scan\",\"total\":1}}' '{photo}' '{excluded}' {extra} '{{\"type\":\"groups\",\"groups\":[]}}'\n{FIRST_PASS_COMPLETE}")), Arc::new(|_, _| {}));
+        worker.start(&id).unwrap();
+        wait_done(&worker, &id);
+        let result = store.project(&id).unwrap();
+        assert_eq!(result.import_status, "failed", "{:?}", result.import_error);
+        assert!(result.photos.iter().any(|p| p.filename == "a.jpg"));
+    }
 }
 fn first_pass_stream(photo: &serde_json::Value) -> String {
     let photo = serde_json::json!({"type":"photo","photo":photo});

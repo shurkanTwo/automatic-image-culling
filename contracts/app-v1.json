@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Photo Select",
-    "version": "0.2.3",
+    "version": "0.2.4",
     "identifier": "com.shurkantwo.photoselect"
   },
   "photo": {
@@ -28,7 +28,8 @@
     "suggestedDecision": "favorite | pass | undecided | null",
     "suggestionReason": "string | null; preview technical evidence",
     "suggestionConfidence": "number 0..1 | null; technical evidence, not aesthetic probability",
-    "decisionTouched": "boolean; false for untouched manual defaults, preserves manual Undecided eligibility through undo"
+    "decisionTouched": "boolean; false for untouched manual defaults, preserves manual Undecided eligibility through undo",
+    "rawCompanionRetained": "boolean; defaults false; a paired JPEG intentionally retained to preserve an existing manual review"
   },
   "group": {
     "id": "stable string",
@@ -46,6 +47,7 @@
     "name": "string",
     "sourceDir": "absolute directory",
     "includeSubfolders": "boolean; saved import scope; legacy projects default to true",
+    "preferRaw": "boolean; saved import preference; new and legacy projects default false; skip same-folder, case-insensitive same-stem JPEG companions only when a matching RAW decodes successfully",
     "projectPath": "absolute sqlite project file",
     "createdAt": "ISO8601",
     "updatedAt": "ISO8601",
@@ -63,6 +65,7 @@
     "name": "string",
     "sourceDir": "string",
     "includeSubfolders": "boolean",
+    "preferRaw": "boolean",
     "projectPath": "string",
     "photoCount": "number",
     "favoriteCount": "number",
@@ -79,7 +82,8 @@
         "sourceDir": "string",
         "includeSubfolders": "boolean; optional, defaults to false for new projects",
         "automaticSelectionEnabled": "boolean; optional, defaults true",
-        "selectionMode": "cautious | stronger; optional, defaults cautious"
+        "selectionMode": "cautious | stronger; optional, defaults cautious",
+        "preferRaw": "boolean; optional, defaults false; paired JPEG preference reused on rescans"
       },
       "returns": "Project"
     },
@@ -193,7 +197,7 @@
     "project-updated": "{projectId:string}"
   },
   "engine": {
-    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR [--no-subfolders] [--selection-mode cautious|stronger]; recursive unless --no-subfolders; default cautious",
+    "scanCLI": "python -m culling_engine scan --source DIR --cache DIR [--no-subfolders] [--selection-mode cautious|stronger] [--prefer-raw]; recursive unless --no-subfolders; default cautious; RAW preference off by default",
     "detailCLI": "python -m culling_engine detail --source FILE --output FILE",
     "probeCLI": "python -m culling_engine self-test",
     "protocol": "one JSON object per stdout line; diagnostics ONLY stderr; UTF-8; flush every line",
@@ -201,6 +205,7 @@
       "scan": "{type:scan,total:number}",
       "photo": "{type:photo,photo:{id,path,filename,previewPath,thumbnailPath,captureTime,width,height,camera,qualityScore,hints,phash:string|null,analysisError:string|null}}",
       "progress": "{type:progress,processed:number,total:number,currentFile:string,failed:number}",
+      "excluded": "{type:excluded,paths:string[]}; exactly one set of absolute JPEG original paths actually skipped for a successfully analyzed same-folder same-stem RAW, before groups; paths never deleted from disk; applied only after a successful complete scan",
       "groups": "{type:groups,groups:Group[]}",
       "complete": "{type:complete,processed:number,total:number,failed:number}",
       "error": "{type:error,message:string,path?:string}; path-bearing records are recoverable file/directory failures, no path is a fatal scan failure",
@@ -220,6 +225,7 @@
   "principles": [
     "Original files never moved, modified, or deleted.",
     "Manual decisions persist across rescans and reanalysis.",
+    "RAW preference skips paired JPEGs rather than rating them as discards. Standalone JPEGs and fallback JPEGs for unreadable RAWs remain available; manually reviewed paired JPEGs survive rescans.",
     "Automatic choices require a successful complete scan, are explained and reversible, and preserve manual review edits. Automatic selection does not assign stars.",
     "Discard/pass and Lightroom Reject flags never delete originals.",
     "Use a single Rust-owned SQLite database per project.",

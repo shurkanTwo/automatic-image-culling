@@ -1668,6 +1668,49 @@ kbd {
   margin-top: 0;
   width: auto;
 }
+.import-modal {
+  max-width: 500px;
+  max-height: calc(100dvh - 60px);
+  padding: 24px;
+  scroll-padding-bottom: 80px;
+}
+.import-modal .modal-symbol {
+  width: 38px;
+  height: 38px;
+  margin-bottom: 12px;
+}
+.import-modal h2 {
+  margin-bottom: 14px;
+}
+.import-modal p {
+  line-height: 1.55;
+  margin-bottom: 14px;
+}
+.import-modal .import-folder {
+  gap: 4px;
+  padding: 10px;
+  margin-bottom: 14px;
+}
+.import-modal .import-subfolders {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.import-modal .first-pass-mode-label {
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.import-modal select {
+  padding: 9px;
+}
+.import-modal .import-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: #26331f;
+  border-top: 1px solid #50623f;
+  padding-top: 12px;
+  margin-top: 14px;
+}
 .export-help {
   padding: 16px;
   background: #1f2c18;
