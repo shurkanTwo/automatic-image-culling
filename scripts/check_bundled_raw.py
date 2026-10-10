@@ -77,9 +77,11 @@ def check_raw_jpeg_pairs(
     def scan_paths(options: list[str], expected: set[Path], failed: int = 0):
         records = run_worker(worker, [*arguments, *options], workdir)
         photos = [record["photo"] for record in records if record["type"] == "photo"]
-        if {Path(photo["path"]) for photo in photos} != expected:
+        actual = {Path(photo["path"]) for photo in photos}
+        if actual != expected:
             raise RuntimeError(
-                f"RAW + JPEG preference included wrong originals: {photos}"
+                f"RAW + JPEG preference included wrong originals: "
+                f"expected {expected}, got {actual}"
             )
         complete = records[-1]
         if complete != {
@@ -214,7 +216,8 @@ def main() -> None:
     if not args.worker:
         parser.error("--worker is required unless --download-fixture is used")
     with tempfile.TemporaryDirectory(prefix="photo-select-raw-check-") as temporary:
-        workdir = Path(temporary)
+        # Windows TEMP may use an 8.3 alias; workers return canonical long paths.
+        workdir = Path(temporary).resolve(strict=True)
         fixture = args.fixture
         if fixture is None:
             fixture = workdir / "fixture.CR2"
